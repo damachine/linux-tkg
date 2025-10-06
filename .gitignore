@@ -26,3 +26,7 @@ gnupg/
 current_env
 linux-kernel.git/
 linux-src-git/
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
