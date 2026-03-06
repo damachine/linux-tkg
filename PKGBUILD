@@ -122,7 +122,7 @@ prepare() {
     _nv_open_fix="$(find "$srcdir" -maxdepth 1 -name '*-nvidia-build-fix.patch' -print -quit)"
     if [ -n "$_nv_open_fix" ]; then
       msg2 "Applying NVIDIA-open-module build fix patch for ${_basekernel}..."
-      patch -Np1 -i "$_nv_open_fix" -d "${_nv_open_src}"
+      #patch -Np1 -i "$_nv_open_fix" -d "${_nv_open_src}"
     fi
   fi
 
