@@ -110,13 +110,16 @@ prepare() {
 
   _tkg_srcprep
 
-  # Apply nvidia-open patches and prepare source only 595 and 7.0 for testing set
+  # Apply nvidia-open patches from version-specific directory (currently only for 6.19 and 7.0)
   if [ "$_nvidia_open" = "true" ]; then
     local _nv_open_src="${srcdir}/${_nv_open_pkg}"
+    local _nv_patch_dir="${_where}/linux-tkg-patches/${_basekernel}"
     msg2 "NVIDIA-open-module source version ${_nvidia_open_version} will be built and installed alongside this kernel."
-    msg2 "Applying NVIDIA-open-module patches (${_nvidia_open_version})..."
-    patch -Np1 -i "${srcdir}/0015-nvidia-add-ibt-support.patch" -d "${_nv_open_src}"
-    patch -Np1 -i "${srcdir}/0015-nvidia-build-fix.patch" -d "${_nv_open_src}"
+    for _nv_patch in "${_nv_patch_dir}"/0015-nvidia-*.patch; do
+      [ -f "${_nv_patch}" ] || continue
+      msg2 "Applying NVIDIA-open patch: $(basename "${_nv_patch}")..."
+      patch -Np1 -i "${_nv_patch}" -d "${_nv_open_src}"
+    done
   fi
 
   # Clone v4l2loopback source
