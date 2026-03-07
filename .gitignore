@@ -29,5 +29,6 @@ gnupg/
 *sha256sum*
 current_env
 linux-kernel.git/
+linux-src-git/
 *-tkg-userpatches/
 BIG_UGLY_FROGMINER
