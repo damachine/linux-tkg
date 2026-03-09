@@ -630,6 +630,18 @@ _set_nvidia_open() {
       _nvidia_open="false"
     fi
 
+    # Signing nvidia-open modules
+    if [ "$_nvidia_open" = "true" ] && [ -z "$_nvidia_open_sign_modules" ]; then
+      plain "[EXPERIMENTAL] Do you want to sign the NVIDIA open kernel modules?"
+      plain "Requires CONFIG_MODULE_SIG=y in your kernel config. Has no effect without _nvidia_open."
+      _nvidia_open_sign_array_text=("No (disable — recommended)" "Yes (enable — experimental)")
+      _nvidia_open_sign_array=("false" "true")
+      _default_index="0"
+      _prompt_from_array "${_nvidia_open_sign_array_text[@]}"
+      _nvidia_open_sign_modules="${_nvidia_open_sign_array[$_selected_index]}"
+      echo -e "_nvidia_open_sign_modules='$_nvidia_open_sign_modules'" >> "$_where"/BIG_UGLY_FROGMINER
+    fi
+
     # Set version based on selection
     if [ "$_nvidia_open" = "latest" ]; then
       _nvidia_open_version="${_nvidia_open_latest_version}"
@@ -667,39 +679,6 @@ _set_v4l2loopback() {
     _v4l2loopback_sign_modules="${_v4l2loopback_sign_array[$_selected_index]}"
     echo -e "_v4l2loopback_sign_modules='$_v4l2loopback_sign_modules'" >> "$_where"/BIG_UGLY_FROGMINER
   fi
-}
-
-# Builds the open NVIDIA kernel modules as a separate package
-_set_nvidia_open() {
-  if [ -z "$_nvidia_open" ]; then
-    # Skip prompt entirely when RT is active — nvidia-open is incompatible
-    if [ "$_preempt_rt" = "1" ] || [ "$_preempt_rt_force" = "1" ]; then
-      warning "PREEMPT_RT is enabled — nvidia-open is incompatible due to licensing issues. Disabling automatically."
-      _nvidia_open="false" # for now we set it to false to avoid prompting
-    else
-      plain "Do you want to build the open NVIDIA kernel modules as a separate package?"
-      plain "Requires Turing+ GPU (RTX 20xx or newer). Cannot be combined with RT scheduler."
-      _nvidia_open_array_text=("No (disable)" "Yes (enable)")
-      _nvidia_open_array=("false" "true")
-      _default_index="0"
-      _prompt_from_array "${_nvidia_open_array_text[@]}"
-      _nvidia_open="${_nvidia_open_array[$_selected_index]}"
-    fi
-    echo -e "_nvidia_open='$_nvidia_open'" >> "$_where"/BIG_UGLY_FROGMINER
-  fi
-
-  # Signing nvidia-open modules
-  if [ "$_nvidia_open" = "true" ] && [ -z "$_nvidia_open_sign_modules" ]; then
-    plain "[EXPERIMENTAL] Do you want to sign the NVIDIA open kernel modules?"
-    plain "Requires CONFIG_MODULE_SIG=y in your kernel config. Has no effect without _nvidia_open."
-    _nvidia_open_sign_array_text=("No (disable — recommended)" "Yes (enable — experimental)")
-    _nvidia_open_sign_array=("false" "true")
-    _default_index="0"
-    _prompt_from_array "${_nvidia_open_sign_array_text[@]}"
-    _nvidia_open_sign_modules="${_nvidia_open_sign_array[$_selected_index]}"
-    echo -e "_nvidia_open_sign_modules='$_nvidia_open_sign_modules'" >> "$_where"/BIG_UGLY_FROGMINER
-  fi
-
 }
 
 _tkg_initscript() {
