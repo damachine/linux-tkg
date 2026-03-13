@@ -101,6 +101,8 @@ _module_drv_git_nct6687d="https://github.com/otherfork/nct6687d.git"
 
 #### `_nvidia_open_sign` — sign NVIDIA open modules (experimental)
 
+This option was added for personal testing and is left in for anyone who might find it useful.
+
 ```properties
 _nvidia_open_sign="false"
 ```
@@ -112,6 +114,8 @@ Useful in combination with `_RESIGN_AFTER_STRIP` to prevent unsigned-module tain
 
 #### `_install_signing_keys` — keep signing key in headers package (experimental)
 
+This option was added for personal testing and is left in for anyone who might find it useful.
+
 ```properties
 _install_signing_keys="false"
 ```
@@ -120,5 +124,7 @@ When set to `"true"`, the kernel module signing key (`signing_key.pem`) and cert
 
 > [!WARNING]
 > The key is stored unencrypted on disk. It is installed with permissions 400 (root-readable only), but anyone with root or physical access to the machine can extract it and sign arbitrary modules. If security is a concern, use full-disk encryption (e.g. LUKS) to protect the key against physical access.
+>
+> A common alternative is to enroll your own MOK (Machine Owner Key) via `mokutil --import` and sign modules manually with it — that way the signing key never ends up in the kernel headers package at all. Another approach is building a UKI (Unified Kernel Image) with `ukify`, which embeds the kernel and initramfs into a single signed EFI binary, making per-module signing unnecessary entirely.
 
 ---
