@@ -4,10 +4,7 @@
 > **New to linux-tkg?** Start with the [upstream project README](https://github.com/Frogging-Family/linux-tkg) to get familiar with the general concept, the available options and the build workflow. Come back here once you know the basics.
 
 This personal staging fork tracks [upstream](https://github.com/Frogging-Family/linux-tkg) closely and adds some spice on top.
-
-Extra knobs in `customization.cfg`
-
-All on top of what upstream already offers.
+.
 
 ---
 
@@ -24,6 +21,9 @@ Has no effect when using `install.sh` on Debian, Ubuntu, Fedora, etc. maybe late
 
 ---
 
+Extra knobs in `customization.cfg`
+
+All on top of what upstream already offers
 
 #### NVIDIA open modules
 
