@@ -19,13 +19,11 @@ Has no effect when using `install.sh` on Debian, Ubuntu, Fedora, etc. maybe late
 ---
 
 ## So — woot's the diff
+## This personal staging fork tracks [upstream](https://github.com/Frogging-Family/linux-tkg) closely and adds some spice on top.
 
-> [!NOTE]
-> This personal staging fork tracks [upstream](https://github.com/Frogging-Family/linux-tkg) closely and adds some spice on top.
+### Extra knobs in `customization.cfg`
 
-### Additional options in `customization.cfg`
-
-The following settings are available in this fork **in addition to** what the upstream `customization.cfg` already provides.
+All on top of what upstream already offers.
 
 ---
 
