@@ -68,7 +68,7 @@ Has no effect when using `install.sh` on Debian, Ubuntu, Fedora, etc.
 | `_module_drv_autoload` | Space-separated subset of modules to autoload at boot via `/usr/lib/modules-load.d/`. `v4l2loopback` is autoloaded by default for compatibility. |
 | `_module_drv_sign` | `"false"` / empty = no signing (default), `"true"` = sign all active modules, or a space-separated subset to sign selectively. Requires `CONFIG_MODULE_SIG=y`. |
 | `_module_drv_options_<name>` | Per-module modprobe options written to `/usr/lib/modprobe.d/`. Available for `nct6687d`, `it87`, and `v4l2loopback`. |
-| `_module_drv_git_<name>` | Pin a specific git ref (branch, tag, or commit) for a module. Leave empty to use the remote default branch. |
+| `_module_drv_git_<name>` | Pin a specific git ref (branch, tag, or commit) for a module, or set a full URL (`https://…` / `git@…`) to clone from a different fork entirely. Leave empty to use the default upstream repository at its default branch. |
 
 Examples:
 
@@ -85,9 +85,15 @@ _module_drv_sign="nct6687d"
 # modprobe options for nct6687d (space-separated, produces a single "options" line)
 _module_drv_options_nct6687d="fan_config=msi_alt1 msi_fan_brute_force=1"
 
-# Pin it87 to a specific branch
-_module_drv_git_it87="master"
+# Pin nct6687d to a specific commit
+_module_drv_git_nct6687d="abc1234"
+
+# Or switch to a completely different fork URL
+_module_drv_git_nct6687d="https://github.com/otherfork/nct6687d.git"
 ```
+
+> **Note:** When a full URL is provided, the default branch of that fork is cloned.
+> It is not possible to combine a custom URL with a specific ref in the same variable.
 
 ---
 

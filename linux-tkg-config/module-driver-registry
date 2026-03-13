@@ -30,7 +30,17 @@ _module_drv_get_display_name() {
 }
 
 _module_drv_get_git_url() {
-  case "$1" in
+  local _module_id="$1"
+  local _var_name="_module_drv_git_${_module_id}"
+  local _val="${!_var_name}"
+
+  # If the value looks like a URL, use it as the repository URL instead of the default
+  if [[ "$_val" == https://* || "$_val" == git@* || "$_val" == git://* ]]; then
+    printf '%s\n' "$_val"
+    return
+  fi
+
+  case "$_module_id" in
     v4l2loopback)
       printf '%s\n' 'https://github.com/v4l2loopback/v4l2loopback.git'
     ;;
@@ -79,7 +89,14 @@ _module_drv_get_license_file() {
 _module_drv_get_git() {
   local _module_id="$1"
   local _var_name="_module_drv_git_${_module_id}"
-  printf '%s\n' "${!_var_name}"
+  local _val="${!_var_name}"
+
+  # If the value is a URL it is used as the repo URL, not as a git ref — return empty
+  if [[ "$_val" == https://* || "$_val" == git@* || "$_val" == git://* ]]; then
+    return
+  fi
+
+  printf '%s\n' "$_val"
 }
 
 _module_drv_get_modprobe_options() {
