@@ -1,6 +1,6 @@
 # Linux-tkg
 
-### This personal staging fork tracks [upstream](https://github.com/Frogging-Family/linux-tkg) closely and adds some spice on top.
+### This fork tracks [upstream](https://github.com/Frogging-Family/linux-tkg) closely and adds some spice on top.
 
 > [!NOTE]
 > **New to linux-tkg?** Start with the [upstream project README](https://github.com/Frogging-Family/linux-tkg) to get familiar with the general concept, the available options and the build workflow. Come back here once you know the basics.
