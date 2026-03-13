@@ -3,9 +3,15 @@
 > [!NOTE]
 > **New to linux-tkg?** Start with the [upstream project README](https://github.com/Frogging-Family/linux-tkg) to get familiar with the general concept, the available options and the build workflow. Come back here once you know the basics.
 
+This personal staging fork tracks [upstream](https://github.com/Frogging-Family/linux-tkg) closely and adds some spice on top.
+
+Extra knobs in `customization.cfg`
+
+All on top of what upstream already offers.
+
 ---
 
-## Install (Arch & derivatives)
+### Install (Arch & derivatives)
 
 ```shell
 git clone --branch staging https://github.com/damachine/linux-tkg.git
@@ -18,14 +24,6 @@ Has no effect when using `install.sh` on Debian, Ubuntu, Fedora, etc. maybe late
 
 ---
 
-## So — woot's the diff
-## This personal staging fork tracks [upstream](https://github.com/Frogging-Family/linux-tkg) closely and adds some spice on top.
-
-### Extra knobs in `customization.cfg`
-
-All on top of what upstream already offers.
-
----
 
 #### NVIDIA open modules
 
