@@ -112,13 +112,13 @@ Useful in combination with `_RESIGN_AFTER_STRIP` to prevent unsigned-module tain
 
 #### `_install_signing_keys` — keep signing key in headers package (experimental)
 
-This option was added for personal testing and is left in for anyone who might find it useful.
+> This option was added for personal testing and is left in for anyone who might find it useful.
 
 ```properties
 _install_signing_keys="false"
 ```
 
-When set to `"true"`, the kernel module signing key (`signing_key.pem`) and certificate are installed into the headers package under `/usr/src/<pkgbase>/certs/` with permissions **400** (root-readable only), so you can sign out-of-tree modules manually afterwards (useful for Secure Boot workflows).
+When set to `"true"`, the kernel module signing key and certificate are installed into the linux-headers package (useful for Secure Boot workflows or to prevent unsigned-module taint messages). Requires `CONFIG_MODULE_SIG=y`. Has no effect when is `"false"` or empty.
 
 > [!WARNING]
 > The key is stored unencrypted on disk. It is installed with permissions 400 (root-readable only), but anyone with root or physical access to the machine can extract it and sign arbitrary modules. If security is a concern, use full-disk encryption (e.g. LUKS) to protect the key against physical access.
