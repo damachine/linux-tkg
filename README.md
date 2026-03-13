@@ -1,5 +1,6 @@
 # Linux-tkg
 
+> [!INFO]
 > **New to linux-tkg?** Start with the [upstream project README](https://github.com/Frogging-Family/linux-tkg) to get familiar with the general concept, the available options and the build workflow. Come back here once you know the basics.
 
 ---
@@ -17,8 +18,9 @@ makepkg -si
 
 ## This fork — what's different
 
-This is a personal staging fork of [Frogging-Family/linux-tkg](https://github.com/Frogging-Family/linux-tkg).
-It tracks upstream closely and adds a small number of improvements on top.
+> [!INFO]
+> This is a personal staging fork of [Frogging-Family/linux-tkg](https://github.com/Frogging-Family/linux-tkg).
+> It tracks upstream closely and adds a small number of improvements on top.
 
 ### Additional options in `customization.cfg`
 
@@ -53,11 +55,11 @@ _module_drv="nct6687d it87 v4l2loopback"
 
 Builds selected out-of-tree kernel modules into the main kernel package at build time. Supported modules:
 
-| Module | Description |
-|---|---|
-| `nct6687d` | Nuvoton NCT6687-R hardware monitoring driver |
-| `it87` | ITE IT87xx hardware monitoring driver |
-| `v4l2loopback` | Virtual video loopback device driver |
+| Module | Chip / Controller | Description | Source |
+|---|---|---|---|
+| `nct6687d` | Nuvoton [NCT6687-R](https://www.nuvoton.com/products/pc-health-monitor-ics/nct6687-r/) (common on MSI & Gigabyte boards) | Hardware monitoring driver (fans, temps, voltages) | [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) |
+| `it87` | ITE [IT8689E / IT8792E](https://www.ite.com.tw/en/product/category/Env_EC) / IT87xx series (common on ASUS & ASRock boards) | Hardware monitoring driver (fans, temps, voltages) | [frankcrawford/it87](https://github.com/frankcrawford/it87) |
+| `v4l2loopback` | Virtual (no physical chip; kernel-level loopback) | Creates virtual video devices usable as webcam sources (e.g. OBS → Zoom) | [v4l2loopback/v4l2loopback](https://github.com/v4l2loopback/v4l2loopback) |
 
 Has no effect when using `install.sh` on Debian, Ubuntu, Fedora, etc.
 
@@ -107,20 +109,6 @@ When set to `"true"`, all `nvidia*.ko` files in the NVIDIA open modules package 
 
 Useful in combination with `_RESIGN_AFTER_STRIP` to prevent unsigned-module taint messages. Requires `CONFIG_MODULE_SIG=y`. Has no effect when `_nvidia_open` is `"false"` or empty.
 
----
-
-#### `_module_drv` — build third-party out-of-tree modules (Arch only)
-
-```properties
-_module_drv="nct6687d it87 v4l2loopback"
-```
-
-Builds selected out-of-tree kernel modules into the main kernel package at build time. Supported modules:
-
-| Module | Description |
-|---|---|
-| `nct6687d` | Nuvoton NCT6687-R hardware monitoring driver |
-| `
 
 #### `_install_signing_keys` — keep signing key in headers package (experimental)
 
@@ -130,6 +118,7 @@ _install_signing_keys="false"
 
 When set to `"true"`, the kernel module signing key (`signing_key.pem`) and certificate are installed into the headers package under `/usr/src/<pkgbase>/certs/` with permissions **400** (root-readable only), so you can sign out-of-tree modules manually afterwards (useful for Secure Boot workflows).
 
-> **Security note:** The key is stored unencrypted on disk. It is installed with permissions 400 (root-readable only), but anyone with root or physical access to the machine can extract it and sign arbitrary modules. If security is a concern, use full-disk encryption (e.g. LUKS) to protect the key against physical access.
+> [!WARNING]
+> The key is stored unencrypted on disk. It is installed with permissions 400 (root-readable only), but anyone with root or physical access to the machine can extract it and sign arbitrary modules. If security is a concern, use full-disk encryption (e.g. LUKS) to protect the key against physical access.
 
 ---
