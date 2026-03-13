@@ -97,9 +97,9 @@ _module_drv_git_nct6687d="https://github.com/otherfork/nct6687d.git"
 
 ---
 
-#### `_nvidia_open_sign` — sign NVIDIA open modules (experimental)
+> This options was added for personal testing and is left in for anyone who might find it useful.
 
-> This option was added for personal testing and is left in for anyone who might find it useful.
+#### `_nvidia_open_sign` — sign NVIDIA open modules (experimental)
 
 ```properties
 _nvidia_open_sign="false"
@@ -111,8 +111,6 @@ Useful in combination with `_RESIGN_AFTER_STRIP` to prevent unsigned-module tain
 
 
 #### `_install_signing_keys` — keep signing key in headers package (experimental)
-
-> This option was added for personal testing and is left in for anyone who might find it useful.
 
 ```properties
 _install_signing_keys="false"
