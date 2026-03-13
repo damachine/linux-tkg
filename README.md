@@ -1,6 +1,6 @@
 # Linux-tkg
 
-> [!INFO]
+> [!NOTE]
 > **New to linux-tkg?** Start with the [upstream project README](https://github.com/Frogging-Family/linux-tkg) to get familiar with the general concept, the available options and the build workflow. Come back here once you know the basics.
 
 ---
@@ -18,7 +18,7 @@ makepkg -si
 
 ## This fork — what's different
 
-> [!INFO]
+> [!NOTE]
 > This is a personal staging fork of [Frogging-Family/linux-tkg](https://github.com/Frogging-Family/linux-tkg).
 > It tracks upstream closely and adds a small number of improvements on top.
 
