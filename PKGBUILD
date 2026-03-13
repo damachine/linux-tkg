@@ -54,6 +54,7 @@ if [ ! -e "$_where"/BIG_UGLY_FROGMINER ]; then
 fi
 
 source "$_where"/BIG_UGLY_FROGMINER
+source "$_where"/linux-tkg-config/prepare
 
 if [ -n "$_custom_pkgbase" ]; then
   pkgbase="${_custom_pkgbase}"
@@ -63,7 +64,7 @@ fi
 pkgname=("${pkgbase}" "${pkgbase}-headers")
 [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ] && pkgname+=("${pkgbase}-nvidia-open") # Separate package for open NVIDIA kernel modules, built alongside the main kernel package.
 pkgver="${_basekernel}"."${_sub}"
-pkgrel=273
+pkgrel=274
 pkgdesc='Linux-tkg'
 arch=('x86_64') # no i686 in here
 url="https://www.kernel.org/"
@@ -94,20 +95,13 @@ export KBUILD_BUILD_USER=$pkgbase
 export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
 
 prepare() {
-  source "$_where"/BIG_UGLY_FROGMINER
-  source "$_where"/linux-tkg-config/prepare
-
   rm -rf $pkgdir # Nuke the entire pkg folder so it'll get regenerated clean on next build
 
   ln -s "${_kernel_work_folder_abs}" "${srcdir}"
 
   _tkg_srcprep
 
-  # Clone v4l2loopback source
-  if [ "$_v4l2loopback" = "true" ]; then
-    msg2 "Cloning v4l2loopback source..."
-    git clone --depth=1 https://github.com/v4l2loopback/v4l2loopback.git "${srcdir}/v4l2loopback"
-  fi
+  _module_drv_clone
 }
 
 build() {
@@ -180,11 +174,7 @@ build() {
       -C "${_nv_open_src}" -j"$(nproc)" modules
   fi
 
-  # Build v4l2loopback module
-  if [ "$_v4l2loopback" = "true" ]; then
-    msg2 "Building v4l2loopback kernel module..."
-    make ${_force_all_threads} ${llvm_opt} -C "${_kernel_work_folder_abs}" M="${srcdir}/v4l2loopback" modules
-  fi
+  _module_drv_build
 }
 
 hackbase() {
@@ -232,17 +222,14 @@ hackbase() {
   rm -f "$modulesdir"/{source,build}
 
   # Re-sign modules after stripping (INSTALL_MOD_STRIP removes embedded signatures)
-  if [[ "$_RESIGN_AFTER_STRIP" == "true" ]] && [[ "$_STRIP" == "true" ]] && grep -q 'CONFIG_MODULE_SIG=y' "${_kernel_work_folder_abs}/.config"; then
-    msg2 "Re-signing kernel modules after strip..."
-    local sign_script="${_kernel_work_folder_abs}/scripts/sign-file"
-    local sign_key
-    sign_key="$(grep -Po 'CONFIG_MODULE_SIG_KEY="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
-    [[ "$sign_key" =~ ^/ ]] || sign_key="${_kernel_work_folder_abs}/${sign_key}"
-    local sign_cert="${_kernel_work_folder_abs}/certs/signing_key.x509"
-    local hash_algo
-    hash_algo="$(grep -Po 'CONFIG_MODULE_SIG_HASH="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
-    find "${modulesdir}" -type f -name '*.ko' \
-      -exec "${sign_script}" "${hash_algo}" "${sign_key}" "${sign_cert}" '{}' \;
+  if [[ "$_RESIGN_AFTER_STRIP" == "true" ]] && [[ "$_STRIP" == "true" ]]; then
+    if _resolve_signing_params; then
+      msg2 "Re-signing kernel modules after strip..."
+      find "${modulesdir}" -type f -name '*.ko' \
+        -exec "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" '{}' \;
+    else
+      warning "_RESIGN_AFTER_STRIP is enabled but signing is not available — skipping module re-signing."
+    fi
   fi
 
   # install cleanup pacman hook and script
@@ -273,57 +260,14 @@ hackbase() {
     install -Dm644 "${srcdir}"/ntsync.rules "${pkgdir}/etc/udev/rules.d/ntsync.rules"
   fi
 
-  # v4l2loopback
-  if [ "$_v4l2loopback" = "true" ]; then
-    msg2 "Installing v4l2loopback module..."
-    install -dm755 "${modulesdir}/extramodules"
-    install -m644 "${srcdir}/v4l2loopback/v4l2loopback.ko" "${modulesdir}/extramodules/"
-
-    # Strip module
-    local strip_bin="strip"
-    [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
-    "${strip_bin}" --strip-debug "${modulesdir}/extramodules/v4l2loopback.ko"
-
-    # Sign module
-    if [[ "$_v4l2loopback_sign_modules" == "true" ]]; then
-      if ! grep -q 'CONFIG_MODULE_SIG=y' "${_kernel_work_folder_abs}/.config"; then
-        warning "_v4l2loopback_sign_modules is enabled but CONFIG_MODULE_SIG=y is not set in .config — skipping module signing."
-      else
-        local sign_script="${_kernel_work_folder_abs}/scripts/sign-file"
-        local sign_key
-        sign_key="$(grep -Po 'CONFIG_MODULE_SIG_KEY="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
-        [[ "$sign_key" =~ ^/ ]] || sign_key="${_kernel_work_folder_abs}/${sign_key}"
-        local sign_cert="${_kernel_work_folder_abs}/certs/signing_key.x509"
-        local hash_algo
-        hash_algo="$(grep -Po 'CONFIG_MODULE_SIG_HASH="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
-
-        if [[ ! -f "$sign_key" ]]; then
-          warning "Module signing key not found: ${sign_key} — skipping module signing."
-        elif [[ ! -f "$sign_cert" ]]; then
-          warning "Module signing certificate not found: ${sign_cert} — skipping module signing."
-        else
-          msg2 "Signing v4l2loopback kernel module..."
-          "${sign_script}" "${hash_algo}" "${sign_key}" "${sign_cert}" "${modulesdir}/extramodules/v4l2loopback.ko"
-        fi
-      fi
-    fi
-
-    # Compress module
-    zstd --rm -19 -T0 "${modulesdir}/extramodules/v4l2loopback.ko"
-
-    # Auto-load v4l2loopback at boot
-    echo "v4l2loopback" | install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modules-load.d/v4l2loopback-${pkgbase}.conf"
-
-    # Clean up cloned source
-    rm -rf "${srcdir}/v4l2loopback"
-  fi
+  _module_drv_install
 }
 
 hackheaders() {
   source "$_where"/BIG_UGLY_FROGMINER
 
   pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel - https://github.com/Frogging-Family/linux-tkg"
-  provides=("linux-headers=${pkgver}" "${pkgbase}-headers=${pkgver}")
+  provides=("linux-headers=${pkgver}" "${pkgbase}-headers=${pkgver}" LINUX-HEADERS)
   case $_basever in
     54|57|58|59|510)
     ;;
@@ -451,27 +395,13 @@ hacknvidia_open() {
   find "${modulesdir}" -type f -name '*.ko' -exec "${strip_bin}" --strip-debug '{}' \;
 
   # Sign modules
-  if [[ "$_nvidia_open_sign_modules" == "true" ]]; then
-    if ! grep -q 'CONFIG_MODULE_SIG=y' "${_kernel_work_folder_abs}/.config"; then
-      warning "_nvidia_open_sign_modules is enabled but CONFIG_MODULE_SIG=y is not set in .config — skipping module signing."
+  if [[ "$_nvidia_open_sign" == "true" ]]; then
+    if _resolve_signing_params; then
+      msg2 "Signing NVIDIA open kernel modules..."
+      find "${modulesdir}" -type f -name '*.ko' \
+        -exec "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" '{}' \;
     else
-      local sign_script="${_kernel_work_folder_abs}/scripts/sign-file"
-      local sign_key
-      sign_key="$(grep -Po 'CONFIG_MODULE_SIG_KEY="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
-      [[ "$sign_key" =~ ^/ ]] || sign_key="${_kernel_work_folder_abs}/${sign_key}"
-      local sign_cert="${_kernel_work_folder_abs}/certs/signing_key.x509"
-      local hash_algo
-      hash_algo="$(grep -Po 'CONFIG_MODULE_SIG_HASH="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
-
-      if [[ ! -f "$sign_key" ]]; then
-        warning "Module signing key not found: ${sign_key} — skipping module signing."
-      elif [[ ! -f "$sign_cert" ]]; then
-        warning "Module signing certificate not found: ${sign_cert} — skipping module signing."
-      else
-        msg2 "Signing NVIDIA open kernel modules..."
-        find "${modulesdir}" -type f -name '*.ko' \
-          -exec "${sign_script}" "${hash_algo}" "${sign_key}" "${sign_cert}" '{}' \;
-      fi
+      warning "_nvidia_open_sign is enabled but signing is not available — skipping module signing."
     fi
   fi
 

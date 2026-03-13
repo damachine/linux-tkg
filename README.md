@@ -2,7 +2,7 @@
 
 This repository provides scripts to automatically download, patch and compile the Linux Kernel from [the official Linux git repository](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git), with a selection of patches aiming for better desktop/gaming experience. The provided patches can be enabled/disabled by editing the `customization.cfg` file and/or by following the interactive install script. You can use an external config file (default is `$HOME/.config/frogminer/linux-tkg.cfg`, tweakable with the `_EXT_CONFIG_PATH` variable in `customization.cfg`). You can also use your own patches (more information in `customization.cfg` file).
 
-### Important information
+## Important information
 
 - **Non-pacman distros support can be considered experimental. You're invited to report issues you might encounter with it.**
 - **If your distro isn't using systemd, please set _configfile="running-kernel" in customization.cfg or you might end up with a non-bootable kernel**
@@ -49,6 +49,7 @@ The `customization.cfg` file offers many toggles for extra tweaks:
 - [Graysky's per-CPU-arch native optimizations](https://github.com/graysky2/kernel_compiler_patch): tunes the compiled code to to a specified CPU
 - Compile with GCC or Clang with optional `O2`/`O3` and `LTO` (Clang only) optimizations.
   - **Warning regarding DKMS modules prior to v3.0.2 (2021-11-21) and Clang:** `DKMS` version v3.0.1 and earlier will default to using GCC, which will fail to build modules against a Clang-built kernel. This will - for example - break Nvidia drivers. Forcing older `DKMS` to use Clang can be done but isn't recommended.
+- [Arch PKGBUILD only] Build selected third-party kernel modules into the main package through `_module_drv`, currently supporting `nct6687d`, `it87`, and `v4l2loopback`
 - Using [Modprobed-db](https://github.com/graysky2/modprobed-db)'s database can reduce the compilation time and produce a smaller kernel which will only contain the modules listed in it. **NOT recommended**
   - **Warning**: make sure to read [thoroughly about it first](https://wiki.archlinux.org/index.php/Modprobed-db) since it comes with caveats that can lead to an unbootable kernel.
 - "Zenify" patchset using core blk, mm and scheduler tweaks from Zen
@@ -60,8 +61,7 @@ The `customization.cfg` file offers many toggles for extra tweaks:
 
 #### User patches
 
-To apply your own patch files using the provided scripts, you will need to put them in a `linux<VERSION><PATCHLEVEL>-tkg-userpatches` folder -- where _VERSION_ and _PATCHLEVEL_ are the kernel version and patch level, as specified in [linux Makefile](https://github.com/torvalds/linux/blob/master/Makefile), the patch works on, _e.g_ `linux65-tkg-userpatches` -- at the same level as the `PKGBUILD` file, with the `.mypatch` extension. The script will by default ask if you want to apply them, one by one. The option `_user_patches` should be set to `true` in the `customization.cfg` file for this to work.
-
+To apply your own patch files using the provided scripts, you will need to put them in a `linux<VERSION><PATCHLEVEL>-tkg-userpatches` folder -- where _VERSION_ and _PATCHLEVEL_ are the kernel version and patch level, as specified in the [Linux Makefile](https://github.com/torvalds/linux/blob/master/Makefile), the patch works on, _e.g_ `linux65-tkg-userpatches` -- at the same level as the `PKGBUILD` file, with the `.mypatch` extension. The script will by default ask if you want to apply them, one by one. The option `_user_patches` should be set to `true` in the `customization.cfg` file for this to work.
 
 ### Install procedure
 
@@ -76,14 +76,16 @@ cd linux-tkg
 makepkg -si
 ```
 
+Third-party out-of-tree modules can be enabled on Arch through `customization.cfg` with a space-separated `_module_drv` list. The initial implementation supports `nct6687d`, `it87`, and `v4l2loopback`, with optional `_module_drv_autoload`, `_module_drv_sign`, `_module_drv_git_<name>`, and per-module `_module_drv_options_<name>` entries for modprobe parameters. `_module_drv_sign` accepts `false` or empty to disable signing, `true` to sign all active third-party modules, or an explicit subset list. If `_module_drv` is empty, the companion `_module_drv_*` options are ignored. The old dedicated v4l2loopback toggle has been removed, so v4l2loopback is configured the same way as the other third-party modules.
+
 The script will use a slightly modified Arch config from the `linux-tkg-config` folder, it can be changed through the `_configfile` variable in `customization.cfg`. The options selected at build-time are installed to `/usr/share/doc/$pkgbase/customization.cfg`, where `$pkgbase` is the package name.
 
-**Note:** the `base-devel` package group is expected to be installed, see [here](https://wiki.archlinux.org/title/Makepkg) for more information.
+**Note:** the `base-devel` package group is expected to be installed, see the [Arch makepkg documentation](https://wiki.archlinux.org/title/Makepkg) for more information.
 
 #### DEB (Debian, Ubuntu and derivatives) and RPM (Fedora, SUSE and derivatives) based distributions
 
 **Important notes:**
-An issue has been reported for Ubuntu where the stock kernel cannot boot properly any longer, the whereabouts are not entirely clear (only a single user reported that, see https://github.com/Frogging-Family/linux-tkg/issues/436).
+An issue has been reported for Ubuntu where the stock kernel cannot boot properly any longer, the whereabouts are not entirely clear (only a single user reported that, see [issue 436](https://github.com/Frogging-Family/linux-tkg/issues/436)).
 
 The interactive `install.sh` script will create, depending on the selected distro, `.deb` or `.rpm` packages, move them in the the subfolder `DEBS` or `RPMS` then prompts to install them with the distro's package manager.
 
@@ -134,7 +136,7 @@ sudo make install
 - The script uses Arch's `.config` file as a base. A custom one can be provided through `_configfile` in `customization.cfg`.
 - The installed files will not be tracked by your package manager and uninstalling requires manual intervention.
   `./install.sh uninstall-help` can help with useful information if your install procedure follows the `Generic` approach.
-- Installing the kernel with `make install` calls `/sbin/installkernel` (see [here](https://docs.kernel.org/kbuild/kbuild.html#installkernel)) to put the kernel at the right place and trigger an initramfs (and UKI) generation,
+- Installing the kernel with `make install` calls `/sbin/installkernel` (see the [kernel install documentation](https://docs.kernel.org/kbuild/kbuild.html#installkernel)) to put the kernel at the right place and trigger an initramfs (and UKI) generation,
   check your distro's documentation on how to configure it to your needs
   - [arch](https://wiki.archlinux.org/title/Kernel-install)
   - [gentoo](https://wiki.gentoo.org/wiki/Installkernel)

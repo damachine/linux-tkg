@@ -1,0 +1,140 @@
+_module_drv_list_has() {
+  local _list="$1"
+  local _item="$2"
+  [[ " ${_list} " == *" ${_item} "* ]]
+}
+
+_module_drv_append_unique() {
+  local _list="$1"
+  local _item="$2"
+
+  if [ -z "${_item}" ] || _module_drv_list_has "${_list}" "${_item}"; then
+    printf '%s\n' "${_list}"
+  else
+    printf '%s\n' "${_list:+${_list} }${_item}"
+  fi
+}
+
+_module_drv_validate_id() {
+  case "$1" in
+    v4l2loopback|nct6687d|it87)
+      return 0
+    ;;
+  esac
+
+  return 1
+}
+
+_module_drv_get_display_name() {
+  printf '%s\n' "$1"
+}
+
+_module_drv_get_git_url() {
+  case "$1" in
+    v4l2loopback)
+      printf '%s\n' 'https://github.com/v4l2loopback/v4l2loopback.git'
+    ;;
+    nct6687d)
+      printf '%s\n' 'https://github.com/Fred78290/nct6687d.git'
+    ;;
+    it87)
+      printf '%s\n' 'https://github.com/frankcrawford/it87.git'
+    ;;
+  esac
+}
+
+_module_drv_get_source_dir() {
+  printf '%s\n' "$1"
+}
+
+_module_drv_get_module_name() {
+  case "$1" in
+    nct6687d)
+      printf '%s\n' 'nct6687'
+    ;;
+    *)
+      printf '%s\n' "$1"
+    ;;
+  esac
+}
+
+_module_drv_get_module_filename() {
+  printf '%s.ko\n' "$(_module_drv_get_module_name "$1")"
+}
+
+_module_drv_get_license_file() {
+  case "$1" in
+    nct6687d)
+      printf '%s\n' 'LICENSE'
+    ;;
+    it87)
+      printf '%s\n' 'COPYING'
+    ;;
+    *)
+      return 1
+    ;;
+  esac
+}
+
+_module_drv_get_git() {
+  local _module_id="$1"
+  local _var_name="_module_drv_git_${_module_id}"
+  printf '%s\n' "${!_var_name}"
+}
+
+_module_drv_get_modprobe_options() {
+  local _module_id="$1"
+  local _var_name="_module_drv_options_${_module_id}"
+  printf '%s\n' "${!_var_name}"
+}
+
+_module_drv_default_autoload() {
+  case "$1" in
+    v4l2loopback)
+      return 0
+    ;;
+  esac
+
+  return 1
+}
+
+_module_drv_should_autoload() {
+  local _module_id="$1"
+
+  if _module_drv_list_has "${_module_drv_autoload_resolved}" "${_module_id}"; then
+    return 0
+  fi
+
+  _module_drv_default_autoload "${_module_id}"
+}
+
+_module_drv_should_sign() {
+  local _module_id="$1"
+  _module_drv_list_has "${_module_drv_sign_resolved}" "${_module_id}"
+}
+
+# Shared helper: resolve module signing parameters from .config.
+# Sets _sign_script, _sign_key, _sign_cert, _sign_hash on success.
+# Returns 1 if CONFIG_MODULE_SIG=y is not set, key or cert is missing.
+_resolve_signing_params() {
+  if ! grep -q 'CONFIG_MODULE_SIG=y' "${_kernel_work_folder_abs}/.config"; then
+    warning "Module signing was requested but CONFIG_MODULE_SIG=y is not set in .config — skipping."
+    return 1
+  fi
+
+  _sign_script="${_kernel_work_folder_abs}/scripts/sign-file"
+  _sign_key="$(grep -Po 'CONFIG_MODULE_SIG_KEY="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+  [[ "$_sign_key" =~ ^/ ]] || _sign_key="${_kernel_work_folder_abs}/${_sign_key}"
+  _sign_cert="${_kernel_work_folder_abs}/certs/signing_key.x509"
+  _sign_hash="$(grep -Po 'CONFIG_MODULE_SIG_HASH="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+
+  if [[ ! -f "$_sign_key" ]]; then
+    warning "Module signing key not found: ${_sign_key}"
+    return 1
+  elif [[ ! -f "$_sign_cert" ]]; then
+    warning "Module signing certificate not found: ${_sign_cert}"
+    return 1
+  fi
+
+  return 0
+}

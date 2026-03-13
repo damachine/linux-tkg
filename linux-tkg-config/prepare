@@ -113,8 +113,98 @@ _rt_rev_map=(
 
 # NVIDIA open module version definitions
 _nvidia_open_latest_version="595.45.04"
-_nvidia_open_legacy_version="580.126.18"
+_nvidia_open_legacy_version="580.142"
 _nvidia_open_supported_kernels=("6.12" "6.18" "6.19" "7.0")
+
+source "$_where"/linux-tkg-config/module-driver-registry
+
+_module_drv_clone() {
+  local _module_id
+
+  for _module_id in ${_module_drv_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    local _module_git="$(_module_drv_get_git "${_module_id}")"
+    local _module_url="$(_module_drv_get_git_url "${_module_id}")"
+
+    msg2 "Cloning $(_module_drv_get_display_name "${_module_id}") source..."
+    rm -rf "${_module_src}"
+    git clone --depth=1 "${_module_url}" "${_module_src}"
+
+    if [ -n "${_module_git}" ]; then
+      git -C "${_module_src}" fetch --depth=1 origin "${_module_git}"
+      git -C "${_module_src}" checkout --detach FETCH_HEAD
+    fi
+  done
+}
+
+_module_drv_build() {
+  local _module_id
+
+  for _module_id in ${_module_drv_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    msg2 "Building $(_module_drv_get_display_name "${_module_id}") kernel module..."
+    make ${_force_all_threads} ${llvm_opt} -C "${_kernel_work_folder_abs}" M="${_module_src}" modules
+  done
+}
+
+_module_drv_sign() {
+  local _module_id="$1"
+  local _module_path="$2"
+
+  if ! _resolve_signing_params; then
+    warning "$(_module_drv_get_display_name "${_module_id}") signing was requested but signing is not available — skipping."
+    return 0
+  fi
+
+  msg2 "Signing $(_module_drv_get_display_name "${_module_id}") kernel module..."
+  "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" "${_module_path}"
+}
+
+_module_drv_install() {
+  local _module_id
+  local _kernver="$(<version)"
+  local modulesdir="$pkgdir/usr/lib/modules/$_kernver"
+  local _module_extramodules="${modulesdir}/extramodules"
+  local strip_bin="strip"
+
+  [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
+
+  for _module_id in ${_module_drv_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    local _module_name="$(_module_drv_get_module_name "${_module_id}")"
+    local _module_filename="$(_module_drv_get_module_filename "${_module_id}")"
+    local _module_path="${_module_extramodules}/${_module_filename}"
+    local _module_options="$(_module_drv_get_modprobe_options "${_module_id}")"
+    local _license_file="$(_module_drv_get_license_file "${_module_id}")"
+
+    msg2 "Installing $(_module_drv_get_display_name "${_module_id}") kernel module..."
+    install -dm755 "${_module_extramodules}"
+    install -m644 "${_module_src}/${_module_filename}" "${_module_extramodules}/"
+
+    "${strip_bin}" --strip-debug "${_module_path}"
+
+    if _module_drv_should_sign "${_module_id}"; then
+      _module_drv_sign "${_module_id}" "${_module_path}"
+    fi
+
+    zstd --rm -19 -T0 "${_module_path}"
+
+    if _module_drv_should_autoload "${_module_id}"; then
+      printf '%s\n' "${_module_name}" | install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modules-load.d/${_module_name}-${pkgbase}.conf"
+    fi
+
+    if [ -n "${_module_options}" ]; then
+      printf 'options %s %s\n' "${_module_name}" "${_module_options}" |
+        install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modprobe.d/${_module_name}-${pkgbase}.conf"
+    fi
+
+    if [ -n "${_license_file}" ] && [ -f "${_module_src}/${_license_file}" ]; then
+      install -Dm644 "${_module_src}/${_license_file}" "${pkgdir}/usr/share/licenses/${pkgbase}/${_module_id}/${_license_file}"
+    fi
+
+    rm -rf "${_module_src}"
+  done
+}
 
 _undefine() {
   for _config_name in "$@"; do
@@ -631,15 +721,15 @@ _set_nvidia_open() {
     fi
 
     # Signing nvidia-open modules
-    if [ "$_nvidia_open" = "true" ] && [ -z "$_nvidia_open_sign_modules" ]; then
+    if [ "$_nvidia_open" = "true" ] && [ -z "$_nvidia_open_sign" ]; then
       plain "[EXPERIMENTAL] Do you want to sign the NVIDIA open kernel modules?"
       plain "Requires CONFIG_MODULE_SIG=y in your kernel config. Has no effect without _nvidia_open."
       _nvidia_open_sign_array_text=("No (disable — recommended)" "Yes (enable — experimental)")
       _nvidia_open_sign_array=("false" "true")
       _default_index="0"
       _prompt_from_array "${_nvidia_open_sign_array_text[@]}"
-      _nvidia_open_sign_modules="${_nvidia_open_sign_array[$_selected_index]}"
-      echo -e "_nvidia_open_sign_modules='$_nvidia_open_sign_modules'" >> "$_where"/BIG_UGLY_FROGMINER
+      _nvidia_open_sign="${_nvidia_open_sign_array[$_selected_index]}"
+      echo -e "_nvidia_open_sign='$_nvidia_open_sign'" >> "$_where"/BIG_UGLY_FROGMINER
     fi
 
     # Set version based on selection
@@ -655,29 +745,72 @@ _set_nvidia_open() {
   fi
 }
 
-# Build v4l2loopback kernel module
-_set_v4l2loopback() {
-  if [ -z "$_v4l2loopback" ]; then
-    plain "[EXPERIMENTAL] Do you want to build the v4l2loopback kernel module?"
-    plain "Creates virtual /dev/video* devices for use as virtual webcams (e.g. OBS virtual camera)."
-    _v4l2loopback_array_text=("No (disable)" "Yes (enable)")
-    _v4l2loopback_array=("false" "true")
-    _default_index="0"
-    _prompt_from_array "${_v4l2loopback_array_text[@]}"
-    _v4l2loopback="${_v4l2loopback_array[$_selected_index]}"
-    echo -e "_v4l2loopback='$_v4l2loopback'" >> "$_where"/BIG_UGLY_FROGMINER
+_resolve_module_drv_config() {
+  local _module_id
+  local _resolved=""
+  local _autoload=""
+  local _sign=""
+
+  for _module_id in ${_module_drv}; do
+    if ! _module_drv_validate_id "${_module_id}"; then
+      error "Unknown third-party module '${_module_id}' in _module_drv. Supported values: v4l2loopback nct6687d it87"
+      exit 1
+    fi
+    _resolved="$(_module_drv_append_unique "${_resolved}" "${_module_id}")"
+  done
+
+  for _module_id in ${_module_drv_autoload}; do
+    if ! _module_drv_validate_id "${_module_id}"; then
+      error "Unknown third-party module '${_module_id}' in _module_drv_autoload. Supported values: v4l2loopback nct6687d it87"
+      exit 1
+    fi
+    _autoload="$(_module_drv_append_unique "${_autoload}" "${_module_id}")"
+  done
+
+  if [ "${_module_drv_sign}" = "true" ]; then
+    _sign="${_resolved}"
+  elif [ -n "${_module_drv_sign}" ] && [ "${_module_drv_sign}" != "false" ]; then
+    for _module_id in ${_module_drv_sign}; do
+      if ! _module_drv_validate_id "${_module_id}"; then
+        error "Unknown third-party module '${_module_id}' in _module_drv_sign. Supported values: true, false, v4l2loopback, nct6687d, it87"
+        exit 1
+      fi
+      _sign="$(_module_drv_append_unique "${_sign}" "${_module_id}")"
+    done
   fi
 
-  # Signing v4l2loopback module
-  if [ "$_v4l2loopback" = "true" ] && [ -z "$_v4l2loopback_sign_modules" ]; then
-    plain "[EXPERIMENTAL] Do you want to sign the v4l2loopback kernel module?"
-    plain "Requires CONFIG_MODULE_SIG=y in your kernel config. Has no effect without _v4l2loopback."
-    _v4l2loopback_sign_array_text=("No (disable — recommended)" "Yes (enable — experimental)")
-    _v4l2loopback_sign_array=("false" "true")
-    _default_index="0"
-    _prompt_from_array "${_v4l2loopback_sign_array_text[@]}"
-    _v4l2loopback_sign_modules="${_v4l2loopback_sign_array[$_selected_index]}"
-    echo -e "_v4l2loopback_sign_modules='$_v4l2loopback_sign_modules'" >> "$_where"/BIG_UGLY_FROGMINER
+  local _resolved_autoload=""
+  if [ -n "${_resolved}" ]; then
+    for _module_id in ${_autoload}; do
+      if ! _module_drv_list_has "${_resolved}" "${_module_id}"; then
+        error "_module_drv_autoload contains '${_module_id}', but that module is not enabled in _module_drv"
+        exit 1
+      fi
+      _resolved_autoload="$(_module_drv_append_unique "${_resolved_autoload}" "${_module_id}")"
+    done
+  fi
+
+  local _resolved_sign=""
+  if [ -n "${_resolved}" ]; then
+    for _module_id in ${_sign}; do
+      if ! _module_drv_list_has "${_resolved}" "${_module_id}"; then
+        error "_module_drv_sign contains '${_module_id}', but that module is not enabled in _module_drv"
+        exit 1
+      fi
+      _resolved_sign="$(_module_drv_append_unique "${_resolved_sign}" "${_module_id}")"
+    done
+  fi
+
+  _module_drv_resolved="${_resolved}"
+  _module_drv_autoload_resolved="${_resolved_autoload}"
+  _module_drv_sign_resolved="${_resolved_sign}"
+
+  echo -e "_module_drv_resolved='${_module_drv_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_module_drv_autoload_resolved='${_module_drv_autoload_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_module_drv_sign_resolved='${_module_drv_sign_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
+
+  if [ -n "${_module_drv_resolved}" ] && [ "$_ispkgbuild" != "true" ]; then
+    warning "_module_drv is currently only implemented for the Arch PKGBUILD path. install.sh will ignore it."
   fi
 }
 
@@ -727,7 +860,7 @@ _tkg_initscript() {
 
   _set_compiler
 
-  _set_v4l2loopback
+  _resolve_module_drv_config
 
   _set_nvidia_open
 
