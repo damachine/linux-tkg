@@ -113,9 +113,7 @@ _module_drv_should_sign() {
   _module_drv_list_has "${_module_drv_sign_resolved}" "${_module_id}"
 }
 
-# Shared helper: resolve module signing parameters from .config.
-# Sets _sign_script, _sign_key, _sign_cert, _sign_hash on success.
-# Returns 1 if CONFIG_MODULE_SIG=y is not set, key or cert is missing.
+# Shared helper
 _resolve_signing_params() {
   if ! grep -q 'CONFIG_MODULE_SIG=y' "${_kernel_work_folder_abs}/.config"; then
     warning "Module signing was requested but CONFIG_MODULE_SIG=y is not set in .config — skipping."
