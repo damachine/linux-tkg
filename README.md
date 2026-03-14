@@ -28,7 +28,7 @@ Examples:
 _nvidia_open="vulkan"
 ```
 
-The matching driver version and the list of supported kernels for this module are defined in `linux-tkg-config/prepare` at https://github.com/damachine/linux-tkg/blob/staging/linux-tkg-config/prepare#L114-L118.
+Driver versions and supported kernels are pinned in [`linux-tkg-config/prepare`](https://github.com/damachine/linux-tkg/blob/staging/linux-tkg-config/prepare#L114-L118).
 
 <br />
 
