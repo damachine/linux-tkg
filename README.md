@@ -117,7 +117,7 @@ When set to `"true"`, the kernel module signing key and certificate are installe
 ### Install (Arch & derivatives)
 
 ```shell
-git clone --branch staging https://github.com/damachine/linux-tkg.git
+git clone https://github.com/damachine/linux-tkg.git
 cd linux-tkg
 makepkg -si
 ```
