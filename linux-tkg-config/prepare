@@ -695,17 +695,25 @@ _set_nvidia_open() {
 
   # Prompt if not set
   if [ -z "$_nvidia_open" ]; then
-      plain "Do you want to build the open NVIDIA kernel modules as a separate package?"
-      plain "Requires Turing+ GPU (RTX 20xx or newer)."
-      plain "This will disable RT and enable NUMA."
-      plain "  latest = current NVIDIA branch (${_nvidia_open_latest_version})"
-      plain "  vulkan = Vulkan developer beta branch (${_nvidia_open_vulkan_version})"
-      plain "  legacy = older LTS branch (${_nvidia_open_legacy_version})"
-      _nvidia_open_array_text=("No (disable)" "latest (${_nvidia_open_latest_version})" "vulkan (${_nvidia_open_vulkan_version})" "legacy (${_nvidia_open_legacy_version})")
-      _nvidia_open_array=("false" "latest" "vulkan" "legacy")
-      _default_index="0"
-      _prompt_from_array "${_nvidia_open_array_text[@]}"
-      _nvidia_open="${_nvidia_open_array[$_selected_index]}"
+      plain "Which open NVIDIA kernel module branch do you want to build as a separate package?"
+      plain "Requires Turing+ GPU (RTX 20xx or newer). Disables RT and enables NUMA."
+      plain "Enter a number, or press Enter to skip."
+      plain "  > skip"
+      plain "    0) latest (${_nvidia_open_latest_version})"
+      plain "    1) vulkan (${_nvidia_open_vulkan_version})"
+      plain "    2) legacy (${_nvidia_open_legacy_version})"
+      read -rp "[0-2/skip]: " _nvidia_open_input
+      case "$_nvidia_open_input" in
+        0) _nvidia_open="latest" ;;
+        1) _nvidia_open="vulkan" ;;
+        2) _nvidia_open="legacy" ;;
+        *) _nvidia_open="false" ;;
+      esac
+      if [ "$_nvidia_open" != "false" ]; then
+        plain "Selected: ${_nvidia_open}"
+      else
+        plain "No NVIDIA open modules selected."
+      fi
     echo -e "_nvidia_open='$_nvidia_open'" >> "$_where"/BIG_UGLY_FROGMINER
   fi
 
@@ -760,24 +768,27 @@ _resolve_module_drv_config() {
 
   # Prompt if not set
   if [ -z "$_module_drv" ]; then
-    plain "Do you want to build any out-of-tree kernel modules alongside the kernel?"
-    plain "  nct6687     = hardware monitoring for MSI/Gigabyte boards (Nuvoton NCT6687-R)"
-    plain "  it87        = hardware monitoring for ASUS/ASRock boards (ITE IT87xx)"
-    plain "  v4l2loopback = virtual video device (e.g. OBS → Zoom)"
-    _default_index="0"
-    _prompt_from_array "No (disable — default)" "Yes (select modules to include)"
-    if [ "$_selected_index" = "1" ]; then
-      _default_index="0"
-      _prompt_from_array "No (skip nct6687)" "Yes — nct6687"
-      [ "$_selected_index" = "1" ] && _module_drv="$(_module_drv_append_unique "${_module_drv}" "nct6687")"
-
-      _default_index="0"
-      _prompt_from_array "No (skip it87)" "Yes — it87"
-      [ "$_selected_index" = "1" ] && _module_drv="$(_module_drv_append_unique "${_module_drv}" "it87")"
-
-      _default_index="0"
-      _prompt_from_array "No (skip v4l2loopback)" "Yes — v4l2loopback"
-      [ "$_selected_index" = "1" ] && _module_drv="$(_module_drv_append_unique "${_module_drv}" "v4l2loopback")"
+    local _module_drv_ids=("nct6687" "it87" "v4l2loopback")
+    plain "Which out-of-tree kernel modules do you want to build alongside the kernel?"
+    plain "Enter space-separated numbers (e.g. '0 2'), or press Enter to skip."
+    plain "  > skip"
+    plain "    0) nct6687      — hardware monitoring (MSI/Gigabyte, Nuvoton NCT6687-R)"
+    plain "    1) it87         — hardware monitoring (ASUS/ASRock, ITE IT87xx)"
+    plain "    2) v4l2loopback — virtual video device (e.g. OBS → Zoom)"
+    read -rp "[0-2/skip]: " _module_drv_input
+    if [ -n "$_module_drv_input" ]; then
+      for _idx in $_module_drv_input; do
+        if [[ "$_idx" =~ ^[0-2]$ ]]; then
+          _module_drv="$(_module_drv_append_unique "${_module_drv}" "${_module_drv_ids[$_idx]}")"
+        else
+          warning "Ignoring invalid selection '$_idx'"
+        fi
+      done
+    fi
+    if [ -n "$_module_drv" ]; then
+      plain "Selected modules: ${_module_drv}"
+    else
+      plain "No out-of-tree modules selected."
     fi
     echo -e "_module_drv='${_module_drv}'" >> "$_where"/BIG_UGLY_FROGMINER
   fi
