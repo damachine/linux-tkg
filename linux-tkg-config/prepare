@@ -758,6 +758,30 @@ _resolve_module_drv_config() {
   local _autoload=""
   local _sign=""
 
+  # Prompt if not set
+  if [ -z "$_module_drv" ]; then
+    plain "Do you want to build any out-of-tree kernel modules alongside the kernel?"
+    plain "  nct6687     = hardware monitoring for MSI/Gigabyte boards (Nuvoton NCT6687-R)"
+    plain "  it87        = hardware monitoring for ASUS/ASRock boards (ITE IT87xx)"
+    plain "  v4l2loopback = virtual video device (e.g. OBS → Zoom)"
+    _default_index="0"
+    _prompt_from_array "No (disable — default)" "Yes (select modules to include)"
+    if [ "$_selected_index" = "1" ]; then
+      _default_index="0"
+      _prompt_from_array "No (skip nct6687)" "Yes — nct6687"
+      [ "$_selected_index" = "1" ] && _module_drv="$(_module_drv_append_unique "${_module_drv}" "nct6687")"
+
+      _default_index="0"
+      _prompt_from_array "No (skip it87)" "Yes — it87"
+      [ "$_selected_index" = "1" ] && _module_drv="$(_module_drv_append_unique "${_module_drv}" "it87")"
+
+      _default_index="0"
+      _prompt_from_array "No (skip v4l2loopback)" "Yes — v4l2loopback"
+      [ "$_selected_index" = "1" ] && _module_drv="$(_module_drv_append_unique "${_module_drv}" "v4l2loopback")"
+    fi
+    echo -e "_module_drv='${_module_drv}'" >> "$_where"/BIG_UGLY_FROGMINER
+  fi
+
   for _module_id in ${_module_drv}; do
     if ! _module_drv_validate_id "${_module_id}"; then
       error "Unknown third-party module '${_module_id}' in _module_drv. Supported values: v4l2loopback nct6687 it87"
