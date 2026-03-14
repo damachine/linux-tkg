@@ -64,7 +64,7 @@ fi
 pkgname=("${pkgbase}" "${pkgbase}-headers")
 [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ] && pkgname+=("${pkgbase}-nvidia-open") # Separate package for open NVIDIA kernel modules, built alongside the main kernel package.
 pkgver="${_basekernel}"."${_sub}"
-pkgrel=8086
+pkgrel=80386
 pkgdesc='Linux-tkg'
 arch=('x86_64') # no i686 in here
 url="https://www.kernel.org/"
