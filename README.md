@@ -132,7 +132,7 @@ cd linux-tkg
 ./install.sh install
 ```
 
-> `_module_drv` and its companion options should also work on **Generic** and **Gentoo** via `install.sh` — modules are cloned, built, and installed into `/lib/modules/<kernelname>/extramodules/`. Untested, use at your own risk.
+> `_module_drv` and its companion options should also work on **Generic** and **Gentoo**. Untested, use at your own risk.
 
 > `install.sh` has no effect when using on Debian, Ubuntu, Fedora.
 
