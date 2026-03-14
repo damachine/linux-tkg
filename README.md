@@ -109,10 +109,10 @@ When set to `"true"`, the kernel module signing key and certificate are installe
 
 > [!WARNING]
 > The key is stored unencrypted on disk. It is installed with permissions 400 (root-readable only), but anyone with root or physical access to the machine can extract it and sign arbitrary modules. If security is a concern, use full-disk encryption (e.g. LUKS) to protect the key against physical access.
->
-> A common alternative is to enroll your own MOK (Machine Owner Key) via `mokutil --import` and sign modules manually with it — that way the signing key never ends up in the kernel headers package at all. Another approach is building a UKI (Unified Kernel Image) with `ukify`, which embeds the kernel and initramfs into a single signed EFI binary, making per-module signing unnecessary entirely.
 
 ---
+
+<br />
 
 ### Install procedure
 
@@ -133,7 +133,7 @@ cd linux-tkg
 ```
 
 > `_module_drv` and its companion options should also work on **Generic** and **Gentoo**. Untested, use at your own risk.
-
+>
 > `install.sh` has no effect when using on Debian, Ubuntu, Fedora.
 
 ---
