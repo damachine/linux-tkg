@@ -671,6 +671,7 @@ _setup_kernel_work_folder() {
   _set_kver_internal_vars
 }
 
+# ! NVIDIA OPEN BUILD ! — sets variables related to building the open NVIDIA kernel modules
 _set_nvidia_open() {
   if [ "$_nvidia_open" = "false" ]; then
     return
@@ -750,6 +751,7 @@ _set_nvidia_open() {
   fi
 }
 
+# ! MODULE_DRV CONFIG RESOLUTION ! — validates and resolves the _module_drv, _module_drv_autoload and _module_drv_sign variables into _module_drv_resolved, _module_drv_autoload_resolved and _module_drv_sign_resolved
 _resolve_module_drv_config() {
   local _module_id
   local _resolved=""
@@ -1144,11 +1146,10 @@ _tkg_srcprep() {
       tkgpatch="$srcdir/0003-glitched-cfs.patch" && _tkg_patcher
     fi
 
-    # Apply nvidia-open patches to NVIDIA source tree
+    # ! Apply nvidia-open patches to NVIDIA source tree
     if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
       local _nv_open_src="${srcdir}/${_nv_open_pkg}"
       msg2 "NVIDIA-open-module source version ${_nvidia_open_version} (${_nvidia_open}) will be built and installed alongside this kernel."
-      msg2 "Applying NVIDIA-open-module patches (${_nvidia_open_version})..."
 
       local _nv_patch="${srcdir}/0015-nvidia-${_nvidia_open}.patch"
       # vulkan uses the same patch as latest when no vulkan-specific patch exists
@@ -1156,7 +1157,7 @@ _tkg_srcprep() {
         _nv_patch="${srcdir}/0015-nvidia-latest.patch"
       fi
       if [ -f "$_nv_patch" ]; then
-        msg2 "Applying $(basename "$_nv_patch")..."
+        msg2 "Applying NVIDIA-open-module patches (${_nvidia_open_version})..."
         patch -Np1 -i "$_nv_patch" -d "${_nv_open_src}"
       else
         msg2 "No nvidia patch found (looked for $(basename "$_nv_patch"))."
