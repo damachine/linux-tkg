@@ -120,6 +120,11 @@ if [ "$1" = "install" ] || [ "$1" = "config" ]; then
 
   _tkg_srcprep
 
+  # Clone third-party module sources for Generic/Gentoo
+  if [[ "$_distro" =~ ^(Generic|Gentoo)$ ]] && [ -n "${_module_drv_resolved}" ]; then
+    _module_drv_clone
+  fi
+
   _build_dir="$_kernel_work_folder_abs/.."
 
   # Uppercase characters are not allowed in source package name for debian based distros
@@ -389,6 +394,12 @@ if [ "$1" = "install" ]; then
     [[ "$_STRIP" == "true" ]] && _STRIP_MODS="INSTALL_MOD_STRIP=1"
 
     sudo make modules_install $_STRIP_MODS
+
+    # Install third-party kernel modules (Generic/Gentoo)
+    if [ -n "${_module_drv_resolved}" ]; then
+      _module_drv_build
+      _module_drv_install_live
+    fi
 
     msg2 "Removing modules from source folder in /usr/src/${_kernel_src_gentoo}"
     sudo find . -type f -name '*.ko' -delete

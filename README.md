@@ -114,7 +114,9 @@ When set to `"true"`, the kernel module signing key and certificate are installe
 
 ---
 
-### Install (Arch & derivatives)
+### Install procedure
+
+(Arch & derivatives)
 
 ```shell
 git clone https://github.com/damachine/linux-tkg.git
@@ -122,6 +124,16 @@ cd linux-tkg
 makepkg -si
 ```
 
-Has no effect when using `install.sh` on Debian, Ubuntu, Fedora, etc. maybe later ;)
+(Generic / Gentoo)
+
+```shell
+git clone https://github.com/damachine/linux-tkg.git
+cd linux-tkg
+./install.sh install
+```
+
+> `_module_drv` and its companion options should also work on **Generic** and **Gentoo** via `install.sh` — modules are cloned, built, and installed into `/lib/modules/<kernelname>/extramodules/`. Untested, use at your own risk.
+
+> `install.sh` has no effect when using on Debian, Ubuntu, Fedora.
 
 ---
