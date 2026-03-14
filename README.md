@@ -11,7 +11,7 @@
 
 ### Extra knobs in `customization.cfg`
 
-All on top of what upstream already offers.
+All on top of what upstream already offers — knobs live in [`customization.cfg`](https://github.com/damachine/linux-tkg/blob/staging/customization.cfg#L251-L343).
 
 #### `_nvidia_open` — builds the open-source NVIDIA kernel modules alongside the kernel package
 
