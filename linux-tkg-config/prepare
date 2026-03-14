@@ -806,6 +806,13 @@ _resolve_module_drv_config() {
   local _autoload=""
   local _sign=""
 
+  # Treat "false" as explicit opt-out (skip prompt, leave resolved empty)
+  if [ "$_module_drv" = "false" ]; then
+    _module_drv=""
+    echo -e "_module_drv=''" >> "$_where"/BIG_UGLY_FROGMINER
+    return
+  fi
+
   # Prompt if not set
   if [ -z "$_module_drv" ]; then
     local _module_drv_ids=("nct6687" "it87" "v4l2loopback")

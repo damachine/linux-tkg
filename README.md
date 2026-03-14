@@ -13,11 +13,13 @@
 
 All on top of what upstream already offers — knobs live in [`customization.cfg`](https://github.com/damachine/linux-tkg/blob/staging/customization.cfg#L251-L343).
 
+> Leave any option empty or set it to `"false"` to disable it — empty triggers an interactive prompt, `"false"` skips it entirely.
+
 #### `_nvidia_open` — builds the open-source NVIDIA kernel modules alongside the kernel package
 
 | Value | Description |
 |---|---|
-| `"false"` | Disable (default) |
+| `"false"` | Disable (skips prompt) |
 | `"latest"` | Lastest NVIDIA driver branch |
 | `"vulkan"` | Vulkan developer beta branch |
 | `"legacy"` | Older NVIDIA LTS driver branch |
@@ -37,7 +39,11 @@ Driver versions and supported kernels are pinned in [`linux-tkg-config/prepare`]
 Examples:
 
 ```properties
+# enable modules
 _module_drv="nct6687 v4l2loopback"
+
+# disable all — skips prompt
+_module_drv="false"
 ```
 
 Builds selected out-of-tree kernel modules into the main kernel package at build time. Supported modules:
@@ -75,6 +81,7 @@ _module_drv_git_nct6687="abc1234"
 _module_drv_git_nct6687="https://github.com/otherfork/nct6687d.git"
 ```
 
+<br />
 <br />
 
 > These options below were added for personal testing and are left in for anyone who might find it useful.
