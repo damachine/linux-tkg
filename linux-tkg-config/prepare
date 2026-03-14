@@ -111,6 +111,103 @@ _rt_rev_map=(
   ["6.10"]="11"
 )
 
+# NVIDIA open module version definitions
+_nvidia_open_latest_version="595.45.04"
+_nvidia_open_vulkan_version="595.44.03"
+_nvidia_open_legacy_version="580.142"
+_nvidia_open_supported_kernels=("6.12" "6.18" "6.19" "7.0")
+
+source "$_where"/linux-tkg-config/module-driver-registry
+
+# ! MODULE DRIVER REGISTRY ! — defines functions to manage third-party out-of-tree kernel modules, such as v4l2loopback, nct6687 and it87
+_module_drv_clone() {
+  local _module_id
+
+  for _module_id in ${_module_drv_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    local _module_git="$(_module_drv_get_git "${_module_id}")"
+    local _module_url="$(_module_drv_get_git_url "${_module_id}")"
+
+    msg2 "Cloning $(_module_drv_get_display_name "${_module_id}") source..."
+    rm -rf "${_module_src}"
+    git clone --depth=1 "${_module_url}" "${_module_src}"
+
+    if [ -n "${_module_git}" ]; then
+      git -C "${_module_src}" fetch --depth=1 origin "${_module_git}"
+      git -C "${_module_src}" checkout --detach FETCH_HEAD
+    fi
+  done
+}
+
+_module_drv_build() {
+  local _module_id
+
+  for _module_id in ${_module_drv_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    msg2 "Building $(_module_drv_get_display_name "${_module_id}") kernel module..."
+    make ${_force_all_threads} ${llvm_opt} -C "${_kernel_work_folder_abs}" M="${_module_src}" modules
+  done
+}
+
+_module_drv_sign() {
+  local _module_id="$1"
+  local _module_path="$2"
+
+  if ! _resolve_signing_params; then
+    warning "$(_module_drv_get_display_name "${_module_id}") signing was requested but signing is not available — skipping."
+    return 0
+  fi
+
+  msg2 "Signing $(_module_drv_get_display_name "${_module_id}") kernel module..."
+  "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" "${_module_path}"
+}
+
+_module_drv_install() {
+  local _module_id
+  local _kernver="$(<version)"
+  local modulesdir="$pkgdir/usr/lib/modules/$_kernver"
+  local _module_extramodules="${modulesdir}/extramodules"
+  local strip_bin="strip"
+
+  [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
+
+  for _module_id in ${_module_drv_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    local _module_name="$(_module_drv_get_module_name "${_module_id}")"
+    local _module_filename="$(_module_drv_get_module_filename "${_module_id}")"
+    local _module_path="${_module_extramodules}/${_module_filename}"
+    local _module_options="$(_module_drv_get_modprobe_options "${_module_id}")"
+    local _license_file="$(_module_drv_get_license_file "${_module_id}")"
+
+    msg2 "Installing $(_module_drv_get_display_name "${_module_id}") kernel module..."
+    install -dm755 "${_module_extramodules}"
+    install -m644 "${_module_src}/${_module_filename}" "${_module_extramodules}/"
+
+    "${strip_bin}" --strip-debug "${_module_path}"
+
+    if _module_drv_should_sign "${_module_id}"; then
+      _module_drv_sign "${_module_id}" "${_module_path}"
+    fi
+
+    zstd --rm -19 -T0 "${_module_path}"
+
+    if _module_drv_should_autoload "${_module_id}"; then
+      printf '%s\n' "${_module_name}" | install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modules-load.d/${_module_name}-${pkgbase}.conf"
+    fi
+
+    if [ -n "${_module_options}" ]; then
+      printf 'options %s %s\n' "${_module_name}" "${_module_options}" |
+        install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modprobe.d/${_module_name}-${pkgbase}.conf"
+    fi
+
+    if [ -n "${_license_file}" ] && [ -f "${_module_src}/${_license_file}" ]; then
+      install -Dm644 "${_module_src}/${_license_file}" "${pkgdir}/usr/share/licenses/${pkgbase}/${_module_id}/${_license_file}"
+    fi
+
+    rm -rf "${_module_src}"
+  done
+}
+
 _undefine() {
   for _config_name in "$@"; do
     scripts/config -k --undefine "${_config_name}"
@@ -421,7 +518,7 @@ _set_compiler(){
 
   if [ "$_compiler" = "llvm" ]; then
     _compiler_name="-llvm"
-    llvm_opt="LLVM=1 LLVM_IAS=${_llvm_ias:-0}"
+    llvm_opt="CC=clang LD=ld.lld LLVM=1 LLVM_IAS=${_llvm_ias:-0}"
     if [ $_kver -ge 512 ]; then
       if [[ -z "$_lto_mode" || ! "$_lto_mode" =~ ^(no|thin|full)$ ]]; then
         plain "Would you like to enable Clang Link Time Optimizations (LTO) ? It may improve the performance of the kernel."
@@ -438,18 +535,22 @@ _set_compiler(){
         _lto_mode="${_lto_mode_array[$_selected_index]}"
       fi
       if [ "$_lto_mode" != "no" ]; then
-        llvm_opt="LLVM=1 LLVM_IAS=1"
+        llvm_opt="CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1"
       fi
     elif [[ -n "$_lto_mode" && "$_lto_mode" != "no" ]]; then
       warning "Clang LTO is only available on linux 5.12 onwards."
       _lto_mode="no"
     fi
+    # BUILD_FLAGS: array-safe form of llvm_opt, derived directly from it
+    read -ra BUILD_FLAGS <<< "$llvm_opt"
   else # GCC
     _compiler_name=""
     llvm_opt=""
+    BUILD_FLAGS=()
   fi
 
-  echo -e "_compiler_name='$_compiler_name'\nllvm_opt='$llvm_opt'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_compiler_name='$_compiler_name'\nllvm_opt='$llvm_opt'\n_lto_mode='$_lto_mode'" >> "$_where"/BIG_UGLY_FROGMINER
+  declare -p BUILD_FLAGS >> "$_where"/BIG_UGLY_FROGMINER
 }
 
 _define_kernel_abs_paths() {
@@ -521,7 +622,6 @@ _define_kernel_tags() {
   fi
 }
 
-
 _setup_kernel_work_folder() {
 
   _define_kernel_abs_paths
@@ -571,6 +671,153 @@ _setup_kernel_work_folder() {
   _set_kver_internal_vars
 }
 
+_set_nvidia_open() {
+  if [ "$_nvidia_open" = "false" ]; then
+    return
+  fi
+
+  # RT must be disabled
+  if [ "$_preempt_rt" = "1" ] || [ "$_preempt_rt_force" = "1" ]; then
+    warning "PREEMPT_RT is enabled — nvidia-open is incompatible due to licensing issues. Disabling automatically."
+    _nvidia_open="false"
+    echo -e "_nvidia_open='false'" >> "$_where"/BIG_UGLY_FROGMINER
+    return
+  fi
+
+  # NUMA must be enabled
+  if [ "$_numadisable" = "true" ]; then
+    warning "nvidia-open requires NUMA enabled for CUDA/NvEnc. _numadisable is \"true\" — disabling nvidia-open."
+    _nvidia_open="false"
+    echo -e "_nvidia_open='false'" >> "$_where"/BIG_UGLY_FROGMINER
+    return
+  fi
+
+  # Prompt if not set
+  if [ -z "$_nvidia_open" ]; then
+      plain "Do you want to build the open NVIDIA kernel modules as a separate package?"
+      plain "Requires Turing+ GPU (RTX 20xx or newer)."
+      plain "This will disable RT and enable NUMA."
+      plain "  latest = current NVIDIA branch (${_nvidia_open_latest_version})"
+      plain "  vulkan = Vulkan developer beta branch (${_nvidia_open_vulkan_version})"
+      plain "  legacy = older LTS branch (${_nvidia_open_legacy_version})"
+      _nvidia_open_array_text=("No (disable)" "latest (${_nvidia_open_latest_version})" "vulkan (${_nvidia_open_vulkan_version})" "legacy (${_nvidia_open_legacy_version})")
+      _nvidia_open_array=("false" "latest" "vulkan" "legacy")
+      _default_index="0"
+      _prompt_from_array "${_nvidia_open_array_text[@]}"
+      _nvidia_open="${_nvidia_open_array[$_selected_index]}"
+    echo -e "_nvidia_open='$_nvidia_open'" >> "$_where"/BIG_UGLY_FROGMINER
+  fi
+
+  # Resolve version and validate kernel support
+  if [ "$_nvidia_open" != "false" ]; then
+    local _kernel_supported="false"
+    for _k in "${_nvidia_open_supported_kernels[@]}"; do
+      if [ "$_k" = "$_basekernel" ]; then
+        _kernel_supported="true"
+        break
+      fi
+    done
+    if [ "$_kernel_supported" != "true" ]; then
+      error "nvidia-open is not supported for kernel ${_basekernel}. Supported kernels: ${_nvidia_open_supported_kernels[*]}"
+      error "Disabling nvidia-open."
+      _nvidia_open="false"
+    fi
+
+    # Signing nvidia-open modules
+    if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ] && [ -z "$_nvidia_open_sign" ]; then
+      plain "[EXPERIMENTAL] Do you want to sign the NVIDIA open kernel modules?"
+      plain "Requires CONFIG_MODULE_SIG=y in your kernel config. Has no effect without _nvidia_open."
+      _nvidia_open_sign_array_text=("No (disable — recommended)" "Yes (enable — experimental)")
+      _nvidia_open_sign_array=("false" "true")
+      _default_index="0"
+      _prompt_from_array "${_nvidia_open_sign_array_text[@]}"
+      _nvidia_open_sign="${_nvidia_open_sign_array[$_selected_index]}"
+      echo -e "_nvidia_open_sign='$_nvidia_open_sign'" >> "$_where"/BIG_UGLY_FROGMINER
+    fi
+
+    # Set version based on selection
+    if [ "$_nvidia_open" = "latest" ]; then
+      _nvidia_open_version="${_nvidia_open_latest_version}"
+    elif [ "$_nvidia_open" = "vulkan" ]; then
+      _nvidia_open_version="${_nvidia_open_vulkan_version}"
+    elif [ "$_nvidia_open" = "legacy" ]; then
+      _nvidia_open_version="${_nvidia_open_legacy_version}"
+    fi
+
+    if [ "$_nvidia_open" != "false" ]; then
+      echo -e "_nvidia_open_version='$_nvidia_open_version'" >> "$_where"/BIG_UGLY_FROGMINER
+    fi
+  fi
+}
+
+_resolve_module_drv_config() {
+  local _module_id
+  local _resolved=""
+  local _autoload=""
+  local _sign=""
+
+  for _module_id in ${_module_drv}; do
+    if ! _module_drv_validate_id "${_module_id}"; then
+      error "Unknown third-party module '${_module_id}' in _module_drv. Supported values: v4l2loopback nct6687 it87"
+      exit 1
+    fi
+    _resolved="$(_module_drv_append_unique "${_resolved}" "${_module_id}")"
+  done
+
+  for _module_id in ${_module_drv_autoload}; do
+    if ! _module_drv_validate_id "${_module_id}"; then
+      error "Unknown third-party module '${_module_id}' in _module_drv_autoload. Supported values: v4l2loopback nct6687 it87"
+      exit 1
+    fi
+    _autoload="$(_module_drv_append_unique "${_autoload}" "${_module_id}")"
+  done
+
+  if [ "${_module_drv_sign}" = "true" ]; then
+    _sign="${_resolved}"
+  elif [ -n "${_module_drv_sign}" ] && [ "${_module_drv_sign}" != "false" ]; then
+    for _module_id in ${_module_drv_sign}; do
+      if ! _module_drv_validate_id "${_module_id}"; then
+        error "Unknown third-party module '${_module_id}' in _module_drv_sign. Supported values: true, false, v4l2loopback, nct6687, it87"
+        exit 1
+      fi
+      _sign="$(_module_drv_append_unique "${_sign}" "${_module_id}")"
+    done
+  fi
+
+  local _resolved_autoload=""
+  if [ -n "${_resolved}" ]; then
+    for _module_id in ${_autoload}; do
+      if ! _module_drv_list_has "${_resolved}" "${_module_id}"; then
+        error "_module_drv_autoload contains '${_module_id}', but that module is not enabled in _module_drv"
+        exit 1
+      fi
+      _resolved_autoload="$(_module_drv_append_unique "${_resolved_autoload}" "${_module_id}")"
+    done
+  fi
+
+  local _resolved_sign=""
+  if [ -n "${_resolved}" ]; then
+    for _module_id in ${_sign}; do
+      if ! _module_drv_list_has "${_resolved}" "${_module_id}"; then
+        error "_module_drv_sign contains '${_module_id}', but that module is not enabled in _module_drv"
+        exit 1
+      fi
+      _resolved_sign="$(_module_drv_append_unique "${_resolved_sign}" "${_module_id}")"
+    done
+  fi
+
+  _module_drv_resolved="${_resolved}"
+  _module_drv_autoload_resolved="${_resolved_autoload}"
+  _module_drv_sign_resolved="${_resolved_sign}"
+
+  echo -e "_module_drv_resolved='${_module_drv_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_module_drv_autoload_resolved='${_module_drv_autoload_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_module_drv_sign_resolved='${_module_drv_sign_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
+
+  if [ -n "${_module_drv_resolved}" ] && [ "$_ispkgbuild" != "true" ]; then
+    warning "_module_drv is currently only implemented for the Arch PKGBUILD path. install.sh will ignore it."
+  fi
+}
 
 _tkg_initscript() {
 
@@ -617,6 +864,10 @@ _tkg_initscript() {
   cp "$_where"/linux-tkg-config/${_basekernel}/* "$_where" # copy config files and hooks inside the PKGBUILD's dir to preserve makepkg sourcing and md5sum checking
 
   _set_compiler
+
+  _resolve_module_drv_config
+
+  _set_nvidia_open
 
   if [ -n "$_custom_pkgbase" ]; then
     echo -e "_custom_pkgbase=\"$_custom_pkgbase\"" >> "$_where"/BIG_UGLY_FROGMINER
@@ -727,171 +978,190 @@ _tkg_srcprep() {
 
   if [ -z $_debug ]; then
 
-  # PREEMPT_RT patch
-  if [ "${_preempt_rt}" = "1" ] && [[ $_kver -lt 612 ]]; then
-    if [ "${_rt_subver_map[$_basekernel]+_}" = "_" ]; then
-      preempt_rt_ksubver="${_rt_subver_map[$_basekernel]}"
-      # Check if subversion is supported, skip check if forced
-      if [ "${_preempt_rt_force}" = "1" ] || [ "${preempt_rt_ksubver}" = "${_sub}" ]; then
-        if [[ "${_sub}" == *rc* ]]; then
-          _separator="-"
+    # PREEMPT_RT patch
+    if [ "${_preempt_rt}" = "1" ] && [[ $_kver -lt 612 ]]; then
+      if [ "${_rt_subver_map[$_basekernel]+_}" = "_" ]; then
+        preempt_rt_ksubver="${_rt_subver_map[$_basekernel]}"
+        # Check if subversion is supported, skip check if forced
+        if [ "${_preempt_rt_force}" = "1" ] || [ "${preempt_rt_ksubver}" = "${_sub}" ]; then
+          if [[ "${_sub}" == *rc* ]]; then
+            _separator="-"
+          else
+            _separator="."
+          fi
+          if [[ "${preempt_rt_ksubver}" == 0 ]]; then
+            _separator=
+            preempt_rt_ksubver=
+          fi
+          preempt_rt_file_gz="patch-${_basekernel}${_separator}${preempt_rt_ksubver}-rt${_rt_rev_map["$_basekernel"]}.patch.gz"
+          preempt_rt_file=`basename ${preempt_rt_file_gz} .gz`
+          curl "https://cdn.kernel.org/pub/linux/kernel/projects/rt/${_basekernel}/${preempt_rt_file_gz}" > "$srcdir"/"${preempt_rt_file_gz}"
+          last_pwd=`pwd`
+          cd "$srcdir"
+          gunzip -k "$srcdir/${preempt_rt_file_gz}"
+          cd "$last_pwd"
+          tkgpatch="$srcdir/${preempt_rt_file}"
+          _msg="Applying PREEMPT_RT patch" && _tkg_patcher
         else
-          _separator="."
+          warning "Skipping PREEMPT_RT patch for ${_basekernel}.${_sub} (last known good ${_basekernel}.${preempt_rt_ksubver})"
         fi
-        if [[ "${preempt_rt_ksubver}" == 0 ]]; then
-          _separator=
-          preempt_rt_ksubver=
-        fi
-        preempt_rt_file_gz="patch-${_basekernel}${_separator}${preempt_rt_ksubver}-rt${_rt_rev_map["$_basekernel"]}.patch.gz"
-        preempt_rt_file=`basename ${preempt_rt_file_gz} .gz`
-        curl "https://cdn.kernel.org/pub/linux/kernel/projects/rt/${_basekernel}/${preempt_rt_file_gz}" > "$srcdir"/"${preempt_rt_file_gz}"
-        last_pwd=`pwd`
-        cd "$srcdir"
-        gunzip -k "$srcdir/${preempt_rt_file_gz}"
-        cd "$last_pwd"
-        tkgpatch="$srcdir/${preempt_rt_file}"
-        _msg="Applying PREEMPT_RT patch" && _tkg_patcher
       else
-        warning "Skipping PREEMPT_RT patch for ${_basekernel}.${_sub} (last known good ${_basekernel}.${preempt_rt_ksubver})"
+        warning "Skipping PREEMPT_RT patch on unsupported kernel version"
       fi
-    else
-      warning "Skipping PREEMPT_RT patch on unsupported kernel version"
-    fi
-  fi
-
-  # TkG
-  if [ "$_clear_patches" = "true" ]; then
-    tkgpatch="$srcdir/0002-clear-patches.patch"
-    _msg="Applying clear linux patches" && _tkg_patcher
-  fi
-
-  if [ "$_glitched_base" = "true" ]; then
-    tkgpatch="$srcdir/0003-glitched-base.patch"
-    _msg="Applying glitched base patch" && _tkg_patcher
-  fi
-
-  if [ "${_preempt_rt}" != "1" ]; then
-    tkgpatch="$srcdir/0003-glitched-base-nonrt.patch"
-    _msg="Applying glitched base non-rt additions patch" && _tkg_patcher
-  fi
-
-  tkgpatch="$srcdir/0013-fedora-rpm.patch"
-  _msg="RPM: fixing spec generator" && _tkg_patcher
-
-  if [[ "$_STRIP" == "true" ]]; then
-    tkgpatch="$srcdir/0013-fedora-strip-modules.patch"
-    _msg="RPM: strip modules" && _tkg_patcher
-  fi
-
-  if [ "$_distro" = "Suse" ]; then
-    tkgpatch="$srcdir/0013-suse-additions.patch"
-    _msg="Import Suse-specific patches" && _tkg_patcher
-  fi
-
-  if [ "$_distro" = "Gentoo" ]; then
-    # https://dev.gentoo.org/~mpagano/genpatches/trunk/
-    tkgpatch="$srcdir/0013-gentoo-kconfig.patch"
-    _msg="Import Gentoo-kconfig patches" && _tkg_patcher
-    tkgpatch="$srcdir/0013-gentoo-print-loaded-firmware.patch"
-    _msg="Print firmware names on load" && _tkg_patcher
-  fi
-
-  if [ -z $_misc_adds ]; then
-    plain "Enable misc additions ? They may contain temporary fixes pending upstream, or some other changes that can break on non-Arch distros."
-    read -rp "`echo $'    > [Y]/n : '`" _interactive_misc_adds;
-    if [ "$_interactive_misc_adds" != "n" ] && [ "$_interactive_misc_adds" != "N" ]; then
-      _misc_adds="true"
-    fi
-  fi
-
-  if [ "$_misc_adds" = "true" ]; then
-    tkgpatch="$srcdir/0012-misc-additions.patch"
-    _msg="Applying misc additions patch" && _tkg_patcher
-  fi
-
-  _msg="Applying patches for WRITE_WATCH support in Wine"
-  tkgpatch="$srcdir/0001-mm-Support-soft-dirty-flag-reset-for-VA-range.patch" && _tkg_patcher
-  tkgpatch="$srcdir/0002-mm-Support-soft-dirty-flag-read-with-reset.patch" && _tkg_patcher
-
-  if [ "${_cpusched}" = "muqss" ]; then
-    # MuQSS
-    _msg="Applying MuQSS base patch"
-    tkgpatch="$srcdir/0004-${_basekernel}-ck1.patch" && _tkg_patcher
-
-    if [ "${_aggressive_ondemand}" = "true" ]; then
-      _msg="Applying MuQSS agressive ondemand governor patch"
-      tkgpatch="$srcdir/0004-glitched-ondemand-muqss.patch" && _tkg_patcher
     fi
 
-    _msg="Applying Glitched MuQSS patch"
-    tkgpatch="$srcdir/0004-glitched-muqss.patch" && _tkg_patcher
-
-  elif [ "${_cpusched}" = "upds" ] || [ "${_cpusched}" = "pds" ]; then
-    # upds naming quirk
-    if [ "${_cpusched}" = "upds" ];then
-      # is it dead or alive
-      doa="-undead"
+    # TkG
+    if [ "$_clear_patches" = "true" ]; then
+      tkgpatch="$srcdir/0002-clear-patches.patch"
+      _msg="Applying clear linux patches" && _tkg_patcher
     fi
 
-    # PDS-mq
-    _msg="Applying PDS base patch"
-    if [ "${_cpusched}" = "upds" ] || ( [ "$_kver" = "504" ] || [ "$_kver" = "507" ] && [ "${_cpusched}" = "pds" ] ); then
-      tkgpatch="$srcdir/0005-v${_basekernel}_undead-pds099o.patch" && _tkg_patcher
-      if [ "${_aggressive_ondemand}" = "true" ]; then
-        _msg="Applying PDS agressive ondemand governor patch"
-        tkgpatch="$srcdir/0005${doa}-glitched-ondemand-pds.patch" && _tkg_patcher
+    if [ "$_glitched_base" = "true" ]; then
+      tkgpatch="$srcdir/0003-glitched-base.patch"
+      _msg="Applying glitched base patch" && _tkg_patcher
+    fi
+
+    if [ "${_preempt_rt}" != "1" ]; then
+      tkgpatch="$srcdir/0003-glitched-base-nonrt.patch"
+      _msg="Applying glitched base non-rt additions patch" && _tkg_patcher
+    fi
+
+    tkgpatch="$srcdir/0013-fedora-rpm.patch"
+    _msg="RPM: fixing spec generator" && _tkg_patcher
+
+    if [[ "$_STRIP" == "true" ]]; then
+      tkgpatch="$srcdir/0013-fedora-strip-modules.patch"
+      _msg="RPM: strip modules" && _tkg_patcher
+    fi
+
+    if [ "$_distro" = "Suse" ]; then
+      tkgpatch="$srcdir/0013-suse-additions.patch"
+      _msg="Import Suse-specific patches" && _tkg_patcher
+    fi
+
+    if [ "$_distro" = "Gentoo" ]; then
+      # https://dev.gentoo.org/~mpagano/genpatches/trunk/
+      tkgpatch="$srcdir/0013-gentoo-kconfig.patch"
+      _msg="Import Gentoo-kconfig patches" && _tkg_patcher
+      tkgpatch="$srcdir/0013-gentoo-print-loaded-firmware.patch"
+      _msg="Print firmware names on load" && _tkg_patcher
+    fi
+
+    if [ -z $_misc_adds ]; then
+      plain "Enable misc additions ? They may contain temporary fixes pending upstream, or some other changes that can break on non-Arch distros."
+      read -rp "`echo $'    > [Y]/n : '`" _interactive_misc_adds;
+      if [ "$_interactive_misc_adds" != "n" ] && [ "$_interactive_misc_adds" != "N" ]; then
+        _misc_adds="true"
       fi
-    else
-      tkgpatch="$srcdir/0009-prjc.patch" && _tkg_patcher
+    fi
+
+    if [ "$_misc_adds" = "true" ]; then
+      tkgpatch="$srcdir/0012-misc-additions.patch"
+      _msg="Applying misc additions patch" && _tkg_patcher
+    fi
+
+    _msg="Applying patches for WRITE_WATCH support in Wine"
+    tkgpatch="$srcdir/0001-mm-Support-soft-dirty-flag-reset-for-VA-range.patch" && _tkg_patcher
+    tkgpatch="$srcdir/0002-mm-Support-soft-dirty-flag-read-with-reset.patch" && _tkg_patcher
+
+    if [ "${_cpusched}" = "muqss" ]; then
+      # MuQSS
+      _msg="Applying MuQSS base patch"
+      tkgpatch="$srcdir/0004-${_basekernel}-ck1.patch" && _tkg_patcher
+
       if [ "${_aggressive_ondemand}" = "true" ]; then
-        _msg="Applying prjc PDS/BMQ agressive ondemand governor patch"
+        _msg="Applying MuQSS agressive ondemand governor patch"
+        tkgpatch="$srcdir/0004-glitched-ondemand-muqss.patch" && _tkg_patcher
+      fi
+
+      _msg="Applying Glitched MuQSS patch"
+      tkgpatch="$srcdir/0004-glitched-muqss.patch" && _tkg_patcher
+
+    elif [ "${_cpusched}" = "upds" ] || [ "${_cpusched}" = "pds" ]; then
+      # upds naming quirk
+      if [ "${_cpusched}" = "upds" ];then
+        # is it dead or alive
+        doa="-undead"
+      fi
+
+      # PDS-mq
+      _msg="Applying PDS base patch"
+      if [ "${_cpusched}" = "upds" ] || ( [ "$_kver" = "504" ] || [ "$_kver" = "507" ] && [ "${_cpusched}" = "pds" ] ); then
+        tkgpatch="$srcdir/0005-v${_basekernel}_undead-pds099o.patch" && _tkg_patcher
+        if [ "${_aggressive_ondemand}" = "true" ]; then
+          _msg="Applying PDS agressive ondemand governor patch"
+          tkgpatch="$srcdir/0005${doa}-glitched-ondemand-pds.patch" && _tkg_patcher
+        fi
+      else
+        tkgpatch="$srcdir/0009-prjc.patch" && _tkg_patcher
+        if [ "${_aggressive_ondemand}" = "true" ]; then
+          _msg="Applying prjc PDS/BMQ agressive ondemand governor patch"
+          tkgpatch="$srcdir/0009-glitched-ondemand-bmq.patch" && _tkg_patcher
+        fi
+      fi
+
+      _msg="Applying Glitched PDS patch"
+      tkgpatch="$srcdir/0005${doa}-glitched-pds.patch" && _tkg_patcher
+
+    elif [ "${_cpusched}" = "bmq" ]; then
+      # Project C / BMQ
+      _msg="Applying Project C / BMQ base patch"
+      if [ "$_kver" != "504" ]; then
+        tkgpatch="$srcdir/0009-prjc.patch" && _tkg_patcher
+      else
+        tkgpatch="$srcdir/0009-bmq.patch" && _tkg_patcher
+      fi
+
+      if [ "${_aggressive_ondemand}" = "true" ] && [ "$_kver" != "504" ]; then
+        _msg="Applying BMQ agressive ondemand governor patch"
         tkgpatch="$srcdir/0009-glitched-ondemand-bmq.patch" && _tkg_patcher
       fi
+
+      _msg="Applying Glitched BMQ patch"
+      tkgpatch="$srcdir/0009-glitched-bmq.patch" && _tkg_patcher
+    elif [ "${_cpusched}" = "bore" ]; then
+      _msg="Applying BORE patch"
+      tkgpatch="$srcdir/0001-bore.patch" && _tkg_patcher
+    elif [ "${_cpusched}" = "cfs" ]; then
+      _msg="Applying Glitched CFS additions patch"
+      tkgpatch="$srcdir/0003-glitched-cfs-additions.patch" && _tkg_patcher
+    elif [[ "${_cpusched}" =~ "eevdf" ]]; then
+      if [[ $_kver == "604" || $_kver == "605" ]]; then
+        _msg="Applying Earliest Eligible Virtual Deadline First (EEVDF) scheduler patch"
+        tkgpatch="$srcdir/0003-eevdf.patch" && _tkg_patcher
+
+        _msg="Applying eevdf-Disable-DELAY_DEQUEUE patch"
+        tkgpatch="$srcdir/0004-eevdf-Disable-DELAY_DEQUEUE.patch" && _tkg_patcher
+
+      elif [[ $_kver -ge 606 ]]; then
+        _msg="Applying Glitched EEVDF additions patch"
+        tkgpatch="$srcdir/0003-glitched-eevdf-additions.patch" && _tkg_patcher
+      fi
     fi
 
-    _msg="Applying Glitched PDS patch"
-    tkgpatch="$srcdir/0005${doa}-glitched-pds.patch" && _tkg_patcher
-
-  elif [ "${_cpusched}" = "bmq" ]; then
-    # Project C / BMQ
-    _msg="Applying Project C / BMQ base patch"
-    if [ "$_kver" != "504" ]; then
-      tkgpatch="$srcdir/0009-prjc.patch" && _tkg_patcher
-    else
-      tkgpatch="$srcdir/0009-bmq.patch" && _tkg_patcher
+    if [ "${_cpusched}" = "cfs" ] || [ "${_cpusched}" = "bore" ] || [[ "${_cpusched}" =~ "eevdf" ]]; then
+      _msg="Applying Glitched CFS/EEVDF patch"
+      tkgpatch="$srcdir/0003-glitched-cfs.patch" && _tkg_patcher
     fi
 
-    if [ "${_aggressive_ondemand}" = "true" ] && [ "$_kver" != "504" ]; then
-      _msg="Applying BMQ agressive ondemand governor patch"
-      tkgpatch="$srcdir/0009-glitched-ondemand-bmq.patch" && _tkg_patcher
+    # Apply nvidia-open patches to NVIDIA source tree
+    if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
+      local _nv_open_src="${srcdir}/${_nv_open_pkg}"
+      msg2 "NVIDIA-open-module source version ${_nvidia_open_version} (${_nvidia_open}) will be built and installed alongside this kernel."
+      msg2 "Applying NVIDIA-open-module patches (${_nvidia_open_version})..."
+
+      local _nv_patch="${srcdir}/0015-nvidia-${_nvidia_open}.patch"
+      # vulkan uses the same patch as latest when no vulkan-specific patch exists
+      if [ ! -f "$_nv_patch" ] && [ "$_nvidia_open" = "vulkan" ]; then
+        _nv_patch="${srcdir}/0015-nvidia-latest.patch"
+      fi
+      if [ -f "$_nv_patch" ]; then
+        msg2 "Applying $(basename "$_nv_patch")..."
+        patch -Np1 -i "$_nv_patch" -d "${_nv_open_src}"
+      else
+        msg2 "No nvidia patch found (looked for $(basename "$_nv_patch"))."
+      fi
     fi
-
-    _msg="Applying Glitched BMQ patch"
-    tkgpatch="$srcdir/0009-glitched-bmq.patch" && _tkg_patcher
-  elif [ "${_cpusched}" = "bore" ]; then
-    _msg="Applying BORE patch"
-    tkgpatch="$srcdir/0001-bore.patch" && _tkg_patcher
-  elif [ "${_cpusched}" = "cfs" ]; then
-    _msg="Applying Glitched CFS additions patch"
-    tkgpatch="$srcdir/0003-glitched-cfs-additions.patch" && _tkg_patcher
-  elif [[ "${_cpusched}" =~ "eevdf" ]]; then
-    if [[ $_kver == "604" || $_kver == "605" ]]; then
-      _msg="Applying Earliest Eligible Virtual Deadline First (EEVDF) scheduler patch"
-      tkgpatch="$srcdir/0003-eevdf.patch" && _tkg_patcher
-
-      _msg="Applying eevdf-Disable-DELAY_DEQUEUE patch"
-      tkgpatch="$srcdir/0004-eevdf-Disable-DELAY_DEQUEUE.patch" && _tkg_patcher
-
-    elif [[ $_kver -ge 606 ]]; then
-      _msg="Applying Glitched EEVDF additions patch"
-      tkgpatch="$srcdir/0003-glitched-eevdf-additions.patch" && _tkg_patcher
-    fi
-  fi
-
-  if [ "${_cpusched}" = "cfs" ] || [ "${_cpusched}" = "bore" ] || [[ "${_cpusched}" =~ "eevdf" ]]; then
-    _msg="Applying Glitched CFS/EEVDF patch"
-    tkgpatch="$srcdir/0003-glitched-cfs.patch" && _tkg_patcher
-  fi
 
   fi
 

@@ -1,0 +1,163 @@
+# Check if _item is in space-separated _list
+_module_drv_list_has() {
+  local _list="$1"
+  local _item="$2"
+  [[ " ${_list} " == *" ${_item} "* ]]
+}
+
+# Append _item to _list if not already present
+_module_drv_append_unique() {
+  local _list="$1"
+  local _item="$2"
+
+  if [ -z "${_item}" ] || _module_drv_list_has "${_list}" "${_item}"; then
+    printf '%s\n' "${_list}"
+  else
+    printf '%s\n' "${_list:+${_list} }${_item}"
+  fi
+}
+
+# Return 0 if $1 is a known module id
+_module_drv_validate_id() {
+  case "$1" in
+    v4l2loopback|nct6687|it87)
+      return 0
+    ;;
+  esac
+
+  return 1
+}
+
+# Human-readable module name (currently same as id)
+_module_drv_get_display_name() {
+  printf '%s\n' "$1"
+}
+
+# Return the upstream git URL for a module.
+# If _module_drv_git_<id> is a URL, use that instead.
+_module_drv_get_git_url() {
+  local _module_id="$1"
+  local _var_name="_module_drv_git_${_module_id}"
+  local _val="${!_var_name}"
+
+  # If the value looks like a URL, use it as the repository URL instead of the default
+  if [[ "$_val" == https://* || "$_val" == git@* || "$_val" == git://* ]]; then
+    printf '%s\n' "$_val"
+    return
+  fi
+
+  case "$_module_id" in
+    v4l2loopback)
+      printf '%s\n' 'https://github.com/v4l2loopback/v4l2loopback.git'
+    ;;
+    nct6687)
+      printf '%s\n' 'https://github.com/Fred78290/nct6687d.git'
+    ;;
+    it87)
+      printf '%s\n' 'https://github.com/frankcrawford/it87.git'
+    ;;
+  esac
+}
+
+# Subdirectory name inside $srcdir where the module is cloned
+_module_drv_get_source_dir() {
+  printf '%s\n' "$1"
+}
+
+# Kernel module name
+_module_drv_get_module_name() {
+  printf '%s\n' "$1"
+}
+
+# .ko filename for a module
+_module_drv_get_module_filename() {
+  printf '%s.ko\n' "$(_module_drv_get_module_name "$1")"
+}
+
+# Return the license file path relative to the module source dir, if any
+_module_drv_get_license_file() {
+  case "$1" in
+    nct6687)
+      printf '%s\n' 'LICENSE'
+    ;;
+    it87)
+      printf '%s\n' 'COPYING'
+    ;;
+    *)
+      return 1
+    ;;
+  esac
+}
+
+# Return the git ref to check out (branch/tag/commit).
+_module_drv_get_git() {
+  local _module_id="$1"
+  local _var_name="_module_drv_git_${_module_id}"
+  local _val="${!_var_name}"
+
+  # If the value is a URL it is used as the repo URL, not as a git ref — return empty
+  if [[ "$_val" == https://* || "$_val" == git@* || "$_val" == git://* ]]; then
+    return
+  fi
+
+  printf '%s\n' "$_val"
+}
+
+# Return the _module_drv_options_<id> string for modprobe.d
+_module_drv_get_modprobe_options() {
+  local _module_id="$1"
+  local _var_name="_module_drv_options_${_module_id}"
+  printf '%s\n' "${!_var_name}"
+}
+
+# Modules that are autoloaded by default even without _module_drv_autoload
+_module_drv_default_autoload() {
+  case "$1" in
+    v4l2loopback)
+      return 0
+    ;;
+  esac
+
+  return 1
+}
+
+# Return 0 if the module should be autoloaded at boot
+_module_drv_should_autoload() {
+  local _module_id="$1"
+
+  if _module_drv_list_has "${_module_drv_autoload_resolved}" "${_module_id}"; then
+    return 0
+  fi
+
+  _module_drv_default_autoload "${_module_id}"
+}
+
+# Return 0 if the module should be signed after build
+_module_drv_should_sign() {
+  local _module_id="$1"
+  _module_drv_list_has "${_module_drv_sign_resolved}" "${_module_id}"
+}
+
+# Shared helper: resolve kernel sign-file, key, cert and hash from .config
+_resolve_signing_params() {
+  if ! grep -q 'CONFIG_MODULE_SIG=y' "${_kernel_work_folder_abs}/.config"; then
+    warning "Module signing was requested but CONFIG_MODULE_SIG=y is not set in .config — skipping."
+    return 1
+  fi
+
+  _sign_script="${_kernel_work_folder_abs}/scripts/sign-file"
+  _sign_key="$(grep -Po 'CONFIG_MODULE_SIG_KEY="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+  [[ "$_sign_key" =~ ^/ ]] || _sign_key="${_kernel_work_folder_abs}/${_sign_key}"
+  _sign_cert="${_kernel_work_folder_abs}/certs/signing_key.x509"
+  _sign_hash="$(grep -Po 'CONFIG_MODULE_SIG_HASH="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+
+  if [[ ! -f "$_sign_key" ]]; then
+    warning "Module signing key not found: ${_sign_key}"
+    return 1
+  elif [[ ! -f "$_sign_cert" ]]; then
+    warning "Module signing certificate not found: ${_sign_cert}"
+    return 1
+  fi
+
+  return 0
+}

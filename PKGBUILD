@@ -54,6 +54,7 @@ if [ ! -e "$_where"/BIG_UGLY_FROGMINER ]; then
 fi
 
 source "$_where"/BIG_UGLY_FROGMINER
+source "$_where"/linux-tkg-config/prepare
 
 if [ -n "$_custom_pkgbase" ]; then
   pkgbase="${_custom_pkgbase}"
@@ -61,8 +62,9 @@ else
   pkgbase=linux"${_basever}"-tkg-"${_cpusched}"${_compiler_name}
 fi
 pkgname=("${pkgbase}" "${pkgbase}-headers")
+[ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ] && pkgname+=("${pkgbase}-nvidia-open") # Separate package for open NVIDIA kernel modules, built alongside the main kernel package.
 pkgver="${_basekernel}"."${_sub}"
-pkgrel=273
+pkgrel=274
 pkgdesc='Linux-tkg'
 arch=('x86_64') # no i686 in here
 url="https://www.kernel.org/"
@@ -70,6 +72,18 @@ license=('GPL2')
 makedepends=('bison' 'xmlto' 'docbook-xsl' 'inetutils' 'bc' 'libelf' 'pahole' 'patchutils' 'flex' 'python-sphinx' 'python-sphinx_rtd_theme' 'graphviz' 'imagemagick' 'git' 'cpio' 'perl' 'tar' 'xz' 'wget')
 if [ "$_compiler_name" = "-llvm" ]; then
   makedepends+=( 'lld' 'clang' 'llvm')
+fi
+
+# nvidia-open source tarball — vulkan-beta from GitHub
+if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
+  if [ "$_nvidia_open" = "vulkan" ]; then
+    _nv_open_pkg="open-gpu-kernel-modules-${_nvidia_open_version}"
+    source+=("${_nv_open_pkg}.tar.gz::https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/${_nvidia_open_version}.tar.gz")
+  else
+    _nv_open_pkg="NVIDIA-kernel-module-source-${_nvidia_open_version}"
+    source+=("https://download.nvidia.com/XFree86/NVIDIA-kernel-module-source/${_nv_open_pkg}.tar.xz")
+  fi
+  sha256sums+=('SKIP')
 fi
 optdepends=('schedtool')
 options=('!strip' 'docs')
@@ -84,14 +98,13 @@ export KBUILD_BUILD_USER=$pkgbase
 export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
 
 prepare() {
-  source "$_where"/BIG_UGLY_FROGMINER
-  source "$_where"/linux-tkg-config/prepare
-
   rm -rf $pkgdir # Nuke the entire pkg folder so it'll get regenerated clean on next build
 
   ln -s "${_kernel_work_folder_abs}" "${srcdir}"
 
   _tkg_srcprep
+
+  _module_drv_clone
 }
 
 build() {
@@ -146,6 +159,25 @@ build() {
     time ( make ${_force_all_threads} ${llvm_opt} LOCALVERSION= bzImage modules 2>&1 ) 3>&1 1>&2 2>&3
     return 0
   )
+
+  # Build nvidia-open modules
+  if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
+    local _nv_open_src="${srcdir}/${_nv_open_pkg}"
+    local _kernuname
+    _kernuname="$(< "${_kernel_work_folder_abs}/include/config/kernel.release")"
+    local MODULE_FLAGS=(
+      KERNEL_UNAME="${_kernuname}"
+      IGNORE_PREEMPT_RT_PRESENCE=1
+      SYSSRC="${_kernel_work_folder_abs}"
+      SYSOUT="${_kernel_work_folder_abs}"
+      IGNORE_CC_MISMATCH=yes
+    )
+    msg2 "Building NVIDIA open kernel modules (${_nvidia_open_version})..."
+    CFLAGS= CXXFLAGS= LDFLAGS= make "${BUILD_FLAGS[@]}" "${MODULE_FLAGS[@]}" \
+      -C "${_nv_open_src}" -j"$(nproc)" modules
+  fi
+
+  _module_drv_build
 }
 
 hackbase() {
@@ -192,6 +224,17 @@ hackbase() {
   # remove build and source links
   rm -f "$modulesdir"/{source,build}
 
+  # Re-sign modules after stripping (INSTALL_MOD_STRIP removes embedded signatures)
+  if [[ "$_RESIGN_AFTER_STRIP" == "true" ]] && [[ "$_STRIP" == "true" ]]; then
+    if _resolve_signing_params; then
+      msg2 "Re-signing kernel modules after strip..."
+      find "${modulesdir}" -type f -name '*.ko' \
+        -exec "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" '{}' \;
+    else
+      warning "_RESIGN_AFTER_STRIP is enabled but signing is not available — skipping module re-signing."
+    fi
+  fi
+
   # install cleanup pacman hook and script
   sed -e "s|cleanup|${pkgbase}-cleanup|g" "${srcdir}"/90-cleanup.hook |
     install -Dm644 /dev/stdin "${pkgdir}/usr/share/libalpm/hooks/90-${pkgbase}.hook"
@@ -210,8 +253,8 @@ hackbase() {
       fi
     fi
     # load ntsync module at boot
-    msg2 "Set the ntsync module to be loaded at boot through /etc/modules-load.d"
-    install -Dm644 "${srcdir}"/ntsync.conf "${pkgdir}/etc/modules-load.d/ntsync-${pkgbase}.conf"
+    msg2 "Set the ntsync module to be loaded at boot through /usr/lib/modules-load.d"
+    install -Dm644 "${srcdir}"/ntsync.conf "${pkgdir}/usr/lib/modules-load.d/ntsync-${pkgbase}.conf"
   fi
 
   # install udev rule for ntsync if needed (<6.14)
@@ -219,13 +262,15 @@ hackbase() {
     msg2 "Installing udev rule for ntsync"
     install -Dm644 "${srcdir}"/ntsync.rules "${pkgdir}/etc/udev/rules.d/ntsync.rules"
   fi
+
+  _module_drv_install
 }
 
 hackheaders() {
   source "$_where"/BIG_UGLY_FROGMINER
 
   pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel - https://github.com/Frogging-Family/linux-tkg"
-  provides=("linux-headers=${pkgver}" "${pkgbase}-headers=${pkgver}")
+  provides=("linux-headers=${pkgver}" "${pkgbase}-headers=${pkgver}" LINUX-HEADERS)
   case $_basever in
     54|57|58|59|510)
     ;;
@@ -244,6 +289,12 @@ hackheaders() {
   install -Dt "$builddir/kernel" -m644 kernel/Makefile
   install -Dt "$builddir/arch/x86" -m644 arch/x86/Makefile
   cp -t "$builddir" -a scripts
+
+  # Install kernel signing keys for later out-of-tree module signing
+  if [[ "$_install_signing_keys" == "true" ]] && [[ -f "certs/signing_key.pem" ]]; then
+    msg2 "Installing module signing keys..."
+    install -Dt "$builddir/certs" -m 400 certs/signing_key.pem certs/signing_key.x509
+  fi
 
   # add objtool for external module building and enabled VALIDATION_STACK option
   install -Dt "$builddir/tools/objtool" tools/objtool/objtool
@@ -316,8 +367,57 @@ hackheaders() {
     strip -v $STRIP_STATIC "$builddir/vmlinux"
   fi
 
-  if [ "$_NUKR" = "true" ]; then
+  # Skip srcdir cleanup if nvidia-open package still needs it (runs after headers)
+  if [ "$_NUKR" = "true" ] && { [ "$_nvidia_open" = "false" ] || [ -z "$_nvidia_open" ]; }; then
     rm -rf "$srcdir" # Nuke the entire src folder so it'll get regenerated clean on next build
+  fi
+}
+
+hacknvidia_open() {
+  source "$_where"/BIG_UGLY_FROGMINER
+
+  pkgdesc="NVIDIA open kernel modules"
+  depends=("${pkgbase}=${pkgver}" "nvidia-utils=${_nvidia_open_version}" 'libglvnd')
+  provides=('NVIDIA-MODULE' 'nvidia-open')
+  conflicts=("${pkgbase}-nvidia" 'nvidia' 'nvidia-dkms' 'nvidia-open' 'nvidia-open-dkms')
+  license=('MIT AND GPL-2.0-only')
+
+  local _nv_open_src="${srcdir}/${_nv_open_pkg}"
+
+  cd "$_kernel_work_folder_abs"
+  local _kernver="$(<version)"
+  local modulesdir="$pkgdir/usr/lib/modules/$_kernver/extramodules"
+
+  install -dm755 "${modulesdir}"
+  install -m644 "${_nv_open_src}"/kernel-open/*.ko "${modulesdir}"
+  install -Dt "$pkgdir/usr/share/licenses/${pkgname}" -m644 "${_nv_open_src}/COPYING"
+
+  # Strip modules
+  local strip_bin="strip"
+  [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
+  find "${modulesdir}" -type f -name '*.ko' -exec "${strip_bin}" --strip-debug '{}' \;
+
+  # Sign modules
+  if [[ "$_nvidia_open_sign" == "true" ]]; then
+    if _resolve_signing_params; then
+      msg2 "Signing NVIDIA open kernel modules..."
+      find "${modulesdir}" -type f -name '*.ko' \
+        -exec "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" '{}' \;
+    else
+      warning "_nvidia_open_sign is enabled but signing is not available — skipping module signing."
+    fi
+  fi
+
+  # Compress modules
+  find "${pkgdir}" -name '*.ko' -exec zstd --rm -19 -T0 {} +
+
+  # Blacklist modules
+  echo -e "blacklist nouveau\nblacklist lbm-nouveau\nblacklist nova_core\nblacklist nova_drm" |
+      install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modprobe.d/${pkgname}-blacklist.conf"
+
+  # nvidia-open is the last package — do deferred srcdir cleanup now
+  if [ "$_NUKR" = "true" ]; then
+    rm -rf "$srcdir"
   fi
 }
 
@@ -329,4 +429,5 @@ hackbase
 package_${pkgbase}-headers() {
 hackheaders
 }
+$( [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ] && printf 'package_%s-nvidia-open() {\nhacknvidia_open\n}' "${pkgbase}" )
 EOF
