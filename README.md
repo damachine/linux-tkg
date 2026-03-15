@@ -13,8 +13,6 @@
 
 All on top of what upstream already offers — knobs live in [`customization.cfg`](https://github.com/damachine/linux-tkg/blob/staging/customization.cfg#L251-L343).
 
-> Leave any option empty or set it to `"false"` to disable it — empty triggers an interactive prompt, `"false"` skips it entirely.
-
 #### `_nvidia_open` — builds the open-source NVIDIA kernel modules alongside the kernel package
 
 | Value | Description |
