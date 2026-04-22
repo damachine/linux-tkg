@@ -1,0 +1,1688 @@
+From 23a2a22a2f684df631e2f767c549a653f2f225af Mon Sep 17 00:00:00 2001
+From: Eric Naim <dnaim@cachyos.org>
+Date: Mon, 23 Feb 2026 13:24:14 +0800
+Subject: [PATCH] fixes, cgroup-vram and rt-i915 improvements, dkms-clang
+
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+---
+ arch/arm/include/asm/mmu_context.h                   |   2 +-
+ arch/riscv/include/asm/sync_core.h                   |   2 +-
+ arch/s390/include/asm/mmu_context.h                  |   2 +-
+ arch/sparc/include/asm/mmu_context_64.h              |   2 +-
+ arch/x86/include/asm/mmu_context.h                   |   3 ---
+ arch/x86/include/asm/sync_core.h                     |   2 +-
+ arch/x86/include/asm/tlbflush.h                      |  26 ++++++++++++++++++++++++++
+ arch/x86/mm/tlb.c                                    |  21 ---------------------
+ drivers/bluetooth/btusb.c                            |   4 ++++
+ drivers/gpu/drm/i915/Kconfig                         |   1 -
+ drivers/gpu/drm/i915/display/intel_crtc.c            |   9 ++++++---
+ drivers/gpu/drm/i915/display/intel_cursor.c          |   9 ++++++---
+ drivers/gpu/drm/i915/display/intel_display_trace.h   |   4 ++++
+ drivers/gpu/drm/i915/display/intel_vblank.c          |  50 ++++++++++++++++++++++++++++++----------
+ drivers/gpu/drm/i915/gt/intel_engine_cs.c            |   2 +-
+ drivers/gpu/drm/i915/gt/intel_execlists_submission.c |  17 +++++------------
+ drivers/gpu/drm/i915/gt/intel_rc6.c                  |  13 ++++++++++++-
+ drivers/gpu/drm/i915/gt/uc/intel_guc.h               |   2 +-
+ drivers/gpu/drm/i915/i915_request.c                  |   2 --
+ drivers/gpu/drm/i915/i915_trace.h                    |   4 ++++
+ drivers/gpu/drm/i915/intel_uncore_trace.h            |   4 ++++
+ drivers/gpu/drm/ttm/ttm_bo.c                         | 221 +++++++++++++++++++++++++++++++++++-----
+ drivers/gpu/drm/ttm/ttm_resource.c                   |  48 +++++++++++++++++++++++++++++-----------
+ include/drm/ttm/ttm_resource.h                       |   6 +++++-
+ include/linux/cgroup.h                               |  21 +++++++++++++++++++++
+ include/linux/cgroup_dmem.h                          |  25 +++++++++++++++++++++++++
+ include/linux/perf_event.h                           |   2 +-
+ include/linux/sched/mm.h                             |  10 +++++-----
+ include/linux/sched/topology.h                       |   3 ---
+ include/linux/tick.h                                 |   4 ++--
+ include/linux/vtime.h                                |   8 ++++----
+ kernel/cgroup/dmem.c                                 |  91 ++++++++++++++++++++++++++++++++++++++++
+ kernel/ksysfs.c                                      |  12 ++++++++++++
+ kernel/sched/core.c                                  |  20 ++++++--------------
+ kernel/sched/fair.c                                  |  44 ++++------------------------------------
+ kernel/sched/features.h                              |   5 -----
+ kernel/sched/sched.h                                 |  38 +++++++++++++++++---------------------
+ kernel/sched/topology.c                              |   6 ------
+ scripts/Makefile.clang                               |   2 --
+ scripts/Makefile.warn                                |   4 ----
+ 40 files changed, 536 insertions(+), 215 deletions(-)
+
+diff --git a/arch/arm/include/asm/mmu_context.h b/arch/arm/include/asm/mmu_context.h
+index db2cb06aa8cf..bebde469f81a 100644
+--- a/arch/arm/include/asm/mmu_context.h
++++ b/arch/arm/include/asm/mmu_context.h
+@@ -80,7 +80,7 @@ static inline void check_and_switch_context(struct mm_struct *mm,
+ #ifndef MODULE
+ #define finish_arch_post_lock_switch \
+ 	finish_arch_post_lock_switch
+-static inline void finish_arch_post_lock_switch(void)
++static __always_inline void finish_arch_post_lock_switch(void)
+ {
+ 	struct mm_struct *mm = current->mm;
+ 
+diff --git a/arch/riscv/include/asm/sync_core.h b/arch/riscv/include/asm/sync_core.h
+index 9153016da8f1..2fe6b7fe6b12 100644
+--- a/arch/riscv/include/asm/sync_core.h
++++ b/arch/riscv/include/asm/sync_core.h
+@@ -6,7 +6,7 @@
+  * RISC-V implements return to user-space through an xRET instruction,
+  * which is not core serializing.
+  */
+-static inline void sync_core_before_usermode(void)
++static __always_inline void sync_core_before_usermode(void)
+ {
+ 	asm volatile ("fence.i" ::: "memory");
+ }
+diff --git a/arch/s390/include/asm/mmu_context.h b/arch/s390/include/asm/mmu_context.h
+index bd1ef5e2d2eb..95d03be2ce45 100644
+--- a/arch/s390/include/asm/mmu_context.h
++++ b/arch/s390/include/asm/mmu_context.h
+@@ -93,7 +93,7 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
+ }
+ 
+ #define finish_arch_post_lock_switch finish_arch_post_lock_switch
+-static inline void finish_arch_post_lock_switch(void)
++static __always_inline void finish_arch_post_lock_switch(void)
+ {
+ 	struct task_struct *tsk = current;
+ 	struct mm_struct *mm = tsk->mm;
+diff --git a/arch/sparc/include/asm/mmu_context_64.h b/arch/sparc/include/asm/mmu_context_64.h
+index 78bbacc14d2d..d1967214ef25 100644
+--- a/arch/sparc/include/asm/mmu_context_64.h
++++ b/arch/sparc/include/asm/mmu_context_64.h
+@@ -160,7 +160,7 @@ static inline void arch_start_context_switch(struct task_struct *prev)
+ }
+ 
+ #define finish_arch_post_lock_switch	finish_arch_post_lock_switch
+-static inline void finish_arch_post_lock_switch(void)
++static __always_inline void finish_arch_post_lock_switch(void)
+ {
+ 	/* Restore the state of MCDPER register for the new process
+ 	 * just switched to.
+diff --git a/arch/x86/include/asm/mmu_context.h b/arch/x86/include/asm/mmu_context.h
+index 1acafb1c6a93..ef5b507de34e 100644
+--- a/arch/x86/include/asm/mmu_context.h
++++ b/arch/x86/include/asm/mmu_context.h
+@@ -136,9 +136,6 @@ static inline void mm_reset_untag_mask(struct mm_struct *mm)
+ }
+ #endif
+ 
+-#define enter_lazy_tlb enter_lazy_tlb
+-extern void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk);
+-
+ extern void mm_init_global_asid(struct mm_struct *mm);
+ extern void mm_free_global_asid(struct mm_struct *mm);
+ 
+diff --git a/arch/x86/include/asm/sync_core.h b/arch/x86/include/asm/sync_core.h
+index 96bda43538ee..4b55fa353bb5 100644
+--- a/arch/x86/include/asm/sync_core.h
++++ b/arch/x86/include/asm/sync_core.h
+@@ -93,7 +93,7 @@ static __always_inline void sync_core(void)
+  * to user-mode. x86 implements return to user-space through sysexit,
+  * sysrel, and sysretq, which are not core serializing.
+  */
+-static inline void sync_core_before_usermode(void)
++static __always_inline void sync_core_before_usermode(void)
+ {
+ 	/* With PTI, we unconditionally serialize before running user code. */
+ 	if (static_cpu_has(X86_FEATURE_PTI))
+diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
+index 5a3cdc439e38..0545fe75c3fa 100644
+--- a/arch/x86/include/asm/tlbflush.h
++++ b/arch/x86/include/asm/tlbflush.h
+@@ -172,6 +172,28 @@ struct tlb_state_shared {
+ };
+ DECLARE_PER_CPU_SHARED_ALIGNED(struct tlb_state_shared, cpu_tlbstate_shared);
+ 
++/*
++ * Please ignore the name of this function.  It should be called
++ * switch_to_kernel_thread().
++ *
++ * enter_lazy_tlb() is a hint from the scheduler that we are entering a
++ * kernel thread or other context without an mm.  Acceptable implementations
++ * include doing nothing whatsoever, switching to init_mm, or various clever
++ * lazy tricks to try to minimize TLB flushes.
++ *
++ * The scheduler reserves the right to call enter_lazy_tlb() several times
++ * in a row.  It will notify us that we're going back to a real mm by
++ * calling switch_mm_irqs_off().
++ */
++#define enter_lazy_tlb enter_lazy_tlb
++static __always_inline void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)
++{
++	if (this_cpu_read(cpu_tlbstate.loaded_mm) == &init_mm)
++		return;
++
++	this_cpu_write(cpu_tlbstate_shared.is_lazy, true);
++}
++
+ bool nmi_uaccess_okay(void);
+ #define nmi_uaccess_okay nmi_uaccess_okay
+ 
+@@ -480,6 +502,10 @@ static inline void cpu_tlbstate_update_lam(unsigned long lam, u64 untag_mask)
+ {
+ }
+ #endif
++#else /* !MODULE */
++#define enter_lazy_tlb enter_lazy_tlb
++extern void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)
++	__compiletime_error("enter_lazy_tlb() should not be used in modules");
+ #endif /* !MODULE */
+ 
+ static inline void __native_tlb_flush_global(unsigned long cr4)
+diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
+index 621e09d049cb..af43d177087e 100644
+--- a/arch/x86/mm/tlb.c
++++ b/arch/x86/mm/tlb.c
+@@ -971,27 +971,6 @@ void switch_mm_irqs_off(struct mm_struct *unused, struct mm_struct *next,
+ 	}
+ }
+ 
+-/*
+- * Please ignore the name of this function.  It should be called
+- * switch_to_kernel_thread().
+- *
+- * enter_lazy_tlb() is a hint from the scheduler that we are entering a
+- * kernel thread or other context without an mm.  Acceptable implementations
+- * include doing nothing whatsoever, switching to init_mm, or various clever
+- * lazy tricks to try to minimize TLB flushes.
+- *
+- * The scheduler reserves the right to call enter_lazy_tlb() several times
+- * in a row.  It will notify us that we're going back to a real mm by
+- * calling switch_mm_irqs_off().
+- */
+-void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)
+-{
+-	if (this_cpu_read(cpu_tlbstate.loaded_mm) == &init_mm)
+-		return;
+-
+-	this_cpu_write(cpu_tlbstate_shared.is_lazy, true);
+-}
+-
+ /*
+  * Using a temporary mm allows to set temporary mappings that are not accessible
+  * by other CPUs. Such mappings are needed to perform sensitive memory writes
+diff --git a/drivers/bluetooth/btusb.c b/drivers/bluetooth/btusb.c
+index a1c5eb993e47..648d60e99993 100644
+--- a/drivers/bluetooth/btusb.c
++++ b/drivers/bluetooth/btusb.c
+@@ -563,6 +563,8 @@ static const struct usb_device_id quirks_table[] = {
+ 						     BTUSB_WIDEBAND_SPEECH },
+ 	{ USB_DEVICE(0x13d3, 0x3612), .driver_info = BTUSB_REALTEK |
+ 						     BTUSB_WIDEBAND_SPEECH },
++	{ USB_DEVICE(0x0489, 0xe112), .driver_info = BTUSB_REALTEK |
++						     BTUSB_WIDEBAND_SPEECH },
+ 	{ USB_DEVICE(0x0489, 0xe122), .driver_info = BTUSB_REALTEK |
+ 						     BTUSB_WIDEBAND_SPEECH },
+ 
+@@ -673,6 +675,8 @@ static const struct usb_device_id quirks_table[] = {
+ 						     BTUSB_WIDEBAND_SPEECH },
+ 
+ 	/* MediaTek MT7922 Bluetooth devices */
++	{ USB_DEVICE(0x13d3, 0x3625), .driver_info = BTUSB_MEDIATEK |
++						     BTUSB_WIDEBAND_SPEECH },
+ 	{ USB_DEVICE(0x13d3, 0x3585), .driver_info = BTUSB_MEDIATEK |
+ 						     BTUSB_WIDEBAND_SPEECH },
+ 	{ USB_DEVICE(0x13d3, 0x3610), .driver_info = BTUSB_MEDIATEK |
+diff --git a/drivers/gpu/drm/i915/Kconfig b/drivers/gpu/drm/i915/Kconfig
+index 5e939004b646..40a9234e6e5d 100644
+--- a/drivers/gpu/drm/i915/Kconfig
++++ b/drivers/gpu/drm/i915/Kconfig
+@@ -3,7 +3,6 @@ config DRM_I915
+ 	tristate "Intel 8xx/9xx/G3x/G4x/HD Graphics"
+ 	depends on DRM
+ 	depends on X86 && PCI
+-	depends on !PREEMPT_RT
+ 	select INTEL_GTT if X86
+ 	select INTERVAL_TREE
+ 	# we need shmfs for the swappable backing store, and in particular
+diff --git a/drivers/gpu/drm/i915/display/intel_crtc.c b/drivers/gpu/drm/i915/display/intel_crtc.c
+index 53378d2dcbec..3c89b9452863 100644
+--- a/drivers/gpu/drm/i915/display/intel_crtc.c
++++ b/drivers/gpu/drm/i915/display/intel_crtc.c
+@@ -587,7 +587,8 @@ void intel_pipe_update_start(struct intel_atomic_state *state,
+ 	 */
+ 	intel_psr_wait_for_idle_locked(new_crtc_state);
+ 
+-	local_irq_disable();
++	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
++		local_irq_disable();
+ 
+ 	crtc->debug.min_vbl = evade.min;
+ 	crtc->debug.max_vbl = evade.max;
+@@ -605,7 +606,8 @@ void intel_pipe_update_start(struct intel_atomic_state *state,
+ 	return;
+ 
+ irq_disable:
+-	local_irq_disable();
++	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
++		local_irq_disable();
+ }
+ 
+ #if IS_ENABLED(CONFIG_DRM_I915_DEBUG_VBLANK_EVADE)
+@@ -750,7 +752,8 @@ void intel_pipe_update_end(struct intel_atomic_state *state,
+ 	if (!state->base.legacy_cursor_update)
+ 		intel_vrr_send_push(NULL, new_crtc_state);
+ 
+-	local_irq_enable();
++	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
++		local_irq_enable();
+ 
+ 	if (intel_parent_vgpu_active(display))
+ 		goto out;
+diff --git a/drivers/gpu/drm/i915/display/intel_cursor.c b/drivers/gpu/drm/i915/display/intel_cursor.c
+index 2c5d917fbd7e..3477b2cebbe3 100644
+--- a/drivers/gpu/drm/i915/display/intel_cursor.c
++++ b/drivers/gpu/drm/i915/display/intel_cursor.c
+@@ -919,13 +919,15 @@ intel_legacy_cursor_update(struct drm_plane *_plane,
+ 		 */
+ 		intel_psr_wait_for_idle_locked(crtc_state);
+ 
+-		local_irq_disable();
++		if (!IS_ENABLED(CONFIG_PREEMPT_RT))
++			local_irq_disable();
+ 
+ 		intel_vblank_evade(&evade);
+ 
+ 		drm_crtc_vblank_put(&crtc->base);
+ 	} else {
+-		local_irq_disable();
++		if (!IS_ENABLED(CONFIG_PREEMPT_RT))
++			local_irq_disable();
+ 	}
+ 
+ 	if (new_plane_state->uapi.visible) {
+@@ -935,7 +937,8 @@ intel_legacy_cursor_update(struct drm_plane *_plane,
+ 		intel_plane_disable_arm(NULL, plane, crtc_state);
+ 	}
+ 
+-	local_irq_enable();
++	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
++		local_irq_enable();
+ 
+ 	intel_psr_unlock(crtc_state);
+ 
+diff --git a/drivers/gpu/drm/i915/display/intel_display_trace.h b/drivers/gpu/drm/i915/display/intel_display_trace.h
+index 27ebc32cb61a..a519d94700c3 100644
+--- a/drivers/gpu/drm/i915/display/intel_display_trace.h
++++ b/drivers/gpu/drm/i915/display/intel_display_trace.h
+@@ -13,6 +13,10 @@
+ #if !defined(__INTEL_DISPLAY_TRACE_H__) || defined(TRACE_HEADER_MULTI_READ)
+ #define __INTEL_DISPLAY_TRACE_H__
+ 
++#if defined(CONFIG_PREEMPT_RT) && !defined(NOTRACE)
++#define NOTRACE
++#endif
++
+ #include <linux/string.h>
+ #include <linux/string_helpers.h>
+ #include <linux/types.h>
+diff --git a/drivers/gpu/drm/i915/display/intel_vblank.c b/drivers/gpu/drm/i915/display/intel_vblank.c
+index 1b7cfe226ff8..a540615ba431 100644
+--- a/drivers/gpu/drm/i915/display/intel_vblank.c
++++ b/drivers/gpu/drm/i915/display/intel_vblank.c
+@@ -316,6 +316,21 @@ static void intel_vblank_section_exit(struct intel_display *display)
+ 	struct intel_uncore *uncore = to_intel_uncore(display->drm);
+ 	spin_unlock(&uncore->lock);
+ }
++
++static void intel_vblank_section_enter_irqf(struct intel_display *display, unsigned long *flags)
++__acquires(i915->uncore.lock)
++{
++	struct intel_uncore *uncore = to_intel_uncore(display->drm);
++	spin_lock_irqsave(&uncore->lock, *flags);
++}
++
++static void intel_vblank_section_exit_irqf(struct intel_display *display, unsigned long flags)
++__releases(i915->uncore.lock)
++{
++	struct intel_uncore *uncore = to_intel_uncore(display->drm);
++	spin_unlock_irqrestore(&uncore->lock, flags);
++}
++
+ #else
+ static void intel_vblank_section_enter(struct intel_display *display)
+ {
+@@ -324,6 +339,17 @@ static void intel_vblank_section_enter(struct intel_display *display)
+ static void intel_vblank_section_exit(struct intel_display *display)
+ {
+ }
++
++static void intel_vblank_section_enter_irqf(struct intel_display *display, unsigned long *flags)
++{
++	*flags = 0;
++}
++
++static void intel_vblank_section_exit_irqf(struct intel_display *display, unsigned long flags)
++{
++	if (flags)
++		return;
++}
+ #endif
+ 
+ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
+@@ -360,10 +386,10 @@ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
+ 	 * timing critical raw register reads, potentially with
+ 	 * preemption disabled, so the following code must not block.
+ 	 */
+-	local_irq_save(irqflags);
+-	intel_vblank_section_enter(display);
++	intel_vblank_section_enter_irqf(display, &irqflags);
+ 
+-	/* preempt_disable_rt() should go right here in PREEMPT_RT patchset. */
++	if (IS_ENABLED(CONFIG_PREEMPT_RT))
++		preempt_disable();
+ 
+ 	/* Get optional system timestamp before query. */
+ 	if (stime)
+@@ -427,10 +453,10 @@ static bool i915_get_crtc_scanoutpos(struct drm_crtc *_crtc,
+ 	if (etime)
+ 		*etime = ktime_get();
+ 
+-	/* preempt_enable_rt() should go right here in PREEMPT_RT patchset. */
++	if (IS_ENABLED(CONFIG_PREEMPT_RT))
++		preempt_enable();
+ 
+-	intel_vblank_section_exit(display);
+-	local_irq_restore(irqflags);
++	intel_vblank_section_exit_irqf(display, irqflags);
+ 
+ 	/*
+ 	 * While in vblank, position will be negative
+@@ -468,13 +494,11 @@ int intel_get_crtc_scanline(struct intel_crtc *crtc)
+ 	unsigned long irqflags;
+ 	int position;
+ 
+-	local_irq_save(irqflags);
+-	intel_vblank_section_enter(display);
++	intel_vblank_section_enter_irqf(display, &irqflags);
+ 
+ 	position = __intel_get_crtc_scanline(crtc);
+ 
+-	intel_vblank_section_exit(display);
+-	local_irq_restore(irqflags);
++	intel_vblank_section_exit_irqf(display, irqflags);
+ 
+ 	return position;
+ }
+@@ -764,11 +788,13 @@ int intel_vblank_evade(struct intel_vblank_evade_ctx *evade)
+ 			break;
+ 		}
+ 
+-		local_irq_enable();
++		if (!IS_ENABLED(CONFIG_PREEMPT_RT))
++			local_irq_enable();
+ 
+ 		timeout = schedule_timeout(timeout);
+ 
+-		local_irq_disable();
++		if (!IS_ENABLED(CONFIG_PREEMPT_RT))
++			local_irq_disable();
+ 	}
+ 
+ 	finish_wait(wq, &wait);
+diff --git a/drivers/gpu/drm/i915/gt/intel_engine_cs.c b/drivers/gpu/drm/i915/gt/intel_engine_cs.c
+index 54c9571327e7..97bc49fcb5e0 100644
+--- a/drivers/gpu/drm/i915/gt/intel_engine_cs.c
++++ b/drivers/gpu/drm/i915/gt/intel_engine_cs.c
+@@ -1607,7 +1607,7 @@ u64 intel_engine_get_last_batch_head(const struct intel_engine_cs *engine)
+ 
+ static unsigned long stop_timeout(const struct intel_engine_cs *engine)
+ {
+-	if (in_atomic() || irqs_disabled()) /* inside atomic preempt-reset? */
++	if (in_atomic() || irqs_disabled() || rcu_preempt_depth()) /* inside atomic preempt-reset? */
+ 		return 0;
+ 
+ 	/*
+diff --git a/drivers/gpu/drm/i915/gt/intel_execlists_submission.c b/drivers/gpu/drm/i915/gt/intel_execlists_submission.c
+index cafe0b8e6bdd..55f94c5feaa3 100644
+--- a/drivers/gpu/drm/i915/gt/intel_execlists_submission.c
++++ b/drivers/gpu/drm/i915/gt/intel_execlists_submission.c
+@@ -1300,7 +1300,7 @@ static void execlists_dequeue(struct intel_engine_cs *engine)
+ 	 * and context switches) submission.
+ 	 */
+ 
+-	spin_lock(&sched_engine->lock);
++	spin_lock_irq(&sched_engine->lock);
+ 
+ 	/*
+ 	 * If the queue is higher priority than the last
+@@ -1400,7 +1400,7 @@ static void execlists_dequeue(struct intel_engine_cs *engine)
+ 				 * Even if ELSP[1] is occupied and not worthy
+ 				 * of timeslices, our queue might be.
+ 				 */
+-				spin_unlock(&sched_engine->lock);
++				spin_unlock_irq(&sched_engine->lock);
+ 				return;
+ 			}
+ 		}
+@@ -1426,7 +1426,7 @@ static void execlists_dequeue(struct intel_engine_cs *engine)
+ 
+ 		if (last && !can_merge_rq(last, rq)) {
+ 			spin_unlock(&ve->base.sched_engine->lock);
+-			spin_unlock(&engine->sched_engine->lock);
++			spin_unlock_irq(&engine->sched_engine->lock);
+ 			return; /* leave this for another sibling */
+ 		}
+ 
+@@ -1588,7 +1588,7 @@ static void execlists_dequeue(struct intel_engine_cs *engine)
+ 	 */
+ 	sched_engine->queue_priority_hint = queue_prio(sched_engine);
+ 	i915_sched_engine_reset_on_empty(sched_engine);
+-	spin_unlock(&sched_engine->lock);
++	spin_unlock_irq(&sched_engine->lock);
+ 
+ 	/*
+ 	 * We can skip poking the HW if we ended up with exactly the same set
+@@ -1614,13 +1614,6 @@ static void execlists_dequeue(struct intel_engine_cs *engine)
+ 	}
+ }
+ 
+-static void execlists_dequeue_irq(struct intel_engine_cs *engine)
+-{
+-	local_irq_disable(); /* Suspend interrupts across request submission */
+-	execlists_dequeue(engine);
+-	local_irq_enable(); /* flush irq_work (e.g. breadcrumb enabling) */
+-}
+-
+ static void clear_ports(struct i915_request **ports, int count)
+ {
+ 	memset_p((void **)ports, NULL, count);
+@@ -2475,7 +2468,7 @@ static void execlists_submission_tasklet(struct tasklet_struct *t)
+ 	}
+ 
+ 	if (!engine->execlists.pending[0]) {
+-		execlists_dequeue_irq(engine);
++		execlists_dequeue(engine);
+ 		start_timeslice(engine);
+ 	}
+ 
+diff --git a/drivers/gpu/drm/i915/gt/intel_rc6.c b/drivers/gpu/drm/i915/gt/intel_rc6.c
+index 286d49ecc449..472c68b32516 100644
+--- a/drivers/gpu/drm/i915/gt/intel_rc6.c
++++ b/drivers/gpu/drm/i915/gt/intel_rc6.c
+@@ -2,9 +2,9 @@
+ /*
+  * Copyright © 2019 Intel Corporation
+  */
+-
+ #include <linux/pm_runtime.h>
+ #include <linux/string_helpers.h>
++#include <linux/dmi.h>
+ 
+ #include <drm/drm_print.h>
+ 
+@@ -497,6 +497,17 @@ static bool rc6_supported(struct intel_rc6 *rc6)
+ 	if (!HAS_RC6(i915))
+ 		return false;
+ 
++	if (dmi_match(DMI_PRODUCT_SKU, "IBP1XI08MK1") ||
++	    dmi_match(DMI_PRODUCT_SKU, "IBP14I08MK2") ||
++	    dmi_match(DMI_PRODUCT_SKU, "IBP1XI08MK2") ||
++	    dmi_match(DMI_PRODUCT_SKU, "IBP16I08MK2") ||
++	    dmi_match(DMI_PRODUCT_SKU, "OMNIA08IMK1") ||
++	    dmi_match(DMI_PRODUCT_SKU, "OMNIA08IMK2")) {
++		drm_notice(&i915->drm,
++			   "RC6 disabled by quirk\n");
++		return false;
++	}
++
+ 	if (intel_vgpu_active(i915))
+ 		return false;
+ 
+diff --git a/drivers/gpu/drm/i915/gt/uc/intel_guc.h b/drivers/gpu/drm/i915/gt/uc/intel_guc.h
+index 053780f562c1..b25fa8f4dc4b 100644
+--- a/drivers/gpu/drm/i915/gt/uc/intel_guc.h
++++ b/drivers/gpu/drm/i915/gt/uc/intel_guc.h
+@@ -362,7 +362,7 @@ static inline int intel_guc_send_busy_loop(struct intel_guc *guc,
+ {
+ 	int err;
+ 	unsigned int sleep_period_ms = 1;
+-	bool not_atomic = !in_atomic() && !irqs_disabled();
++	bool not_atomic = !in_atomic() && !irqs_disabled() && !rcu_preempt_depth();
+ 
+ 	/*
+ 	 * FIXME: Have caller pass in if we are in an atomic context to avoid
+diff --git a/drivers/gpu/drm/i915/i915_request.c b/drivers/gpu/drm/i915/i915_request.c
+index d2c7b1090df0..f66f8efc7062 100644
+--- a/drivers/gpu/drm/i915/i915_request.c
++++ b/drivers/gpu/drm/i915/i915_request.c
+@@ -610,7 +610,6 @@ bool __i915_request_submit(struct i915_request *request)
+ 
+ 	RQ_TRACE(request, "\n");
+ 
+-	GEM_BUG_ON(!irqs_disabled());
+ 	lockdep_assert_held(&engine->sched_engine->lock);
+ 
+ 	/*
+@@ -719,7 +718,6 @@ void __i915_request_unsubmit(struct i915_request *request)
+ 	 */
+ 	RQ_TRACE(request, "\n");
+ 
+-	GEM_BUG_ON(!irqs_disabled());
+ 	lockdep_assert_held(&engine->sched_engine->lock);
+ 
+ 	/*
+diff --git a/drivers/gpu/drm/i915/i915_trace.h b/drivers/gpu/drm/i915/i915_trace.h
+index 7ed41ce9b708..6b87ef6005c6 100644
+--- a/drivers/gpu/drm/i915/i915_trace.h
++++ b/drivers/gpu/drm/i915/i915_trace.h
+@@ -6,6 +6,10 @@
+ #if !defined(_I915_TRACE_H_) || defined(TRACE_HEADER_MULTI_READ)
+ #define _I915_TRACE_H_
+ 
++#if defined(CONFIG_PREEMPT_RT) && !defined(NOTRACE)
++#define NOTRACE
++#endif
++
+ #include <linux/stringify.h>
+ #include <linux/types.h>
+ #include <linux/tracepoint.h>
+diff --git a/drivers/gpu/drm/i915/intel_uncore_trace.h b/drivers/gpu/drm/i915/intel_uncore_trace.h
+index f13ff71edf2d..3c67e267fb60 100644
+--- a/drivers/gpu/drm/i915/intel_uncore_trace.h
++++ b/drivers/gpu/drm/i915/intel_uncore_trace.h
+@@ -7,6 +7,10 @@
+ #if !defined(__INTEL_UNCORE_TRACE_H__) || defined(TRACE_HEADER_MULTI_READ)
+ #define __INTEL_UNCORE_TRACE_H__
+ 
++#if defined(CONFIG_PREEMPT_RT) && !defined(NOTRACE)
++#define NOTRACE
++#endif
++
+ #include "i915_reg_defs.h"
+ 
+ #include <linux/types.h>
+diff --git a/drivers/gpu/drm/ttm/ttm_bo.c b/drivers/gpu/drm/ttm/ttm_bo.c
+index 0765d69423d2..73b19c5d06f7 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo.c
++++ b/drivers/gpu/drm/ttm/ttm_bo.c
+@@ -489,6 +489,117 @@ int ttm_bo_evict_first(struct ttm_device *bdev, struct ttm_resource_manager *man
+ 	return ret;
+ }
+ 
++struct ttm_bo_alloc_state {
++	/** @charge_pool: The memory pool the resource is charged to */
++	struct dmem_cgroup_pool_state *charge_pool;
++	/** @limit_pool: Which pool limit we should test against */
++	struct dmem_cgroup_pool_state *limit_pool;
++	/** @in_evict: Whether we are currently evicting buffers */
++	bool in_evict;
++	/** @may_try_low: If only unprotected BOs, i.e. BOs whose cgroup
++	 *  is exceeding its dmem low/min protection, should be considered for eviction
++	 */
++	bool may_try_low;
++};
++
++/**
++ * ttm_bo_alloc_at_place - Attempt allocating a BO's backing store in a place
++ *
++ * @bo: The buffer to allocate the backing store of
++ * @place: The place to attempt allocation in
++ * @ctx: ttm_operation_ctx associated with this allocation
++ * @force_space: If we should evict buffers to force space
++ * @res: On allocation success, the resulting struct ttm_resource.
++ * @alloc_state: Object holding allocation state such as charged cgroups.
++ *
++ * Returns:
++ * -EBUSY: No space available, but allocation should be retried with ttm_bo_evict_alloc.
++ * -ENOSPC: No space available, allocation should not be retried.
++ * -ERESTARTSYS: An interruptible sleep was interrupted by a signal.
++ *
++ */
++static int ttm_bo_alloc_at_place(struct ttm_buffer_object *bo,
++				 const struct ttm_place *place,
++				 struct ttm_operation_ctx *ctx,
++				 bool force_space,
++				 struct ttm_resource **res,
++				 struct ttm_bo_alloc_state *alloc_state)
++{
++	bool may_evict;
++	int ret;
++
++	may_evict = !alloc_state->in_evict && force_space &&
++		    place->mem_type != TTM_PL_SYSTEM;
++	if (!alloc_state->charge_pool) {
++		ret = ttm_resource_try_charge(bo, place, &alloc_state->charge_pool,
++					      force_space ? &alloc_state->limit_pool
++							  : NULL);
++		if (ret) {
++			/*
++			 * -EAGAIN means the charge failed, which we treat
++			 * like an allocation failure. Therefore, return an
++			 * error code indicating the allocation failed -
++			 * either -EBUSY if the allocation should be
++			 * retried with eviction, or -ENOSPC if there should
++			 * be no second attempt.
++			 */
++			if (ret == -EAGAIN)
++				ret = may_evict ? -EBUSY : -ENOSPC;
++			return ret;
++		}
++	}
++
++	/*
++	 * cgroup protection plays a special role in eviction.
++	 * Conceptually, protection of memory via the dmem cgroup controller
++	 * entitles the protected cgroup to use a certain amount of memory.
++	 * There are two types of protection - the 'low' limit is a
++	 * "best-effort" protection, whereas the 'min' limit provides a hard
++	 * guarantee that memory within the cgroup's allowance will not be
++	 * evicted under any circumstance.
++	 *
++	 * To faithfully model this concept in TTM, we also need to take cgroup
++	 * protection into account when allocating. When allocation in one
++	 * place fails, TTM will default to trying other places first before
++	 * evicting.
++	 * If the allocation is covered by dmem cgroup protection, however,
++	 * this prevents the allocation from using the memory it is "entitled"
++	 * to. To make sure unprotected allocations cannot push new protected
++	 * allocations out of places they are "entitled" to use, we should
++	 * evict buffers not covered by any cgroup protection, if this
++	 * allocation is covered by cgroup protection.
++	 *
++	 * Buffers covered by 'min' protection are a special case - the 'min'
++	 * limit is a stronger guarantee than 'low', and thus buffers protected
++	 * by 'low' but not 'min' should also be considered for eviction.
++	 * Buffers protected by 'min' will never be considered for eviction
++	 * anyway, so the regular eviction path should be triggered here.
++	 * Buffers protected by 'low' but not 'min' will take a special
++	 * eviction path that only evicts buffers covered by neither 'low' or
++	 * 'min' protections.
++	 */
++	if (!alloc_state->in_evict) {
++		may_evict |= dmem_cgroup_below_min(NULL, alloc_state->charge_pool);
++		alloc_state->may_try_low = may_evict;
++
++		may_evict |= dmem_cgroup_below_low(NULL, alloc_state->charge_pool);
++	}
++
++	ret = ttm_resource_alloc(bo, place, res, alloc_state->charge_pool);
++	if (ret) {
++		if (ret == -ENOSPC && may_evict)
++			ret = -EBUSY;
++		return ret;
++	}
++
++	/*
++	 * Ownership of charge_pool has been transferred to the TTM resource,
++	 * don't make the caller think we still hold a reference to it.
++	 */
++	alloc_state->charge_pool = NULL;
++	return 0;
++}
++
+ /**
+  * struct ttm_bo_evict_walk - Parameters for the evict walk.
+  */
+@@ -504,22 +615,61 @@ struct ttm_bo_evict_walk {
+ 	/** @evicted: Number of successful evictions. */
+ 	unsigned long evicted;
+ 
+-	/** @limit_pool: Which pool limit we should test against */
+-	struct dmem_cgroup_pool_state *limit_pool;
+ 	/** @try_low: Whether we should attempt to evict BO's with low watermark threshold */
+ 	bool try_low;
+ 	/** @hit_low: If we cannot evict a bo when @try_low is false (first pass) */
+ 	bool hit_low;
++
++	/** @alloc_state: State associated with the allocation attempt. */
++	struct ttm_bo_alloc_state *alloc_state;
+ };
+ 
+ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *bo)
+ {
+ 	struct ttm_bo_evict_walk *evict_walk =
+ 		container_of(walk, typeof(*evict_walk), walk);
++	struct dmem_cgroup_pool_state *limit_pool, *ancestor = NULL;
++	bool evict_valuable;
+ 	s64 lret;
+ 
+-	if (!dmem_cgroup_state_evict_valuable(evict_walk->limit_pool, bo->resource->css,
+-					      evict_walk->try_low, &evict_walk->hit_low))
++	/*
++	 * If may_try_low is not set, then we're trying to evict unprotected
++	 * buffers in favor of a protected allocation for charge_pool. Explicitly skip
++	 * buffers belonging to the same cgroup here - that cgroup is definitely protected,
++	 * even though dmem_cgroup_state_evict_valuable would allow the eviction because a
++	 * cgroup is always allowed to evict from itself even if it is protected.
++	 */
++	if (!evict_walk->alloc_state->may_try_low &&
++			bo->resource->css == evict_walk->alloc_state->charge_pool)
++		return 0;
++
++	limit_pool = evict_walk->alloc_state->limit_pool;
++	/*
++	 * If there is no explicit limit pool, find the root of the shared subtree between
++	 * evictor and evictee. This is important so that recursive protection rules can
++	 * apply properly: Recursive protection distributes cgroup protection afforded
++	 * to a parent cgroup but not used explicitly by a child cgroup between all child
++	 * cgroups (see docs of effective_protection in mm/page_counter.c). However, when
++	 * direct siblings compete for memory, siblings that were explicitly protected
++	 * should get prioritized over siblings that weren't. This only happens correctly
++	 * when the root of the shared subtree is passed to
++	 * dmem_cgroup_state_evict_valuable. Otherwise, the effective-protection
++	 * calculation cannot distinguish direct siblings from unrelated subtrees and the
++	 * calculated protection ends up wrong.
++	 */
++	if (!limit_pool) {
++		ancestor = dmem_cgroup_get_common_ancestor(bo->resource->css,
++							   evict_walk->alloc_state->charge_pool);
++		limit_pool = ancestor;
++	}
++
++	evict_valuable = dmem_cgroup_state_evict_valuable(limit_pool, bo->resource->css,
++							  evict_walk->try_low,
++							  &evict_walk->hit_low);
++	if (ancestor)
++		dmem_cgroup_pool_state_put(ancestor);
++
++	if (!evict_valuable)
+ 		return 0;
+ 
+ 	if (bo->pin_count || !bo->bdev->funcs->eviction_valuable(bo, evict_walk->place))
+@@ -538,8 +688,9 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
+ 
+ 	evict_walk->evicted++;
+ 	if (evict_walk->res)
+-		lret = ttm_resource_alloc(evict_walk->evictor, evict_walk->place,
+-					  evict_walk->res, NULL);
++		lret = ttm_bo_alloc_at_place(evict_walk->evictor, evict_walk->place,
++					     walk->arg.ctx, false, evict_walk->res,
++					     evict_walk->alloc_state);
+ 	if (lret == 0)
+ 		return 1;
+ out:
+@@ -561,7 +712,7 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+ 			      struct ttm_operation_ctx *ctx,
+ 			      struct ww_acquire_ctx *ticket,
+ 			      struct ttm_resource **res,
+-			      struct dmem_cgroup_pool_state *limit_pool)
++			      struct ttm_bo_alloc_state *state)
+ {
+ 	struct ttm_bo_evict_walk evict_walk = {
+ 		.walk = {
+@@ -574,15 +725,21 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+ 		.place = place,
+ 		.evictor = evictor,
+ 		.res = res,
+-		.limit_pool = limit_pool,
++		.alloc_state = state,
+ 	};
+ 	s64 lret;
+ 
++	state->in_evict = true;
++
+ 	evict_walk.walk.arg.trylock_only = true;
+ 	lret = ttm_lru_walk_for_evict(&evict_walk.walk, bdev, man, 1);
+ 
+-	/* One more attempt if we hit low limit? */
+-	if (!lret && evict_walk.hit_low) {
++	/* If we failed to find enough BOs to evict, but we skipped over
++	 * some BOs because they were covered by dmem low protection, retry
++	 * evicting these protected BOs too, except if we're told not to
++	 * consider protected BOs at all.
++	 */
++	if (!lret && evict_walk.hit_low && state->may_try_low) {
+ 		evict_walk.try_low = true;
+ 		lret = ttm_lru_walk_for_evict(&evict_walk.walk, bdev, man, 1);
+ 	}
+@@ -603,11 +760,13 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+ 	} while (!lret && evict_walk.evicted);
+ 
+ 	/* We hit the low limit? Try once more */
+-	if (!lret && evict_walk.hit_low && !evict_walk.try_low) {
++	if (!lret && evict_walk.hit_low && !evict_walk.try_low &&
++			state->may_try_low) {
+ 		evict_walk.try_low = true;
+ 		goto retry;
+ 	}
+ out:
++	state->in_evict = false;
+ 	if (lret < 0)
+ 		return lret;
+ 	if (lret == 0)
+@@ -725,9 +884,8 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
+ 
+ 	for (i = 0; i < placement->num_placement; ++i) {
+ 		const struct ttm_place *place = &placement->placement[i];
+-		struct dmem_cgroup_pool_state *limit_pool = NULL;
++		struct ttm_bo_alloc_state alloc_state = {};
+ 		struct ttm_resource_manager *man;
+-		bool may_evict;
+ 
+ 		man = ttm_manager_type(bdev, place->mem_type);
+ 		if (!man || !ttm_resource_manager_used(man))
+@@ -737,25 +895,30 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
+ 				    TTM_PL_FLAG_FALLBACK))
+ 			continue;
+ 
+-		may_evict = (force_space && place->mem_type != TTM_PL_SYSTEM);
+-		ret = ttm_resource_alloc(bo, place, res, force_space ? &limit_pool : NULL);
+-		if (ret) {
+-			if (ret != -ENOSPC && ret != -EAGAIN) {
+-				dmem_cgroup_pool_state_put(limit_pool);
+-				return ret;
+-			}
+-			if (!may_evict) {
+-				dmem_cgroup_pool_state_put(limit_pool);
+-				continue;
+-			}
++		ret = ttm_bo_alloc_at_place(bo, place, ctx, force_space,
++				res, &alloc_state);
+ 
++		if (ret == -ENOSPC) {
++			dmem_cgroup_uncharge(alloc_state.charge_pool, bo->base.size);
++			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
++			continue;
++		} else if (ret == -EBUSY) {
+ 			ret = ttm_bo_evict_alloc(bdev, man, place, bo, ctx,
+-						 ticket, res, limit_pool);
+-			dmem_cgroup_pool_state_put(limit_pool);
+-			if (ret == -EBUSY)
+-				continue;
+-			if (ret)
++						 ticket, res, &alloc_state);
++
++			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
++
++			if (ret) {
++				dmem_cgroup_uncharge(alloc_state.charge_pool,
++						bo->base.size);
++				if (ret == -EBUSY)
++					continue;
+ 				return ret;
++			}
++		} else if (ret) {
++			dmem_cgroup_uncharge(alloc_state.charge_pool, bo->base.size);
++			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
++			return ret;
+ 		}
+ 
+ 		ret = ttm_bo_add_pipelined_eviction_fences(bo, man, ctx->no_wait_gpu);
+diff --git a/drivers/gpu/drm/ttm/ttm_resource.c b/drivers/gpu/drm/ttm/ttm_resource.c
+index 192fca24f37e..a8a836f6e376 100644
+--- a/drivers/gpu/drm/ttm/ttm_resource.c
++++ b/drivers/gpu/drm/ttm/ttm_resource.c
+@@ -373,30 +373,52 @@ void ttm_resource_fini(struct ttm_resource_manager *man,
+ }
+ EXPORT_SYMBOL(ttm_resource_fini);
+ 
++/**
++ * ttm_resource_try_charge - charge a resource manager's cgroup pool
++ * @bo: buffer for which an allocation should be charged
++ * @place: where the allocation is attempted to be placed
++ * @ret_pool: on charge success, the pool that was charged
++ * @ret_limit_pool: on charge failure, the pool responsible for the failure
++ *
++ * Should be used to charge cgroups before attempting resource allocation.
++ * When charging succeeds, the value of ret_pool should be passed to
++ * ttm_resource_alloc.
++ *
++ * Returns: 0 on charge success, negative errno on failure.
++ */
++int ttm_resource_try_charge(struct ttm_buffer_object *bo,
++			    const struct ttm_place *place,
++			    struct dmem_cgroup_pool_state **ret_pool,
++			    struct dmem_cgroup_pool_state **ret_limit_pool)
++{
++	struct ttm_resource_manager *man =
++		ttm_manager_type(bo->bdev, place->mem_type);
++
++	if (!man->cg) {
++		*ret_pool = NULL;
++		if (ret_limit_pool)
++			*ret_limit_pool = NULL;
++		return 0;
++	}
++
++	return dmem_cgroup_try_charge(man->cg, bo->base.size, ret_pool,
++				      ret_limit_pool);
++}
++
+ int ttm_resource_alloc(struct ttm_buffer_object *bo,
+ 		       const struct ttm_place *place,
+ 		       struct ttm_resource **res_ptr,
+-		       struct dmem_cgroup_pool_state **ret_limit_pool)
++		       struct dmem_cgroup_pool_state *charge_pool)
+ {
+ 	struct ttm_resource_manager *man =
+ 		ttm_manager_type(bo->bdev, place->mem_type);
+-	struct dmem_cgroup_pool_state *pool = NULL;
+ 	int ret;
+ 
+-	if (man->cg) {
+-		ret = dmem_cgroup_try_charge(man->cg, bo->base.size, &pool, ret_limit_pool);
+-		if (ret)
+-			return ret;
+-	}
+-
+ 	ret = man->func->alloc(man, bo, place, res_ptr);
+-	if (ret) {
+-		if (pool)
+-			dmem_cgroup_uncharge(pool, bo->base.size);
++	if (ret)
+ 		return ret;
+-	}
+ 
+-	(*res_ptr)->css = pool;
++	(*res_ptr)->css = charge_pool;
+ 
+ 	spin_lock(&bo->bdev->lru_lock);
+ 	ttm_resource_add_bulk_move(*res_ptr, bo);
+diff --git a/include/drm/ttm/ttm_resource.h b/include/drm/ttm/ttm_resource.h
+index 33e80f30b8b8..549b5b796884 100644
+--- a/include/drm/ttm/ttm_resource.h
++++ b/include/drm/ttm/ttm_resource.h
+@@ -456,10 +456,14 @@ void ttm_resource_init(struct ttm_buffer_object *bo,
+ void ttm_resource_fini(struct ttm_resource_manager *man,
+ 		       struct ttm_resource *res);
+ 
++int ttm_resource_try_charge(struct ttm_buffer_object *bo,
++			    const struct ttm_place *place,
++			    struct dmem_cgroup_pool_state **ret_pool,
++			    struct dmem_cgroup_pool_state **ret_limit_pool);
+ int ttm_resource_alloc(struct ttm_buffer_object *bo,
+ 		       const struct ttm_place *place,
+ 		       struct ttm_resource **res,
+-		       struct dmem_cgroup_pool_state **ret_limit_pool);
++		       struct dmem_cgroup_pool_state *charge_pool);
+ void ttm_resource_free(struct ttm_buffer_object *bo, struct ttm_resource **res);
+ bool ttm_resource_intersects(struct ttm_device *bdev,
+ 			     struct ttm_resource *res,
+diff --git a/include/linux/cgroup.h b/include/linux/cgroup.h
+index bc892e3b37ee..560ae995e3a5 100644
+--- a/include/linux/cgroup.h
++++ b/include/linux/cgroup.h
+@@ -561,6 +561,27 @@ static inline struct cgroup *cgroup_ancestor(struct cgroup *cgrp,
+ 	return cgrp->ancestors[ancestor_level];
+ }
+ 
++/**
++ * cgroup_common_ancestor - find common ancestor of two cgroups
++ * @a: first cgroup to find common ancestor of
++ * @b: second cgroup to find common ancestor of
++ *
++ * Find the first cgroup that is an ancestor of both @a and @b, if it exists
++ * and return a pointer to it. If such a cgroup doesn't exist, return NULL.
++ *
++ * This function is safe to call as long as both @a and @b are accessible.
++ */
++static inline struct cgroup *cgroup_common_ancestor(struct cgroup *a,
++						    struct cgroup *b)
++{
++	int level;
++
++	for (level = min(a->level, b->level); level >= 0; level--)
++		if (a->ancestors[level] == b->ancestors[level])
++			return a->ancestors[level];
++	return NULL;
++}
++
+ /**
+  * task_under_cgroup_hierarchy - test task's membership of cgroup ancestry
+  * @task: the task to be tested
+diff --git a/include/linux/cgroup_dmem.h b/include/linux/cgroup_dmem.h
+index dd4869f1d736..9d72457c4cb9 100644
+--- a/include/linux/cgroup_dmem.h
++++ b/include/linux/cgroup_dmem.h
+@@ -24,6 +24,12 @@ void dmem_cgroup_uncharge(struct dmem_cgroup_pool_state *pool, u64 size);
+ bool dmem_cgroup_state_evict_valuable(struct dmem_cgroup_pool_state *limit_pool,
+ 				      struct dmem_cgroup_pool_state *test_pool,
+ 				      bool ignore_low, bool *ret_hit_low);
++bool dmem_cgroup_below_min(struct dmem_cgroup_pool_state *root,
++			   struct dmem_cgroup_pool_state *test);
++bool dmem_cgroup_below_low(struct dmem_cgroup_pool_state *root,
++			   struct dmem_cgroup_pool_state *test);
++struct dmem_cgroup_pool_state *dmem_cgroup_get_common_ancestor(struct dmem_cgroup_pool_state *a,
++							       struct dmem_cgroup_pool_state *b);
+ 
+ void dmem_cgroup_pool_state_put(struct dmem_cgroup_pool_state *pool);
+ #else
+@@ -59,6 +65,25 @@ bool dmem_cgroup_state_evict_valuable(struct dmem_cgroup_pool_state *limit_pool,
+ 	return true;
+ }
+ 
++static inline bool dmem_cgroup_below_min(struct dmem_cgroup_pool_state *root,
++					 struct dmem_cgroup_pool_state *test)
++{
++	return false;
++}
++
++static inline bool dmem_cgroup_below_low(struct dmem_cgroup_pool_state *root,
++					 struct dmem_cgroup_pool_state *test)
++{
++	return false;
++}
++
++static inline
++struct dmem_cgroup_pool_state *dmem_cgroup_get_common_ancestor(struct dmem_cgroup_pool_state *a,
++							       struct dmem_cgroup_pool_state *b)
++{
++	return NULL;
++}
++
+ static inline void dmem_cgroup_pool_state_put(struct dmem_cgroup_pool_state *pool)
+ { }
+ 
+diff --git a/include/linux/perf_event.h b/include/linux/perf_event.h
+index 48d851fbd8ea..7c1dac8da5e5 100644
+--- a/include/linux/perf_event.h
++++ b/include/linux/perf_event.h
+@@ -1632,7 +1632,7 @@ static inline void perf_event_task_migrate(struct task_struct *task)
+ 		task->sched_migrated = 1;
+ }
+ 
+-static inline void perf_event_task_sched_in(struct task_struct *prev,
++static __always_inline void perf_event_task_sched_in(struct task_struct *prev,
+ 					    struct task_struct *task)
+ {
+ 	if (static_branch_unlikely(&perf_sched_events))
+diff --git a/include/linux/sched/mm.h b/include/linux/sched/mm.h
+index 95d0040df584..4a279ee2d026 100644
+--- a/include/linux/sched/mm.h
++++ b/include/linux/sched/mm.h
+@@ -44,7 +44,7 @@ static inline void smp_mb__after_mmgrab(void)
+ 
+ extern void __mmdrop(struct mm_struct *mm);
+ 
+-static inline void mmdrop(struct mm_struct *mm)
++static __always_inline void mmdrop(struct mm_struct *mm)
+ {
+ 	/*
+ 	 * The implicit full barrier implied by atomic_dec_and_test() is
+@@ -71,14 +71,14 @@ static inline void __mmdrop_delayed(struct rcu_head *rhp)
+  * Invoked from finish_task_switch(). Delegates the heavy lifting on RT
+  * kernels via RCU.
+  */
+-static inline void mmdrop_sched(struct mm_struct *mm)
++static __always_inline void mmdrop_sched(struct mm_struct *mm)
+ {
+ 	/* Provides a full memory barrier. See mmdrop() */
+ 	if (atomic_dec_and_test(&mm->mm_count))
+ 		call_rcu(&mm->delayed_drop, __mmdrop_delayed);
+ }
+ #else
+-static inline void mmdrop_sched(struct mm_struct *mm)
++static __always_inline void mmdrop_sched(struct mm_struct *mm)
+ {
+ 	mmdrop(mm);
+ }
+@@ -104,7 +104,7 @@ static inline void mmdrop_lazy_tlb(struct mm_struct *mm)
+ 	}
+ }
+ 
+-static inline void mmdrop_lazy_tlb_sched(struct mm_struct *mm)
++static __always_inline void mmdrop_lazy_tlb_sched(struct mm_struct *mm)
+ {
+ 	if (IS_ENABLED(CONFIG_MMU_LAZY_TLB_REFCOUNT))
+ 		mmdrop_sched(mm);
+@@ -532,7 +532,7 @@ enum {
+ #include <asm/membarrier.h>
+ #endif
+ 
+-static inline void membarrier_mm_sync_core_before_usermode(struct mm_struct *mm)
++static __always_inline void membarrier_mm_sync_core_before_usermode(struct mm_struct *mm)
+ {
+ 	/*
+ 	 * The atomic_read() below prevents CSE. The following should
+diff --git a/include/linux/sched/topology.h b/include/linux/sched/topology.h
+index 45c0022b91ce..bbcfdf12aa6e 100644
+--- a/include/linux/sched/topology.h
++++ b/include/linux/sched/topology.h
+@@ -92,9 +92,6 @@ struct sched_domain {
+ 	unsigned int nr_balance_failed; /* initialise to 0 */
+ 
+ 	/* idle_balance() stats */
+-	unsigned int newidle_call;
+-	unsigned int newidle_success;
+-	unsigned int newidle_ratio;
+ 	u64 max_newidle_lb_cost;
+ 	unsigned long last_decay_max_lb_cost;
+ 
+diff --git a/include/linux/tick.h b/include/linux/tick.h
+index 738007d6f577..df9934a60faf 100644
+--- a/include/linux/tick.h
++++ b/include/linux/tick.h
+@@ -177,7 +177,7 @@ extern cpumask_var_t tick_nohz_full_mask;
+ #ifdef CONFIG_NO_HZ_FULL
+ extern bool tick_nohz_full_running;
+ 
+-static inline bool tick_nohz_full_enabled(void)
++static __always_inline bool tick_nohz_full_enabled(void)
+ {
+ 	if (!context_tracking_enabled())
+ 		return false;
+@@ -301,7 +301,7 @@ static inline void __tick_nohz_task_switch(void) { }
+ static inline void tick_nohz_full_setup(cpumask_var_t cpumask) { }
+ #endif
+ 
+-static inline void tick_nohz_task_switch(void)
++static __always_inline void tick_nohz_task_switch(void)
+ {
+ 	if (tick_nohz_full_enabled())
+ 		__tick_nohz_task_switch();
+diff --git a/include/linux/vtime.h b/include/linux/vtime.h
+index 29dd5b91dd7d..428464bb81b3 100644
+--- a/include/linux/vtime.h
++++ b/include/linux/vtime.h
+@@ -67,24 +67,24 @@ static __always_inline void vtime_account_guest_exit(void)
+  * For now vtime state is tied to context tracking. We might want to decouple
+  * those later if necessary.
+  */
+-static inline bool vtime_accounting_enabled(void)
++static __always_inline bool vtime_accounting_enabled(void)
+ {
+ 	return context_tracking_enabled();
+ }
+ 
+-static inline bool vtime_accounting_enabled_cpu(int cpu)
++static __always_inline bool vtime_accounting_enabled_cpu(int cpu)
+ {
+ 	return context_tracking_enabled_cpu(cpu);
+ }
+ 
+-static inline bool vtime_accounting_enabled_this_cpu(void)
++static __always_inline bool vtime_accounting_enabled_this_cpu(void)
+ {
+ 	return context_tracking_enabled_this_cpu();
+ }
+ 
+ extern void vtime_task_switch_generic(struct task_struct *prev);
+ 
+-static inline void vtime_task_switch(struct task_struct *prev)
++static __always_inline void vtime_task_switch(struct task_struct *prev)
+ {
+ 	if (vtime_accounting_enabled_this_cpu())
+ 		vtime_task_switch_generic(prev);
+diff --git a/kernel/cgroup/dmem.c b/kernel/cgroup/dmem.c
+index 9d95824dc6fa..29197d3801ac 100644
+--- a/kernel/cgroup/dmem.c
++++ b/kernel/cgroup/dmem.c
+@@ -694,6 +694,97 @@ int dmem_cgroup_try_charge(struct dmem_cgroup_region *region, u64 size,
+ }
+ EXPORT_SYMBOL_GPL(dmem_cgroup_try_charge);
+ 
++/**
++ * dmem_cgroup_below_min() - Tests whether current usage is within min limit.
++ *
++ * @root: Root of the subtree to calculate protection for, or NULL to calculate global protection.
++ * @test: The pool to test the usage/min limit of.
++ *
++ * Return: true if usage is below min and the cgroup is protected, false otherwise.
++ */
++bool dmem_cgroup_below_min(struct dmem_cgroup_pool_state *root,
++			   struct dmem_cgroup_pool_state *test)
++{
++	if (root == test || !pool_parent(test))
++		return false;
++
++	if (!root) {
++		for (root = test; pool_parent(root); root = pool_parent(root))
++			{}
++	}
++
++	/*
++	 * In mem_cgroup_below_min(), the memcg pendant, this call is missing.
++	 * mem_cgroup_below_min() gets called during traversal of the cgroup tree, where
++	 * protection is already calculated as part of the traversal. dmem cgroup eviction
++	 * does not traverse the cgroup tree, so we need to recalculate effective protection
++	 * here.
++	 */
++	dmem_cgroup_calculate_protection(root, test);
++	return page_counter_read(&test->cnt) <= READ_ONCE(test->cnt.emin);
++}
++EXPORT_SYMBOL_GPL(dmem_cgroup_below_min);
++
++/**
++ * dmem_cgroup_below_low() - Tests whether current usage is within low limit.
++ *
++ * @root: Root of the subtree to calculate protection for, or NULL to calculate global protection.
++ * @test: The pool to test the usage/low limit of.
++ *
++ * Return: true if usage is below low and the cgroup is protected, false otherwise.
++ */
++bool dmem_cgroup_below_low(struct dmem_cgroup_pool_state *root,
++			   struct dmem_cgroup_pool_state *test)
++{
++	if (root == test || !pool_parent(test))
++		return false;
++
++	if (!root) {
++		for (root = test; pool_parent(root); root = pool_parent(root))
++			{}
++	}
++
++	/*
++	 * In mem_cgroup_below_low(), the memcg pendant, this call is missing.
++	 * mem_cgroup_below_low() gets called during traversal of the cgroup tree, where
++	 * protection is already calculated as part of the traversal. dmem cgroup eviction
++	 * does not traverse the cgroup tree, so we need to recalculate effective protection
++	 * here.
++	 */
++	dmem_cgroup_calculate_protection(root, test);
++	return page_counter_read(&test->cnt) <= READ_ONCE(test->cnt.elow);
++}
++EXPORT_SYMBOL_GPL(dmem_cgroup_below_low);
++
++/**
++ * dmem_cgroup_get_common_ancestor(): Find the first common ancestor of two pools.
++ * @a: First pool to find the common ancestor of.
++ * @b: First pool to find the common ancestor of.
++ *
++ * Return: The first pool that is a parent of both @a and @b, or NULL if either @a or @b are NULL,
++ * or if such a pool does not exist. A reference to the returned pool is grabbed and must be
++ * released by the caller when it is done using the pool.
++ */
++struct dmem_cgroup_pool_state *dmem_cgroup_get_common_ancestor(struct dmem_cgroup_pool_state *a,
++							       struct dmem_cgroup_pool_state *b)
++{
++	struct cgroup *ancestor_cgroup;
++	struct cgroup_subsys_state *ancestor_css;
++
++	if (!a || !b)
++		return NULL;
++
++	ancestor_cgroup = cgroup_common_ancestor(a->cs->css.cgroup, b->cs->css.cgroup);
++	if (!ancestor_cgroup)
++		return NULL;
++
++	ancestor_css = cgroup_e_css(ancestor_cgroup, &dmem_cgrp_subsys);
++	css_get(ancestor_css);
++
++	return get_cg_pool_unlocked(css_to_dmemcs(ancestor_css), a->region);
++}
++EXPORT_SYMBOL_GPL(dmem_cgroup_get_common_ancestor);
++
+ static int dmem_cgroup_region_capacity_show(struct seq_file *sf, void *v)
+ {
+ 	struct dmem_cgroup_region *region;
+diff --git a/kernel/ksysfs.c b/kernel/ksysfs.c
+index a9e6354d9e25..691c5671b346 100644
+--- a/kernel/ksysfs.c
++++ b/kernel/ksysfs.c
+@@ -132,6 +132,15 @@ KERNEL_ATTR_RO(vmcoreinfo);
+ 
+ #endif /* CONFIG_VMCORE_INFO */
+ 
++#if defined(CONFIG_PREEMPT_RT)
++static ssize_t realtime_show(struct kobject *kobj,
++			     struct kobj_attribute *attr, char *buf)
++{
++	return sprintf(buf, "%d\n", 1);
++}
++KERNEL_ATTR_RO(realtime);
++#endif
++
+ /* whether file capabilities are enabled */
+ static ssize_t fscaps_show(struct kobject *kobj,
+ 				  struct kobj_attribute *attr, char *buf)
+@@ -205,6 +214,9 @@ static struct attribute * kernel_attrs[] = {
+ #ifndef CONFIG_TINY_RCU
+ 	&rcu_expedited_attr.attr,
+ 	&rcu_normal_attr.attr,
++#endif
++#ifdef CONFIG_PREEMPT_RT
++	&realtime_attr.attr,
+ #endif
+ 	NULL
+ };
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index 759777694c78..6270249e1907 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -124,7 +124,6 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_exit_tp);
+ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_set_need_resched_tp);
+ 
+ DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
+-DEFINE_PER_CPU(struct rnd_state, sched_rnd_state);
+ 
+ #ifdef CONFIG_SCHED_PROXY_EXEC
+ DEFINE_STATIC_KEY_TRUE(__sched_proxy_exec);
+@@ -687,11 +686,6 @@ bool raw_spin_rq_trylock(struct rq *rq)
+ 	}
+ }
+ 
+-void raw_spin_rq_unlock(struct rq *rq)
+-{
+-	raw_spin_unlock(rq_lockp(rq));
+-}
+-
+ /*
+  * double_rq_lock - safely lock two runqueues
+  */
+@@ -4894,7 +4888,7 @@ static inline void prepare_task(struct task_struct *next)
+ 	WRITE_ONCE(next->on_cpu, 1);
+ }
+ 
+-static inline void finish_task(struct task_struct *prev)
++static __always_inline void finish_task(struct task_struct *prev)
+ {
+ 	/*
+ 	 * This must be the very last reference to @prev from this CPU. After
+@@ -4910,7 +4904,7 @@ static inline void finish_task(struct task_struct *prev)
+ 	smp_store_release(&prev->on_cpu, 0);
+ }
+ 
+-static void do_balance_callbacks(struct rq *rq, struct balance_callback *head)
++static __always_inline void do_balance_callbacks(struct rq *rq, struct balance_callback *head)
+ {
+ 	void (*func)(struct rq *rq);
+ 	struct balance_callback *next;
+@@ -4945,7 +4939,7 @@ struct balance_callback balance_push_callback = {
+ 	.func = balance_push,
+ };
+ 
+-static inline struct balance_callback *
++static __always_inline struct balance_callback *
+ __splice_balance_callbacks(struct rq *rq, bool split)
+ {
+ 	struct balance_callback *head = rq->balance_callback;
+@@ -5019,7 +5013,7 @@ prepare_lock_switch(struct rq *rq, struct task_struct *next, struct rq_flags *rf
+ 	__acquire(__rq_lockp(this_rq()));
+ }
+ 
+-static inline void finish_lock_switch(struct rq *rq)
++static __always_inline void finish_lock_switch(struct rq *rq)
+ 	__releases(__rq_lockp(rq))
+ {
+ 	/*
+@@ -5052,7 +5046,7 @@ static inline void kmap_local_sched_out(void)
+ #endif
+ }
+ 
+-static inline void kmap_local_sched_in(void)
++static __always_inline void kmap_local_sched_in(void)
+ {
+ #ifdef CONFIG_KMAP_LOCAL
+ 	if (unlikely(current->kmap_ctrl.idx))
+@@ -5106,7 +5100,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
+  * past. 'prev == current' is still correct but we need to recalculate this_rq
+  * because prev may have moved to another CPU.
+  */
+-static struct rq *finish_task_switch(struct task_struct *prev)
++static __always_inline struct rq *finish_task_switch(struct task_struct *prev)
+ 	__releases(__rq_lockp(this_rq()))
+ {
+ 	struct rq *rq = this_rq();
+@@ -8541,8 +8535,6 @@ void __init sched_init_smp(void)
+ {
+ 	sched_init_numa(NUMA_NO_NODE);
+ 
+-	prandom_init_once(&sched_rnd_state);
+-
+ 	/*
+ 	 * There's no userspace yet to cause hotplug operations; hence all the
+ 	 * CPU masks are stable and all blatant races in the below code cannot
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 702eb9aefd04..fcc5346fd16d 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -12242,27 +12242,11 @@ void update_max_interval(void)
+ 	max_load_balance_interval = HZ*num_online_cpus()/10;
+ }
+ 
+-static inline void update_newidle_stats(struct sched_domain *sd, unsigned int success)
+-{
+-	sd->newidle_call++;
+-	sd->newidle_success += success;
+-
+-	if (sd->newidle_call >= 1024) {
+-		sd->newidle_ratio = sd->newidle_success;
+-		sd->newidle_call /= 2;
+-		sd->newidle_success /= 2;
+-	}
+-}
+-
+-static inline bool
+-update_newidle_cost(struct sched_domain *sd, u64 cost, unsigned int success)
++static inline bool update_newidle_cost(struct sched_domain *sd, u64 cost)
+ {
+ 	unsigned long next_decay = sd->last_decay_max_lb_cost + HZ;
+ 	unsigned long now = jiffies;
+ 
+-	if (cost)
+-		update_newidle_stats(sd, success);
+-
+ 	if (cost > sd->max_newidle_lb_cost) {
+ 		/*
+ 		 * Track max cost of a domain to make sure to not delay the
+@@ -12310,7 +12294,7 @@ static void sched_balance_domains(struct rq *rq, enum cpu_idle_type idle)
+ 		 * Decay the newidle max times here because this is a regular
+ 		 * visit to all the domains.
+ 		 */
+-		need_decay = update_newidle_cost(sd, 0, 0);
++		need_decay = update_newidle_cost(sd, 0);
+ 		max_cost += sd->max_newidle_lb_cost;
+ 
+ 		/*
+@@ -12953,22 +12937,6 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
+ 			break;
+ 
+ 		if (sd->flags & SD_BALANCE_NEWIDLE) {
+-			unsigned int weight = 1;
+-
+-			if (sched_feat(NI_RANDOM)) {
+-				/*
+-				 * Throw a 1k sided dice; and only run
+-				 * newidle_balance according to the success
+-				 * rate.
+-				 */
+-				u32 d1k = sched_rng() % 1024;
+-				weight = 1 + sd->newidle_ratio;
+-				if (d1k > weight) {
+-					update_newidle_stats(sd, 0);
+-					continue;
+-				}
+-				weight = (1024 + weight/2) / weight;
+-			}
+ 
+ 			pulled_task = sched_balance_rq(this_cpu, this_rq,
+ 						   sd, CPU_NEWLY_IDLE,
+@@ -12976,14 +12944,10 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
+ 
+ 			t1 = sched_clock_cpu(this_cpu);
+ 			domain_cost = t1 - t0;
++			update_newidle_cost(sd, domain_cost);
++
+ 			curr_cost += domain_cost;
+ 			t0 = t1;
+-
+-			/*
+-			 * Track max cost of a domain to make sure to not delay the
+-			 * next wakeup on the CPU.
+-			 */
+-			update_newidle_cost(sd, domain_cost, weight * !!pulled_task);
+ 		}
+ 
+ 		/*
+diff --git a/kernel/sched/features.h b/kernel/sched/features.h
+index 136a6584be79..3c12d9f93331 100644
+--- a/kernel/sched/features.h
++++ b/kernel/sched/features.h
+@@ -121,8 +121,3 @@ SCHED_FEAT(WA_BIAS, true)
+ SCHED_FEAT(UTIL_EST, true)
+ 
+ SCHED_FEAT(LATENCY_WARN, false)
+-
+-/*
+- * Do newidle balancing proportional to its success rate using randomization.
+- */
+-SCHED_FEAT(NI_RANDOM, true)
+diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
+index efdb0217a64e..4eba3ace2f9b 100644
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -5,7 +5,6 @@
+ #ifndef _KERNEL_SCHED_SCHED_H
+ #define _KERNEL_SCHED_SCHED_H
+ 
+-#include <linux/prandom.h>
+ #include <linux/sched/affinity.h>
+ #include <linux/sched/autogroup.h>
+ #include <linux/sched/cpufreq.h>
+@@ -1372,12 +1371,6 @@ static inline bool is_migration_disabled(struct task_struct *p)
+ }
+ 
+ DECLARE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
+-DECLARE_PER_CPU(struct rnd_state, sched_rnd_state);
+-
+-static inline u32 sched_rng(void)
+-{
+-	return prandom_u32_state(this_cpu_ptr(&sched_rnd_state));
+-}
+ 
+ static __always_inline struct rq *__this_rq(void)
+ {
+@@ -1429,12 +1422,12 @@ static inline struct cpumask *sched_group_span(struct sched_group *sg);
+ 
+ DECLARE_STATIC_KEY_FALSE(__sched_core_enabled);
+ 
+-static inline bool sched_core_enabled(struct rq *rq)
++static __always_inline bool sched_core_enabled(struct rq *rq)
+ {
+ 	return static_branch_unlikely(&__sched_core_enabled) && rq->core_enabled;
+ }
+ 
+-static inline bool sched_core_disabled(void)
++static __always_inline bool sched_core_disabled(void)
+ {
+ 	return !static_branch_unlikely(&__sched_core_enabled);
+ }
+@@ -1443,7 +1436,7 @@ static inline bool sched_core_disabled(void)
+  * Be careful with this function; not for general use. The return value isn't
+  * stable unless you actually hold a relevant rq->__lock.
+  */
+-static inline raw_spinlock_t *rq_lockp(struct rq *rq)
++static __always_inline raw_spinlock_t *rq_lockp(struct rq *rq)
+ {
+ 	if (sched_core_enabled(rq))
+ 		return &rq->core->__lock;
+@@ -1451,7 +1444,7 @@ static inline raw_spinlock_t *rq_lockp(struct rq *rq)
+ 	return &rq->__lock;
+ }
+ 
+-static inline raw_spinlock_t *__rq_lockp(struct rq *rq)
++static __always_inline raw_spinlock_t *__rq_lockp(struct rq *rq)
+ 	__returns_ctx_lock(rq_lockp(rq)) /* alias them */
+ {
+ 	if (rq->core_enabled)
+@@ -1546,12 +1539,12 @@ static inline bool sched_core_disabled(void)
+ 	return true;
+ }
+ 
+-static inline raw_spinlock_t *rq_lockp(struct rq *rq)
++static __always_inline raw_spinlock_t *rq_lockp(struct rq *rq)
+ {
+ 	return &rq->__lock;
+ }
+ 
+-static inline raw_spinlock_t *__rq_lockp(struct rq *rq)
++static __always_inline raw_spinlock_t *__rq_lockp(struct rq *rq)
+ 	__returns_ctx_lock(rq_lockp(rq)) /* alias them */
+ {
+ 	return &rq->__lock;
+@@ -1606,30 +1599,33 @@ extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass)
+ extern bool raw_spin_rq_trylock(struct rq *rq)
+ 	__cond_acquires(true, __rq_lockp(rq));
+ 
+-extern void raw_spin_rq_unlock(struct rq *rq)
+-	__releases(__rq_lockp(rq));
+-
+-static inline void raw_spin_rq_lock(struct rq *rq)
++static __always_inline void raw_spin_rq_lock(struct rq *rq)
+ 	__acquires(__rq_lockp(rq))
+ {
+ 	raw_spin_rq_lock_nested(rq, 0);
+ }
+ 
+-static inline void raw_spin_rq_lock_irq(struct rq *rq)
++static __always_inline void raw_spin_rq_unlock(struct rq *rq)
++	__releases(__rq_lockp(rq))
++{
++	raw_spin_unlock(rq_lockp(rq));
++}
++
++static __always_inline void raw_spin_rq_lock_irq(struct rq *rq)
+ 	__acquires(__rq_lockp(rq))
+ {
+ 	local_irq_disable();
+ 	raw_spin_rq_lock(rq);
+ }
+ 
+-static inline void raw_spin_rq_unlock_irq(struct rq *rq)
++static __always_inline void raw_spin_rq_unlock_irq(struct rq *rq)
+ 	__releases(__rq_lockp(rq))
+ {
+ 	raw_spin_rq_unlock(rq);
+ 	local_irq_enable();
+ }
+ 
+-static inline unsigned long _raw_spin_rq_lock_irqsave(struct rq *rq)
++static __always_inline unsigned long _raw_spin_rq_lock_irqsave(struct rq *rq)
+ 	__acquires(__rq_lockp(rq))
+ {
+ 	unsigned long flags;
+@@ -1640,7 +1636,7 @@ static inline unsigned long _raw_spin_rq_lock_irqsave(struct rq *rq)
+ 	return flags;
+ }
+ 
+-static inline void raw_spin_rq_unlock_irqrestore(struct rq *rq, unsigned long flags)
++static __always_inline void raw_spin_rq_unlock_irqrestore(struct rq *rq, unsigned long flags)
+ 	__releases(__rq_lockp(rq))
+ {
+ 	raw_spin_rq_unlock(rq);
+diff --git a/kernel/sched/topology.c b/kernel/sched/topology.c
+index 32dcddaead82..35ae4d1e9ad6 100644
+--- a/kernel/sched/topology.c
++++ b/kernel/sched/topology.c
+@@ -1674,12 +1674,6 @@ sd_init(struct sched_domain_topology_level *tl,
+ 
+ 		.last_balance		= jiffies,
+ 		.balance_interval	= sd_weight,
+-
+-		/* 50% success rate */
+-		.newidle_call		= 512,
+-		.newidle_success	= 256,
+-		.newidle_ratio		= 512,
+-
+ 		.max_newidle_lb_cost	= 0,
+ 		.last_decay_max_lb_cost	= jiffies,
+ 		.child			= child,
+diff --git a/scripts/Makefile.clang b/scripts/Makefile.clang
+index b67636b28c35..062ee0211c9c 100644
+--- a/scripts/Makefile.clang
++++ b/scripts/Makefile.clang
+@@ -34,9 +34,7 @@ endif
+ # certain optimization flags it knows it has not implemented.
+ # Make it behave more like gcc by erroring when these flags are encountered
+ # so they can be implemented or wrapped in cc-option.
+-CLANG_FLAGS	+= -Werror=unknown-warning-option
+ CLANG_FLAGS	+= -Werror=ignored-optimization-argument
+ CLANG_FLAGS	+= -Werror=option-ignored
+-CLANG_FLAGS	+= -Werror=unused-command-line-argument
+ KBUILD_CPPFLAGS	+= $(CLANG_FLAGS)
+ export CLANG_FLAGS
+diff --git a/scripts/Makefile.warn b/scripts/Makefile.warn
+index 5567da6c7dfe..439a3c126cc4 100644
+--- a/scripts/Makefile.warn
++++ b/scripts/Makefile.warn
+@@ -13,7 +13,6 @@ KBUILD_CFLAGS += -Wundef
+ KBUILD_CFLAGS += -Werror=implicit-function-declaration
+ KBUILD_CFLAGS += -Werror=implicit-int
+ KBUILD_CFLAGS += -Werror=return-type
+-KBUILD_CFLAGS += -Werror=strict-prototypes
+ KBUILD_CFLAGS += -Wno-format-security
+ KBUILD_CFLAGS += -Wno-trigraphs
+ KBUILD_CFLAGS += -Wno-frame-address
+@@ -101,8 +100,5 @@ KBUILD_CFLAGS += $(KBUILD_CFLAGS-y) $(CONFIG_CC_IMPLICIT_FALLTHROUGH)
+ # Prohibit date/time macros, which would make the build non-deterministic
+ KBUILD_CFLAGS += -Werror=date-time
+ 
+-# enforce correct pointer usage
+-KBUILD_CFLAGS += -Werror=incompatible-pointer-types
+-
+ # Require designated initializers for all marked structures
+ KBUILD_CFLAGS += $(call cc-option,-Werror=designated-init)
+-- 
+2.53.0
