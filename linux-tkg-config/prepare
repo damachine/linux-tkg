@@ -112,6 +112,137 @@ _rt_rev_map=(
   ["6.10"]="11"
 )
 
+source "$_where"/linux-tkg-config/module-driver-registry
+
+# ! MODULE DRIVER REGISTRY ! — defines functions to manage third-party out-of-tree kernel modules, such as v4l2loopback, nct6687 and it87
+_module_drv_clone() {
+  local _module_id
+
+  for _module_id in ${_module_drv_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    local _module_git="$(_module_drv_get_git "${_module_id}")"
+    local _module_url="$(_module_drv_get_git_url "${_module_id}")"
+
+    msg2 "Cloning $(_module_drv_get_display_name "${_module_id}") source..."
+    rm -rf "${_module_src}"
+    git clone --depth=1 "${_module_url}" "${_module_src}"
+
+    if [ -n "${_module_git}" ]; then
+      git -C "${_module_src}" fetch --depth=1 origin "${_module_git}"
+      git -C "${_module_src}" checkout --detach FETCH_HEAD
+    fi
+  done
+}
+
+_module_drv_build() {
+  local _module_id
+
+  for _module_id in ${_module_drv_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    msg2 "Building $(_module_drv_get_display_name "${_module_id}") kernel module..."
+    make ${_force_all_threads} ${llvm_opt} -C "${_kernel_work_folder_abs}" M="${_module_src}" modules
+  done
+}
+
+_module_drv_sign() {
+  local _module_id="$1"
+  local _module_path="$2"
+
+  if ! _resolve_signing_params; then
+    warning "$(_module_drv_get_display_name "${_module_id}") signing was requested but signing is not available — skipping."
+    return 0
+  fi
+
+  msg2 "Signing $(_module_drv_get_display_name "${_module_id}") kernel module..."
+  "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" "${_module_path}"
+}
+
+_module_drv_install() {
+  local _module_id
+  local _kernver="$(<version)"
+  local modulesdir="$pkgdir/usr/lib/modules/$_kernver"
+  local _module_extramodules="${modulesdir}/extramodules"
+  local strip_bin="strip"
+
+  [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
+
+  for _module_id in ${_module_drv_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    local _module_name="$(_module_drv_get_module_name "${_module_id}")"
+    local _module_filename="$(_module_drv_get_module_filename "${_module_id}")"
+    local _module_path="${_module_extramodules}/${_module_filename}"
+    local _module_options="$(_module_drv_get_modprobe_options "${_module_id}")"
+    local _license_file="$(_module_drv_get_license_file "${_module_id}")"
+
+    msg2 "Installing $(_module_drv_get_display_name "${_module_id}") kernel module..."
+    install -dm755 "${_module_extramodules}"
+    install -m644 "${_module_src}/${_module_filename}" "${_module_extramodules}/"
+
+    "${strip_bin}" --strip-debug "${_module_path}"
+
+    if _module_drv_should_sign "${_module_id}"; then
+      _module_drv_sign "${_module_id}" "${_module_path}"
+    fi
+
+    zstd --rm -19 -T0 "${_module_path}"
+
+    if _module_drv_should_autoload "${_module_id}"; then
+      printf '%s\n' "${_module_name}" | install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modules-load.d/${_module_name}-${pkgbase}.conf"
+    fi
+
+    if [ -n "${_module_options}" ]; then
+      printf 'options %s %s\n' "${_module_name}" "${_module_options}" |
+        install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modprobe.d/${_module_name}-${pkgbase}.conf"
+    fi
+
+    if [ -n "${_license_file}" ] && [ -f "${_module_src}/${_license_file}" ]; then
+      install -Dm644 "${_module_src}/${_license_file}" "${pkgdir}/usr/share/licenses/${pkgbase}/${_module_id}/${_license_file}"
+    fi
+
+    rm -rf "${_module_src}"
+  done
+}
+
+# Installs third-party out-of-tree modules directly onto the live system (Generic/Gentoo install.sh path)
+_module_drv_install_live() {
+  local _module_id
+  local _extramodules="/lib/modules/${_kernelname}/extramodules"
+  local strip_bin="strip"
+
+  [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
+
+  for _module_id in ${_module_drv_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    local _module_name="$(_module_drv_get_module_name "${_module_id}")"
+    local _module_filename="$(_module_drv_get_module_filename "${_module_id}")"
+    local _module_path="${_extramodules}/${_module_filename}"
+    local _module_options="$(_module_drv_get_modprobe_options "${_module_id}")"
+
+    msg2 "Installing $(_module_drv_get_display_name "${_module_id}") kernel module..."
+    sudo install -dm755 "${_extramodules}"
+    sudo install -m644 "${_module_src}/${_module_filename}" "${_extramodules}/"
+
+    sudo "${strip_bin}" --strip-debug "${_module_path}"
+
+    if _module_drv_should_sign "${_module_id}"; then
+      _module_drv_sign "${_module_id}" "${_module_path}"
+    fi
+
+    sudo zstd --rm -19 -T0 "${_module_path}"
+
+    if _module_drv_should_autoload "${_module_id}"; then
+      printf '%s\n' "${_module_name}" | sudo install -Dm644 /dev/stdin "/etc/modules-load.d/${_module_name}.conf"
+    fi
+
+    if [ -n "${_module_options}" ]; then
+      printf 'options %s %s\n' "${_module_name}" "${_module_options}" |
+        sudo install -Dm644 /dev/stdin "/etc/modprobe.d/${_module_name}.conf"
+    fi
+  done
+
+  sudo depmod -a "${_kernelname}"
+}
+
 _undefine() {
   for _config_name in "$@"; do
     scripts/config -k --undefine "${_config_name}"
@@ -619,6 +750,8 @@ _tkg_initscript() {
 
   _set_compiler
 
+  _resolve_module_drv_config
+
   if [ -n "$_custom_pkgbase" ]; then
     echo -e "_custom_pkgbase=\"$_custom_pkgbase\"" >> "$_where"/BIG_UGLY_FROGMINER
   fi
@@ -689,6 +822,111 @@ _tkg_patcher() {
     echo -e "\n" >> "$_where"/logs/prepare.log.txt
   else
     msg2 "Skipping patch ${tkgpatch##*/}...\n         (unavailable for this kernel version)"
+  fi
+}
+
+# ! MODULE_DRV CONFIG RESOLUTION ! — validates and resolves the _module_drv, _module_drv_autoload and _module_drv_sign variables into _module_drv_resolved, _module_drv_autoload_resolved and _module_drv_sign_resolved
+_resolve_module_drv_config() {
+  local _module_id
+  local _resolved=""
+  local _autoload=""
+  local _sign=""
+
+  # Treat "false" as explicit opt-out (skip prompt, leave resolved empty)
+  if [ "$_module_drv" = "false" ]; then
+    _module_drv=""
+    echo -e "_module_drv=''" >> "$_where"/BIG_UGLY_FROGMINER
+    return
+  fi
+
+  # Prompt if not set
+  if [ -z "$_module_drv" ]; then
+    local _module_drv_ids=("nct6687" "it87" "v4l2loopback")
+    plain "Which out-of-tree kernel modules do you want to build alongside the kernel?"
+    plain "Enter space-separated numbers (e.g. '0 2'), or press Enter to skip."
+    plain "  > skip"
+    plain "    0) nct6687      — hardware monitoring (MSI/Gigabyte, Nuvoton NCT6687-R)"
+    plain "    1) it87         — hardware monitoring (ASUS/ASRock, ITE IT87xx)"
+    plain "    2) v4l2loopback — virtual video device (e.g. OBS → Zoom)"
+    read -rp "[0-2/skip]: " _module_drv_input
+    if [ -n "$_module_drv_input" ]; then
+      for _idx in $_module_drv_input; do
+        if [[ "$_idx" =~ ^[0-2]$ ]]; then
+          _module_drv="$(_module_drv_append_unique "${_module_drv}" "${_module_drv_ids[$_idx]}")"
+        else
+          warning "Ignoring invalid selection '$_idx'"
+        fi
+      done
+    fi
+    if [ -n "$_module_drv" ]; then
+      plain "Selected modules: ${_module_drv}"
+    else
+      plain "No out-of-tree modules selected."
+    fi
+    echo -e "_module_drv='${_module_drv}'" >> "$_where"/BIG_UGLY_FROGMINER
+  fi
+
+  for _module_id in ${_module_drv}; do
+    if ! _module_drv_validate_id "${_module_id}"; then
+      error "Unknown third-party module '${_module_id}' in _module_drv. Supported values: v4l2loopback nct6687 it87"
+      exit 1
+    fi
+    _resolved="$(_module_drv_append_unique "${_resolved}" "${_module_id}")"
+  done
+
+  for _module_id in ${_module_drv_autoload}; do
+    if ! _module_drv_validate_id "${_module_id}"; then
+      error "Unknown third-party module '${_module_id}' in _module_drv_autoload. Supported values: v4l2loopback nct6687 it87"
+      exit 1
+    fi
+    _autoload="$(_module_drv_append_unique "${_autoload}" "${_module_id}")"
+  done
+
+  if [ "${_module_drv_sign}" = "true" ]; then
+    _sign="${_resolved}"
+  elif [ -n "${_module_drv_sign}" ] && [ "${_module_drv_sign}" != "false" ]; then
+    for _module_id in ${_module_drv_sign}; do
+      if ! _module_drv_validate_id "${_module_id}"; then
+        error "Unknown third-party module '${_module_id}' in _module_drv_sign. Supported values: true, false, v4l2loopback, nct6687, it87"
+        exit 1
+      fi
+      _sign="$(_module_drv_append_unique "${_sign}" "${_module_id}")"
+    done
+  fi
+
+  local _resolved_autoload=""
+  if [ -n "${_resolved}" ]; then
+    for _module_id in ${_autoload}; do
+      if ! _module_drv_list_has "${_resolved}" "${_module_id}"; then
+        error "_module_drv_autoload contains '${_module_id}', but that module is not enabled in _module_drv"
+        exit 1
+      fi
+      _resolved_autoload="$(_module_drv_append_unique "${_resolved_autoload}" "${_module_id}")"
+    done
+  fi
+
+  local _resolved_sign=""
+  if [ -n "${_resolved}" ]; then
+    for _module_id in ${_sign}; do
+      if ! _module_drv_list_has "${_resolved}" "${_module_id}"; then
+        error "_module_drv_sign contains '${_module_id}', but that module is not enabled in _module_drv"
+        exit 1
+      fi
+      _resolved_sign="$(_module_drv_append_unique "${_resolved_sign}" "${_module_id}")"
+    done
+  fi
+
+  _module_drv_resolved="${_resolved}"
+  _module_drv_autoload_resolved="${_resolved_autoload}"
+  _module_drv_sign_resolved="${_resolved_sign}"
+
+  echo -e "_module_drv_resolved='${_module_drv_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_module_drv_autoload_resolved='${_module_drv_autoload_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_module_drv_sign_resolved='${_module_drv_sign_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
+
+  if [ -n "${_module_drv_resolved}" ] && [ "$_ispkgbuild" != "true" ] && \
+     ! [[ "$_distro" =~ ^(Generic|Gentoo)$ ]]; then
+    warning "_module_drv is currently only implemented for Arch (PKGBUILD) and Generic/Gentoo (install.sh). Other distros will ignore it."
   fi
 }
 
