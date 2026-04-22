@@ -1703,6 +1703,18 @@ fi
     fi
   fi
 
+  tkgpatch="$srcdir/0014-aggressive-more-opts.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_aggressive_more_opts" ]; then
+      plain ""
+      plain "Apply optional aggressive more opts patch?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_aggressive_more_opts;
+    fi
+    if [[ "$CONDITION_aggressive_more_opts" =~ [yY] ]] || [ "$_aggressive_more_opts" = "true" ]; then
+      _msg="Applying aggressive more opts patch" && _tkg_patcher
+    fi
+  fi
+
   # We're done with tkgpatch
   unset tkgpatch
   unset _msg

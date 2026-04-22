@@ -66,6 +66,16 @@ _aggressive_glitched_base=""
 
 Applies `0014-aggressive-glitched-base.patch`: workingset protection ratios, extended readahead, adjusted writeback and dirty thresholds, scheduler base slice and migration cost tuning, hugepage compaction tweaks — all gated behind `CONFIG_TKG`. Targets reduced stuttering on some workloads by keeping more file caches in memory. Requires `_glitched_base="true"`. Leave empty to be asked at build time.
 
+<br />
+
+#### `_aggressive_more_opts` — CPU/scheduler misc optimizations (experimental)
+
+```properties
+_aggressive_more_opts=""
+```
+
+Applies `0014-aggressive-more-opts.patch`: reduces `timer_slack_ns`, avoids `sched_move_task` lock contention, removes schedutil dependency, disables split-lock mitigation. Most noticeable on high core-count CPUs. Leave empty to be asked at build time.
+
 #### User patches
 Examples:
 
