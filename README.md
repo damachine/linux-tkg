@@ -1,162 +1,286 @@
 # Linux-tkg
 
-This repository provides scripts to automatically download, patch and compile the Linux Kernel from [the official Linux git repository](https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git), with a selection of patches aiming for better desktop/gaming experience. The provided patches can be enabled/disabled by editing the `customization.cfg` file and/or by following the interactive install script. You can use an external config file (default is `$HOME/.config/frogminer/linux-tkg.cfg`, tweakable with the `_EXT_CONFIG_PATH` variable in `customization.cfg`). You can also use your own patches (more information in `customization.cfg` file).
+### This fork tracks [upstream](https://github.com/Frogging-Family/linux-tkg) closely and adds some spice on top.
 
-### Important information
+> [!NOTE]
+> **New to linux-tkg?** Start with the [upstream project README](https://github.com/Frogging-Family/linux-tkg) to get familiar with the general concept, the available options and the build workflow. Come back here once you know the basics.
+> 
+> Please do not report bugs to the upstream repository when using this fork.
 
-- **Non-pacman distros support can be considered experimental. You're invited to report issues you might encounter with it.**
-- **If your distro isn't using systemd, please set _configfile="running-kernel" in customization.cfg or you might end up with a non-bootable kernel**
+---
 
-- Keep in mind building recent linux kernels with GCC will require ~20-25GB of disk space. Using llvm/clang, LTO, ccache and/or enabling more drivers in the defconfig will push that requirement higher, so make sure you have enough free space on the volume you're using to build.
-- In `intel_pstate` driver, frequency scaling aggressiveness has been changed with kernel 5.5 which results in stutters and poor performance in low/medium load scenarios (for higher power savings). As a workaround for our gaming needs, we are setting it to passive mode to make use of the `acpi_cpufreq` governor passthrough, keeping full support for turbo frequencies. It's combined with our aggressive ondemand governor by default for good performance on most CPUs while keeping frequency scaling for power savings. In a typical low/medium load scenario (Core i7 9700k, playing Mario Galaxy on Dolphin emulator) intel_pstate in performance mode gives a stuttery 45-50 fps experience, while passive mode + aggressive ondemand offers a locked 60 fps.
-- Nvidia's proprietary drivers might need to be patched if they don't support your chosen kernel OOTB: [Frogging-Family nvidia-all](https://github.com/Frogging-Family/nvidia-all) can do that automatically for you.
-- Note regarding kernels older than 5.9 on Arch Linux: since the switch to `zstd` compressed `initramfs` by default, you will face an `invalid magic at start of compress` error by default. You can workaround the issue by editing `/etc/mkinitcpio.conf` to uncomment the `COMPRESSION="lz4"` (for example, since that's the best option after zstd) line and regenerating `initramfs` for all kernels with `sudo mkinitpcio -P`
+<br />
 
-### Customization options
+### Extra knobs in `customization.cfg`
 
-#### Alternative CPU schedulers
+All on top of what upstream already offers — knobs live in [`customization.cfg`](https://github.com/damachine/linux-tkg/blob/staging/customization.cfg#L250-L360).
 
-[CFS](https://en.wikipedia.org/wiki/Completely_Fair_Scheduler) is the only CPU scheduler available in the "vanilla" kernel sources ≤ 6.5.
-[EEVDF](https://lwn.net/Articles/925371/) is the only CPU scheduler available in the "vanilla" kernel sources ≥ 6.6.
+- [Linux-tkg](#linux-tkg)
+    - [This fork tracks upstream closely and adds some spice on top.](#this-fork-tracks-upstream-closely-and-adds-some-spice-on-top)
+    - [Extra knobs in `customization.cfg`](#extra-knobs-in-customizationcfg)
+      - [`_nvidia_open` — builds the open-source NVIDIA kernel modules](#_nvidia_open--builds-the-open-source-nvidia-kernel-modules)
+      - [`_module_drv` — build third-party out-of-tree (e.g. motherboard chipset)](#_module_drv--build-third-party-out-of-tree-eg-motherboard-chipset)
+      - [`_aggressive_glitched_base` — aggressive VM/scheduler tuning defaults (experimental)](#_aggressive_glitched_base--aggressive-vmscheduler-tuning-defaults-experimental)
+      - [`_aggressive_misc_adds` — aggressive misc additions (experimental)](#_aggressive_misc_adds--aggressive-misc-additions-experimental)
+      - [`_aggressive_more_opts` — CPU/scheduler misc optimizations (experimental)](#_aggressive_more_opts--cpuscheduler-misc-optimizations-experimental)
+      - [`_clang_polly` — Clang Polly loop optimizer support (experimental)](#_clang_polly--clang-polly-loop-optimizer-support-experimental)
+      - [`_autofdo` / `_autofdo_profile_path` — Clang AutoFDO (experimental)](#_autofdo--_autofdo_profile_path--clang-autofdo-experimental)
+      - [`_vanilla` — build a pure vanilla kernel without any modifications](#_vanilla--build-a-pure-vanilla-kernel-without-any-modifications)
+      - [`_nvidia_open_sign` — sign NVIDIA open modules (experimental)](#_nvidia_open_sign--sign-nvidia-open-modules-experimental)
+      - [`_RESIGN_AFTER_STRIP` — re-sign all modules after stripping (experimental)](#_resign_after_strip--re-sign-all-modules-after-stripping-experimental)
+      - [`_module_drv_sign` — out-of-tree module signing (experimental)](#_module_drv_sign--out-of-tree-module-signing-experimental)
+      - [`_install_signing_keys` — keep signing key in headers package (experimental)](#_install_signing_keys--keep-signing-key-in-headers-package-experimental)
+    - [Install procedure](#install-procedure)
 
-Its current implementation doesn't allow for injecting additional schedulers at kernel level, and requires replacing it. Only one scheduler can be patched in at a time.
-However, using [Sched-ext](https://github.com/sched-ext/scx), it's possible to inject CPU schedulers at runtime. Exists and enabled by default starting kernel 6.12.
-Arch users get scx schedulers from the `scx-scheds` package or on the [AUR](https://aur.archlinux.org/packages/scx-scheds-git) thanks to @sirlucjan (for persistence, set scheduler in "/etc/default/scx" and enable the `scx` service).
+<br />
 
-Alternative schedulers are optionally available in linux-tkg at build time:
 
-- Project C / PDS & BMQ by Alfred Chen: [blog](http://cchalpha.blogspot.com/ ), [code repository](https://gitlab.com/alfredchen/projectc)
-- MuQSS by Con Kolivas : [blog](http://ck-hack.blogspot.com/), [code repository](https://github.com/ckolivas/linux)
-- BORE (Burst-Oriented Response Enhancer) by Masahito Suzuki - CFS/EEVDF based : [code repository](https://github.com/firelzrd/bore-scheduler)
-- Undead PDS : TkG's port of the pre-Project C "PDS-mq" scheduler by Alfred Chen. While PDS-mq got dropped with kernel 5.1 in favor of its BMQ evolution/rework, it wasn't on par with PDS-mq in gaming. "U" PDS still performed better in some cases than other schedulers, so it's been kept undead for a while.
+#### `_nvidia_open` — builds the open-source NVIDIA kernel modules
 
-These alternative schedulers may offer a better performance/latency ratio in some scenarios. The availability of each scheduler depends on the chosen Kernel version: the script will display what's available on a per-version basis.
+| Value | Description |
+|---|---|
+| `"false"` | Disable (skips prompt) |
+| `"latest"` | Lastest NVIDIA driver branch |
+| `"vulkan"` | Vulkan developer beta branch |
+| `"legacy"` | Older NVIDIA LTS driver branch |
 
-#### Default tweaks
+Examples:
 
-- Memory management and swapping tweaks
-- Scheduling tweaks
-- `CFS/EEVDF` tweaks
-- Using the ["Cake"](https://www.bufferbloat.net/projects/codel/wiki/CakeTechnical/) network queue management system
-- Using `vm.max_map_count=16777216` by default
-- Cherry-picked patches from [Clear Linux's patchset](https://github.com/clearlinux-pkgs/linux)
+```properties
+_nvidia_open="vulkan"
+```
 
-#### Optional tweaks
+Driver versions and supported kernels are pinned in [`linux-tkg-config/prepare`](https://github.com/damachine/linux-tkg/blob/staging/linux-tkg-config/prepare#L114-L118).
 
-The `customization.cfg` file offers many toggles for extra tweaks:
+<br />
 
-- [NTsync](https://repo.or.cz/linux/zf.git/shortlog/refs/heads/ntsync5), `Fsync` and `Futex2`(deprecated) support: can improve the performance in games, needs a patched wine like [wine-tkg](https://github.com/Frogging-Family/wine-tkg-git)
-- [Graysky's per-CPU-arch native optimizations](https://github.com/graysky2/kernel_compiler_patch): tunes the compiled code to to a specified CPU
-- Compile with GCC or Clang with optional `O2`/`O3` and `LTO` (Clang only) optimizations.
-  - **Warning regarding DKMS modules prior to v3.0.2 (2021-11-21) and Clang:** `DKMS` version v3.0.1 and earlier will default to using GCC, which will fail to build modules against a Clang-built kernel. This will - for example - break Nvidia drivers. Forcing older `DKMS` to use Clang can be done but isn't recommended.
-- Using [Modprobed-db](https://github.com/graysky2/modprobed-db)'s database can reduce the compilation time and produce a smaller kernel which will only contain the modules listed in it. **NOT recommended**
-  - **Warning**: make sure to read [thoroughly about it first](https://wiki.archlinux.org/index.php/Modprobed-db) since it comes with caveats that can lead to an unbootable kernel.
-- "Zenify" patchset using core blk, mm and scheduler tweaks from Zen
-- `ZFS` FPU symbols (<5.9)
-- Overrides for missing ACS capabilities
-- [OpenRGB](https://gitlab.com/CalcProgrammer1/OpenRGB) support
-- Provide own kernel `.config` file
-- ...
+#### `_module_drv` — build third-party out-of-tree (e.g. motherboard chipset)
 
-#### User patches
+Examples:
 
-To apply your own patch files using the provided scripts, you will need to put them in a `linux<VERSION><PATCHLEVEL>-tkg-userpatches` folder -- where _VERSION_ and _PATCHLEVEL_ are the kernel version and patch level, as specified in [linux Makefile](https://github.com/torvalds/linux/blob/master/Makefile), the patch works on, _e.g_ `linux65-tkg-userpatches` -- at the same level as the `PKGBUILD` file, with the `.mypatch` extension. The script will by default ask if you want to apply them, one by one. The option `_user_patches` should be set to `true` in the `customization.cfg` file for this to work.
+```properties
+# enable modules
+_module_drv="nct6687 v4l2loopback"
 
+# disable all — skips prompt
+_module_drv="false"
+```
+
+Builds selected out-of-tree kernel modules into the main kernel package at build time. Supported modules:
+
+| Module | Chip / Controller | Description | Source |
+|---|---|---|---|
+| `nct6687` | Nuvoton NCT6687-R (common on MSI & Gigabyte boards) | Hardware monitoring driver (fans, temps, voltages) | [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) |
+| `it87` | ITE IT8689E / IT8792E / IT87xx series (common on ASUS & ASRock boards) | Hardware monitoring driver (fans, temps, voltages) | [frankcrawford/it87](https://github.com/frankcrawford/it87) |
+| `v4l2loopback` | Virtual (no physical chip; kernel-level loopback) | Creates virtual video devices usable as webcam sources (e.g. OBS → Zoom) | [v4l2loopback/v4l2loopback](https://github.com/v4l2loopback/v4l2loopback) |
+
+**Companion options** (all ignored when `_module_drv` is empty):
+
+| Option | Description |
+|---|---|
+| `_module_drv_autoload` | Space-separated subset of modules to autoload at boot via `/usr/lib/modules-load.d/`. `v4l2loopback` is autoloaded by default for compatibility. |
+| `_module_drv_options_<name>` | Per-module modprobe options written to `/usr/lib/modprobe.d/`. Available for `nct6687`, `it87`, and `v4l2loopback`. |
+| `_module_drv_git_<name>` | Pin a specific git ref (branch, tag, or commit) for a module, or set a full URL (`https://…` / `git@…`) to clone from a different fork entirely. Leave empty to use the default upstream repository at its default branch. |
+
+Examples:
+
+```properties
+# Enable two modules
+_module_drv="nct6687 v4l2loopback"
+
+# Autoload nct6687 at boot
+_module_drv_autoload="nct6687"
+
+# modprobe options for nct6687 (space-separated, produces a single "options" line)
+_module_drv_options_nct6687="fan_config=msi_alt1 msi_fan_brute_force=1"
+
+# Pin nct6687 to a specific commit
+_module_drv_git_nct6687="abc1234"
+
+# Or switch to a completely different fork URL
+_module_drv_git_nct6687="https://github.com/otherfork/nct6687d.git"
+```
+
+<br />
+
+#### `_aggressive_glitched_base` — aggressive VM/scheduler tuning defaults (experimental)
+
+```properties
+_aggressive_glitched_base=""
+```
+
+Applies `0014-aggressive-glitched-base.patch`: workingset protection ratios, extended readahead, adjusted writeback and dirty thresholds, scheduler base slice and migration cost tuning, hugepage compaction tweaks — all gated behind `CONFIG_TKG`. Targets reduced stuttering on some workloads by keeping more file caches in memory. Requires `_glitched_base="true"`. Leave empty to be asked at build time.
+
+
+#### `_aggressive_misc_adds` — aggressive misc additions (experimental)
+
+```properties
+_aggressive_misc_adds=""
+```
+
+Applies `0014-aggressive-misc-additions.patch`: may contain temporary fixes pending upstream or distro-specific compatibility fixes. Leave empty to be asked at build time.
+
+
+#### `_aggressive_more_opts` — CPU/scheduler misc optimizations (experimental)
+
+```properties
+_aggressive_more_opts=""
+```
+
+Applies `0014-aggressive-more-opts.patch`: reduces `timer_slack_ns`, avoids `sched_move_task` lock contention, removes schedutil dependency, disables split-lock mitigation. Most noticeable on high core-count CPUs. Leave empty to be asked at build time.
+
+
+#### `_clang_polly` — Clang Polly loop optimizer support (experimental)
+
+```properties
+_clang_polly=""
+```
+
+Applies `0014-clang-polly.patch` when available, enabling LLVM Polly for additional loop optimizations at compile time. Only meaningful when building with `_compiler="llvm"`. Leave empty to be asked at build time.
+
+<br />
+
+#### `_autofdo` / `_autofdo_profile_path` — Clang AutoFDO (experimental)
+
+```properties
+_autofdo=""
+_autofdo_profile_path="~/.config/frogminer/kernel.afdo"
+```
+
+Two-pass PGO-like optimization using CPU hardware branch sampling. Requires `_compiler="llvm"`, kernel >= 6.11, and a CPU with LBR (Intel Haswell+) or (AMD Zen4+).
+
+```properties
+BUILD a profilable kernel
+  _autofdo="true"
+  _autofdo_profile_path="~/.config/frogminer/kernel.afdo"
+  build & install kernel, then boot into it
+
+PROFILE COLLECTION
+  sudo echo 0 > /proc/sys/kernel/kptr_restrict
+  sudo echo 0 > /proc/sys/kernel/perf_event_paranoid
+
+  OR (via systemd):
+  sudo sysctl -w kernel.kptr_restrict=0
+  sudo sysctl -w kernel.perf_event_paranoid=0
+
+  Intel (LBR):
+    perf record -e BR_INST_RETIRED.NEAR_TAKEN:k -a -N -b -c 500009 -o \
+      kernel.data -- <workload>
+  AMD Zen4:
+    perf record --pfm-events RETIRED_TAKEN_BRANCH_INSTRUCTIONS:k -a -N -b -c 500009 -o \
+      kernel.data -- <workload>
+
+CONVERT perf data (.afdo profile)
+  mkdir -p ~/.config/frogminer
+  llvm-profgen --kernel --binary=/usr/lib/modules/<kver>/build/vmlinux \
+    --perfdata=kernel.data -o ~/.config/frogminer/kernel.afdo
+  Merge multiple profiles (optional):
+    llvm-profdata merge -o ~/.config/frogminer/kernel.afdo profile1.afdo profile2.afdo ...
+
+SET _autofdo_profile_path to the .afdo file path, then rebuild the kernel.
+```
+
+<br />
+
+#### `_vanilla` — build a pure vanilla kernel without any modifications
+
+| Value | Description |
+|---|---|
+| `"false"` | Disable — normal TKG build (default) |
+| `"true"` | Enable — build a stock kernel without any TKG patches or modifications |
+
+Examples:
+
+```properties
+_vanilla="true"
+```
+
+When enabled, all TKG-specific patches, config modifications and kernel config fragments (`.myfrag`) are skipped. The CPU scheduler is set to the kernel default without prompting, the compiler is forced to `gcc`, and the kernel is named `-vanilla`.
+
+<br />
+<br />
+
+<a name="signing--module-extras"></a>
+
+> These options below were added for personal testing and are left in for anyone who might find it useful.
+
+#### `_nvidia_open_sign` — sign NVIDIA open modules (experimental)
+
+```properties
+_nvidia_open_sign="false"
+```
+
+When set to `"true"`, all `nvidia*.ko` files in the NVIDIA open modules package are signed using the kernel's module signing key after building.
+
+Useful in combination with `_RESIGN_AFTER_STRIP` to prevent unsigned-module taint messages. Requires `CONFIG_MODULE_SIG=y`. Has no effect when `_nvidia_open` is `"false"` or empty.
+
+
+#### `_RESIGN_AFTER_STRIP` — re-sign all modules after stripping (experimental)
+
+```properties
+_RESIGN_AFTER_STRIP="false"
+```
+
+When set to `"true"`, all `.ko` files are re-signed with the kernel's module signing key after stripping. Prevents "module verification failed" taint messages caused by `INSTALL_MOD_STRIP=1` removing embedded signatures. Requires `CONFIG_MODULE_SIG=y`. Has no effect when `_STRIP` is not `"true"`.
+
+
+#### `_module_drv_sign` — out-of-tree module signing (experimental)
+
+```properties
+_module_drv_sign="false"
+```
+
+When set to `"true"`, all active out-of-tree modules are signed using the kernel's module signing key after building. Alternatively, pass a space-separated subset of module names to sign only those selectively. Requires `CONFIG_MODULE_SIG=y`. Has no effect when `_module_drv` is empty.
+
+
+#### `_install_signing_keys` — keep signing key in headers package (experimental)
+
+```properties
+_install_signing_keys="false"
+```
+
+When set to `"true"`, the kernel module signing key and certificate are installed into the linux-headers package (useful for Secure Boot workflows or to prevent unsigned-module taint messages). Requires `CONFIG_MODULE_SIG=y`. Has no effect when is `"false"` or empty.
+
+> [!WARNING]
+> The key is stored unencrypted on disk. It is installed with permissions 400 (root-readable only), but anyone with root or physical access to the machine can extract it and sign arbitrary modules. If security is a concern, use full-disk encryption (e.g. LUKS) to protect the key against physical access.
+
+---
+
+<br />
 
 ### Install procedure
 
-For all the supported linux distributions, `linux-tkg` has to be cloned with `git`. Since it keeps a clone of the kernel's sources within (`linux-src-git`, created during the first build after a fresh clone), it is recommended to keep the cloned `linux-tkg` folder and simply update it with `git pull`, the install script does the necessary cleanup at every run.
+> [!TIP]
+> **Recommended:** Use [tkginstaller](https://github.com/damachine/tkginstaller) for an interactive guided build experience with fzf menus, automatic dependency handling, and config management.
+> ```shell
+> # install tkginstaller (AUR)
+> yay -S tkginstaller-git
+> 
+> # Use fzf-finder TUI mode, simply run
+> tkginstaller
+> # Use direct command with package name, for example
+> tkginstaller linux          # or shortcut l
+> tkginstaller linux-nvidia   # or shortcut ln
+> ```
 
-#### Arch & derivatives
+(Arch & derivatives)
 
 ```shell
-git clone https://github.com/Frogging-Family/linux-tkg.git
+git clone https://github.com/damachine/linux-tkg.git
 cd linux-tkg
-# Optional: edit the "customization.cfg" file
 makepkg -si
 ```
 
-The script will use a slightly modified Arch config from the `linux-tkg-config` folder, it can be changed through the `_configfile` variable in `customization.cfg`. The options selected at build-time are installed to `/usr/share/doc/$pkgbase/customization.cfg`, where `$pkgbase` is the package name.
-
-**Note:** the `base-devel` package group is expected to be installed, see [here](https://wiki.archlinux.org/title/Makepkg) for more information.
-
-#### DEB (Debian, Ubuntu and derivatives) and RPM (Fedora, SUSE and derivatives) based distributions
-
-**Important notes:**
-An issue has been reported for Ubuntu where the stock kernel cannot boot properly any longer, the whereabouts are not entirely clear (only a single user reported that, see https://github.com/Frogging-Family/linux-tkg/issues/436).
-
-The interactive `install.sh` script will create, depending on the selected distro, `.deb` or `.rpm` packages, move them in the the subfolder `DEBS` or `RPMS` then prompts to install them with the distro's package manager.
+(Generic / Gentoo)
 
 ```shell
-git clone https://github.com/Frogging-Family/linux-tkg.git
+git clone https://github.com/damachine/linux-tkg.git
 cd linux-tkg
-# Optional: edit the "customization.cfg" file
 ./install.sh install
 ```
 
-Uninstalling custom kernels installed through the script has to be done
-manually. `install.sh` can can help out with some useful information:
+> `_module_drv` and its companion options should also work on **Generic** and **Gentoo**. Untested, use at your own risk.
+>
+> `install.sh` has no effect when using on Debian, Ubuntu, Fedora.
 
-```shell
-cd path/to/linux-tkg
-./install.sh uninstall-help
-```
-
-The script will use a slightly modified Arch config from the `linux-tkg-config` folder, it can be changed through the `_configfile` variable in `customization.cfg`.
-
-#### Generic install
-
-The interactive `install.sh` script can be used to perform a "Generic" install by choosing `Generic` when prompted. It git clones the kernel tree in the `linux-src-git` folder, patches the code and edits a `.config` file in it. The commands to do are the following:
-
-```shell
-git clone https://github.com/Frogging-Family/linux-tkg.git
-cd linux-tkg
-# Optional: edit the "customization.cfg" file
-./install.sh install
-```
-
-The script will compile the kernel then prompt before doing the following:
-
-```shell
-sudo cp -R . /usr/src/linux-tkg-${kernel_flavor}
-cd /usr/src/linux-tkg-${kernel_flavor}
-sudo make modules_install
-sudo make install
-```
-
-**Notes:**
-
-- All the needed dependencies to patch, configure, compile or install the kernel are expected to be installed by the user beforehand.
-- If you only want the script to patch the sources in `linux-src-git`, you can use `./install.sh config`
-- `${kernel_flavor}` is a default naming scheme but can be customized with the variable `_kernel_localversion` in `customization.cfg`.
-- `_dracut_options` is a variable that can be changed in `customization.cfg`.
-- `_libunwind_replace` is a variable that can be changed in `customization.cfg` for replacing `libunwind` with `llvm-libunwind`.
-- The script uses Arch's `.config` file as a base. A custom one can be provided through `_configfile` in `customization.cfg`.
-- The installed files will not be tracked by your package manager and uninstalling requires manual intervention.
-  `./install.sh uninstall-help` can help with useful information if your install procedure follows the `Generic` approach.
-- Installing the kernel with `make install` calls `/sbin/installkernel` (see [here](https://docs.kernel.org/kbuild/kbuild.html#installkernel)) to put the kernel at the right place and trigger an initramfs (and UKI) generation,
-  check your distro's documentation on how to configure it to your needs
-  - [arch](https://wiki.archlinux.org/title/Kernel-install)
-  - [gentoo](https://wiki.gentoo.org/wiki/Installkernel)
-
-#### Gentoo
-
-The interactive `install.sh` script supports Gentoo by following the same procedure as `Generic`, with minor additions
-
-1. Applies few Gentoo patches
-   - `https://dev.gentoo.org/~mpagano/genpatches/trunk/$kver/4567_distro-Gentoo-Kconfig.patch`
-   - `https://dev.gentoo.org/~mpagano/genpatches/trunk/$kver/3000_Support-printing-firmware-info.patch`
-2. Symlinks the newly installed `/usr/src/linux-tkg-${kernel_flavor}` src folder to `/usr/src/linux`
-3. Offers to do a `emerge @module-rebuild` for convenience
-
-```shell
-git clone https://github.com/Frogging-Family/linux-tkg.git
-cd linux-tkg
-# Optional: edit the "customization.cfg" file
-./install.sh install
-```
-
-**Notes:**
-
-- On OpenRC, in case of boot issues, try setting `_configfile="running-kernel"` in `customization.cfg`.
-  - This will use the running kernel's `.config` file instead of Arch's.
+---
