@@ -87,6 +87,14 @@ When set to `"true"`, the kernel module signing key and certificate are installe
 > [!WARNING]
 > The key is stored unencrypted on disk. It is installed with permissions 400 (root-readable only), but anyone with root or physical access to the machine can extract it and sign arbitrary modules. If security is a concern, use full-disk encryption (e.g. LUKS) to protect the key against physical access.
 
+#### `_RESIGN_AFTER_STRIP` — re-sign all modules after stripping (experimental)
+
+```properties
+_RESIGN_AFTER_STRIP="false"
+```
+
+When set to `"true"`, all `.ko` files are re-signed with the kernel's module signing key after stripping. Prevents "module verification failed" taint messages caused by `INSTALL_MOD_STRIP=1` removing embedded signatures. Requires `CONFIG_MODULE_SIG=y`. Has no effect when `_STRIP` is not `"true"`.
+
 #### User patches
 Examples:
 
