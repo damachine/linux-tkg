@@ -263,6 +263,12 @@ hackheaders() {
   install -Dt "$builddir/arch/x86" -m644 arch/x86/Makefile
   cp -t "$builddir" -a scripts
 
+  # Install kernel signing keys for later out-of-tree module signing
+  if [[ "$_install_signing_keys" == "true" ]] && [[ -f "certs/signing_key.pem" ]]; then
+    msg2 "Installing module signing keys..."
+    install -Dt "$builddir/certs" -m 400 certs/signing_key.pem certs/signing_key.x509
+  fi
+
   # add objtool for external module building and enabled VALIDATION_STACK option
   install -Dt "$builddir/tools/objtool" tools/objtool/objtool
 

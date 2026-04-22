@@ -58,6 +58,17 @@ The `customization.cfg` file offers many toggles for extra tweaks:
 - Provide own kernel `.config` file
 - ...
 
+#### `_install_signing_keys` — keep signing key in headers package (experimental)
+
+```properties
+_install_signing_keys="false"
+```
+
+When set to `"true"`, the kernel module signing key and certificate are installed into the linux-headers package (useful for Secure Boot workflows or to prevent unsigned-module taint messages). Requires `CONFIG_MODULE_SIG=y`. Has no effect when is `"false"` or empty.
+
+> [!WARNING]
+> The key is stored unencrypted on disk. It is installed with permissions 400 (root-readable only), but anyone with root or physical access to the machine can extract it and sign arbitrary modules. If security is a concern, use full-disk encryption (e.g. LUKS) to protect the key against physical access.
+
 #### User patches
 
 To apply your own patch files using the provided scripts, you will need to put them in a `linux<VERSION><PATCHLEVEL>-tkg-userpatches` folder -- where _VERSION_ and _PATCHLEVEL_ are the kernel version and patch level, as specified in [linux Makefile](https://github.com/torvalds/linux/blob/master/Makefile), the patch works on, _e.g_ `linux65-tkg-userpatches` -- at the same level as the `PKGBUILD` file, with the `.mypatch` extension. The script will by default ask if you want to apply them, one by one. The option `_user_patches` should be set to `true` in the `customization.cfg` file for this to work.
