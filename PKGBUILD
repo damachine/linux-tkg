@@ -146,7 +146,12 @@ build() {
   # remove -O2 flag and place user optimization flag
   CFLAGS=${CFLAGS/-O2/}
   CFLAGS+=" ${_compileropt}"
-
+  # AutoFDO profile flag
+  local _autofdo_make_flag=""
+  if [[ -n "$_autofdo_profile_path" && -f "$_autofdo_profile_path" ]]; then
+    _autofdo_make_flag="CLANG_AUTOFDO_PROFILE=${_autofdo_profile_path}"
+    msg2 "AutoFDO: using profile ${_autofdo_profile_path}"
+  fi
   # build!
   if pacman -Qq schedtool &> /dev/null; then
     msg2 "Using schedtool"
@@ -164,7 +169,7 @@ build() {
     export KCFLAGS
     export KRUSTFLAGS
 
-    time ( make ${_force_all_threads} ${llvm_opt} LOCALVERSION= bzImage modules 2>&1 ) 3>&1 1>&2 2>&3
+    time ( make ${_force_all_threads} ${llvm_opt} ${_autofdo_make_flag} LOCALVERSION= bzImage modules 2>&1 ) 3>&1 1>&2 2>&3
     return 0
   )
 }

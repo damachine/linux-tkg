@@ -58,6 +58,48 @@ The `customization.cfg` file offers many toggles for extra tweaks:
 - Provide own kernel `.config` file
 - ...
 
+<br />
+
+#### `_autofdo` / `_autofdo_profile_path` — Clang AutoFDO (experimental)
+
+```properties
+_autofdo=""
+_autofdo_profile_path="~/.config/frogminer/kernel.afdo"
+```
+
+Two-pass PGO-like optimization using CPU hardware branch sampling. Requires `_compiler="llvm"`, kernel >= 6.11, and a CPU with LBR (Intel Haswell+) or (AMD Zen4+).
+
+```properties
+BUILD a profilable kernel
+  _autofdo="true"
+  _autofdo_profile_path="~/.config/frogminer/kernel.afdo"
+  build & install kernel, then boot into it
+
+PROFILE COLLECTION
+  sudo echo 0 > /proc/sys/kernel/kptr_restrict
+  sudo echo 0 > /proc/sys/kernel/perf_event_paranoid
+
+  OR (via systemd):
+  sudo sysctl -w kernel.kptr_restrict=0
+  sudo sysctl -w kernel.perf_event_paranoid=0
+
+  Intel (LBR):
+    perf record -e BR_INST_RETIRED.NEAR_TAKEN:k -a -N -b -c 500009 -o \
+      kernel.data -- <workload>
+  AMD Zen4:
+    perf record --pfm-events RETIRED_TAKEN_BRANCH_INSTRUCTIONS:k -a -N -b -c 500009 -o \
+      kernel.data -- <workload>
+
+CONVERT perf data (.afdo profile)
+  mkdir -p ~/.config/frogminer
+  llvm-profgen --kernel --binary=/usr/lib/modules/<kver>/build/vmlinux \
+    --perfdata=kernel.data -o ~/.config/frogminer/kernel.afdo
+  Merge multiple profiles (optional):
+    llvm-profdata merge -o ~/.config/frogminer/kernel.afdo profile1.afdo profile2.afdo ...
+
+SET _autofdo_profile_path to the .afdo file path, then rebuild the kernel.
+```
+
 #### User patches
 
 To apply your own patch files using the provided scripts, you will need to put them in a `linux<VERSION><PATCHLEVEL>-tkg-userpatches` folder -- where _VERSION_ and _PATCHLEVEL_ are the kernel version and patch level, as specified in [linux Makefile](https://github.com/torvalds/linux/blob/master/Makefile), the patch works on, _e.g_ `linux65-tkg-userpatches` -- at the same level as the `PKGBUILD` file, with the `.mypatch` extension. The script will by default ask if you want to apply them, one by one. The option `_user_patches` should be set to `true` in the `customization.cfg` file for this to work.

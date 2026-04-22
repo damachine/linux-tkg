@@ -166,6 +166,13 @@ if [ "$1" = "install" ]; then
     msg2 'Enabled ccache'
   fi
 
+  # AutoFDO profile flag
+  _autofdo_make_flag=""
+  if [[ -n "$_autofdo_profile_path" && -f "$_autofdo_profile_path" ]]; then
+    _autofdo_make_flag="CLANG_AUTOFDO_PROFILE=${_autofdo_profile_path}"
+    msg2 "AutoFDO: using profile ${_autofdo_profile_path}"
+  fi
+
   if [ -z "$_kernel_localversion" ]; then
     if [ "$_preempt_rt" = "1" ]; then
       _kernel_flavor="tkg-${_cpusched}-rt${_compiler_name}"
@@ -324,7 +331,7 @@ if [ "$1" = "install" ]; then
     fi
 
     msg2 "Building kernel"
-    make ${llvm_opt} -j ${_thread_num}
+    make ${llvm_opt} ${_autofdo_make_flag} -j ${_thread_num}
     msg2 "Build successful"
 
     if [ "$_STRIP" = "true" ]; then
