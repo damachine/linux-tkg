@@ -158,12 +158,12 @@ if [ "$1" = "install" ]; then
   fi
 
   # ccache
-  if [ "$_noccache" != "true" ]; then
+  if [ "$_noccache" != "true" ] && command -v ccache &> /dev/null; then
     export PATH="/usr/lib64/ccache/:/usr/lib/ccache/bin/:$PATH"
 
     export CCACHE_SLOPPINESS="file_macro,locale,time_macros"
     export CCACHE_NOHASHDIR="true"
-    msg2 'Enabled ccache'
+    msg2 'ccache was found and will be used'
   fi
 
   if [ -z "$_kernel_localversion" ]; then

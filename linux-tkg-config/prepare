@@ -929,6 +929,7 @@ _tkg_srcprep() {
   if [ -z $_debug ]; then
 
   # Set some -tkg defaults
+  _enable "TKG" # linux-tkg branding
   _disable "DYNAMIC_FAULT" "DEFAULT_FQ_CODEL" "WERROR"
   _enable "DEFAULT_CAKE" "AMD_PRIVATE_COLOR"
   if [ "$_kver" = "504" ]; then
@@ -1547,6 +1548,7 @@ _tkg_srcprep() {
 
   if [ "$_expert" = "true" ]; then
     echo -e "\r# start of config expert\r
+CONFIG_TKG=y\r
 # CONFIG_BASE_SMALL is not set\r
 # CONFIG_DEBUG_RSEQ is not set\r
 # CONFIG_PC104 is not set\r
