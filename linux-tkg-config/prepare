@@ -120,6 +120,11 @@ _undefine() {
 }
 
 _enable() {
+  local _vanilla_ok=false
+  [[ "$1" == "--vanilla-ok" ]] && { _vanilla_ok=true; shift; }
+  if _vanilla_active && ! $_vanilla_ok; then
+    return 0
+  fi
   for _config_name in "$@"; do
     scripts/config -k --enable "${_config_name}"
     echo "Enabled ${_config_name}" >> "$_where"/logs/prepare.log.txt
@@ -127,6 +132,11 @@ _enable() {
 }
 
 _disable() {
+  local _vanilla_ok=false
+  [[ "$1" == "--vanilla-ok" ]] && { _vanilla_ok=true; shift; }
+  if _vanilla_active && ! $_vanilla_ok; then
+    return 0
+  fi
   for _config_name in "$@"; do
     scripts/config -k --disable "${_config_name}"
     echo "Disabled ${_config_name}" >> "$_where"/logs/prepare.log.txt
@@ -134,6 +144,11 @@ _disable() {
 }
 
 _module() {
+  local _vanilla_ok=false
+  [[ "$1" == "--vanilla-ok" ]] && { _vanilla_ok=true; shift; }
+  if _vanilla_active && ! $_vanilla_ok; then
+    return 0
+  fi
   for _config_name in "$@"; do
     scripts/config -k --module "${_config_name}"
     echo "Defined ${_config_name} as module" >> "$_where"/logs/prepare.log.txt
@@ -328,6 +343,11 @@ _set_kernel_version() {
   echo -e "_kernel_git_tag='$_kernel_git_tag'" >> "$_where"/BIG_UGLY_FROGMINER
 }
 
+# Check if _vanilla toggle is active
+_vanilla_active() {
+  [[ "$_vanilla" =~ ^(Y|y|Yes|yes|true|1)$ ]];
+}
+
 _set_cpu_scheduler() {
 
   [[ -z "$_kver" ]] && error "bug: _kver variable not defined but needed" && exit 1
@@ -367,8 +387,9 @@ _set_cpu_scheduler() {
     _avail_cpu_scheds+=("muqss")
   fi
 
-  if [ "${_preempt_rt}" = "1" ]; then
-    warning "! Since you have enabled _preempt_rt, incompatible cpu schedulers will not be available !"
+  if [[ "${_preempt_rt}" == "1" ]] || _vanilla_active; then
+    [[ "${_preempt_rt}" == "1" ]] && warning "! Since you have enabled _preempt_rt, incompatible cpu schedulers will not be available !"
+    _vanilla_active && warning "_vanilla toggle active, only default scheduler available"
     _avail_cpu_scheds=("$_default_cpu_sched")
   fi
 
@@ -388,6 +409,35 @@ _set_cpu_scheduler() {
       warning "Please select another"
       _cpusched=""
     fi
+  fi
+
+  # Vanilla mode
+  if _vanilla_active; then
+    msg2 ""
+    warning "========================================================="
+    warning " Vanilla kernel build selected."
+    warning " All patches and kernel config modifications are ignored."
+    warning "========================================================="
+    msg2 ""
+    _cpusched="$_default_cpu_sched"
+    _compiler="gcc"
+    if [ "$_distro" = "Arch" ]; then
+      _configfile="config.x86_64"
+    else
+      _configfile="running-kernel"
+    fi
+    _config_fragments="false"
+    _noccache="true"
+    _custom_pkgbase="linux-tkg-vanilla"
+    # Persist vanilla overrides into BIG_UGLY_FROGMINER
+    cat >> "$_where"/BIG_UGLY_FROGMINER <<EOF
+_cpusched="$_default_cpu_sched"
+_compiler="gcc"
+_configfile="${_configfile}"
+_config_fragments="false"
+_noccache="true"
+_custom_pkgbase="linux-tkg-vanilla"
+EOF
   fi
 
   if [ -z "$_cpusched" ]; then
@@ -682,6 +732,12 @@ user_patcher() {
 }
 
 _tkg_patcher() {
+  local _vanilla_ok=false
+  [[ "$1" == "--vanilla-ok" ]] && _vanilla_ok=true
+  if _vanilla_active && ! $_vanilla_ok; then
+    warning "_vanilla toggle active: not applying ${tkgpatch##*/}"
+    return 0
+  fi
   if [ -e "$tkgpatch" ] && [[ $(wc -l <"$tkgpatch") -ge 7 ]]; then
     msg2 "$_msg"
     echo -e "### Applying ${tkgpatch##*/}... ###" >> "$_where"/logs/prepare.log.txt
@@ -690,6 +746,16 @@ _tkg_patcher() {
   else
     msg2 "Skipping patch ${tkgpatch##*/}...\n         (unavailable for this kernel version)"
   fi
+}
+
+_tkg_setconfig() {
+  local _vanilla_ok=false
+  [[ "$1" == "--vanilla-ok" ]] && { _vanilla_ok=true; shift; }
+  if _vanilla_active && ! $_vanilla_ok; then
+    warning "_vanilla toggle active: not applying scripts/config $*"
+    return 0
+  fi
+  scripts/config "$@"
 }
 
 _tkg_srcprep() {
@@ -717,6 +783,7 @@ _tkg_srcprep() {
     echo "" > localversion.20-pkgname
   fi
 
+
   # Hardened Patches
   if [ "${_configfile}" = "config_hardened.x86_64" ] && [ "${_cpusched}" = "cfs" ]; then
     tkgpatch="$srcdir/0012-linux-hardened.patch"
@@ -728,171 +795,171 @@ _tkg_srcprep() {
 
   if [ -z $_debug ]; then
 
-  # PREEMPT_RT patch
-  if [ "${_preempt_rt}" = "1" ] && [[ $_kver -lt 612 ]]; then
-    if [ "${_rt_subver_map[$_basekernel]+_}" = "_" ]; then
-      preempt_rt_ksubver="${_rt_subver_map[$_basekernel]}"
-      # Check if subversion is supported, skip check if forced
-      if [ "${_preempt_rt_force}" = "1" ] || [ "${preempt_rt_ksubver}" = "${_sub}" ]; then
-        if [[ "${_sub}" == *rc* ]]; then
-          _separator="-"
+    # PREEMPT_RT patch
+    if [ "${_preempt_rt}" = "1" ] && [[ $_kver -lt 612 ]]; then
+      if [ "${_rt_subver_map[$_basekernel]+_}" = "_" ]; then
+        preempt_rt_ksubver="${_rt_subver_map[$_basekernel]}"
+        # Check if subversion is supported, skip check if forced
+        if [ "${_preempt_rt_force}" = "1" ] || [ "${preempt_rt_ksubver}" = "${_sub}" ]; then
+          if [[ "${_sub}" == *rc* ]]; then
+            _separator="-"
+          else
+            _separator="."
+          fi
+          if [[ "${preempt_rt_ksubver}" == 0 ]]; then
+            _separator=
+            preempt_rt_ksubver=
+          fi
+          preempt_rt_file_gz="patch-${_basekernel}${_separator}${preempt_rt_ksubver}-rt${_rt_rev_map["$_basekernel"]}.patch.gz"
+          preempt_rt_file=`basename ${preempt_rt_file_gz} .gz`
+          curl "https://cdn.kernel.org/pub/linux/kernel/projects/rt/${_basekernel}/${preempt_rt_file_gz}" > "$srcdir"/"${preempt_rt_file_gz}"
+          last_pwd=`pwd`
+          cd "$srcdir"
+          gunzip -k "$srcdir/${preempt_rt_file_gz}"
+          cd "$last_pwd"
+          tkgpatch="$srcdir/${preempt_rt_file}"
+          _msg="Applying PREEMPT_RT patch" && _tkg_patcher
         else
-          _separator="."
+          warning "Skipping PREEMPT_RT patch for ${_basekernel}.${_sub} (last known good ${_basekernel}.${preempt_rt_ksubver})"
         fi
-        if [[ "${preempt_rt_ksubver}" == 0 ]]; then
-          _separator=
-          preempt_rt_ksubver=
-        fi
-        preempt_rt_file_gz="patch-${_basekernel}${_separator}${preempt_rt_ksubver}-rt${_rt_rev_map["$_basekernel"]}.patch.gz"
-        preempt_rt_file=`basename ${preempt_rt_file_gz} .gz`
-        curl "https://cdn.kernel.org/pub/linux/kernel/projects/rt/${_basekernel}/${preempt_rt_file_gz}" > "$srcdir"/"${preempt_rt_file_gz}"
-        last_pwd=`pwd`
-        cd "$srcdir"
-        gunzip -k "$srcdir/${preempt_rt_file_gz}"
-        cd "$last_pwd"
-        tkgpatch="$srcdir/${preempt_rt_file}"
-        _msg="Applying PREEMPT_RT patch" && _tkg_patcher
       else
-        warning "Skipping PREEMPT_RT patch for ${_basekernel}.${_sub} (last known good ${_basekernel}.${preempt_rt_ksubver})"
+        warning "Skipping PREEMPT_RT patch on unsupported kernel version"
       fi
-    else
-      warning "Skipping PREEMPT_RT patch on unsupported kernel version"
-    fi
-  fi
-
-  # TkG
-  if [ "$_clear_patches" = "true" ]; then
-    tkgpatch="$srcdir/0002-clear-patches.patch"
-    _msg="Applying clear linux patches" && _tkg_patcher
-  fi
-
-  if [ "$_glitched_base" = "true" ]; then
-    tkgpatch="$srcdir/0003-glitched-base.patch"
-    _msg="Applying glitched base patch" && _tkg_patcher
-  fi
-
-  if [ "${_preempt_rt}" != "1" ]; then
-    tkgpatch="$srcdir/0003-glitched-base-nonrt.patch"
-    _msg="Applying glitched base non-rt additions patch" && _tkg_patcher
-  fi
-
-  tkgpatch="$srcdir/0013-fedora-rpm.patch"
-  _msg="RPM: fixing spec generator" && _tkg_patcher
-
-  if [[ "$_STRIP" == "true" ]]; then
-    tkgpatch="$srcdir/0013-fedora-strip-modules.patch"
-    _msg="RPM: strip modules" && _tkg_patcher
-  fi
-
-  if [ "$_distro" = "Suse" ]; then
-    tkgpatch="$srcdir/0013-suse-additions.patch"
-    _msg="Import Suse-specific patches" && _tkg_patcher
-  fi
-
-  if [ "$_distro" = "Gentoo" ]; then
-    # https://dev.gentoo.org/~mpagano/genpatches/trunk/
-    tkgpatch="$srcdir/0013-gentoo-kconfig.patch"
-    _msg="Import Gentoo-kconfig patches" && _tkg_patcher
-    tkgpatch="$srcdir/0013-gentoo-print-loaded-firmware.patch"
-    _msg="Print firmware names on load" && _tkg_patcher
-  fi
-
-  if [ -z $_misc_adds ]; then
-    plain "Enable misc additions ? They may contain temporary fixes pending upstream, or some other changes that can break on non-Arch distros."
-    read -rp "`echo $'    > [Y]/n : '`" _interactive_misc_adds;
-    if [ "$_interactive_misc_adds" != "n" ] && [ "$_interactive_misc_adds" != "N" ]; then
-      _misc_adds="true"
-    fi
-  fi
-
-  if [ "$_misc_adds" = "true" ]; then
-    tkgpatch="$srcdir/0012-misc-additions.patch"
-    _msg="Applying misc additions patch" && _tkg_patcher
-  fi
-
-  _msg="Applying patches for WRITE_WATCH support in Wine"
-  tkgpatch="$srcdir/0001-mm-Support-soft-dirty-flag-reset-for-VA-range.patch" && _tkg_patcher
-  tkgpatch="$srcdir/0002-mm-Support-soft-dirty-flag-read-with-reset.patch" && _tkg_patcher
-
-  if [ "${_cpusched}" = "muqss" ]; then
-    # MuQSS
-    _msg="Applying MuQSS base patch"
-    tkgpatch="$srcdir/0004-${_basekernel}-ck1.patch" && _tkg_patcher
-
-    if [ "${_aggressive_ondemand}" = "true" ]; then
-      _msg="Applying MuQSS agressive ondemand governor patch"
-      tkgpatch="$srcdir/0004-glitched-ondemand-muqss.patch" && _tkg_patcher
     fi
 
-    _msg="Applying Glitched MuQSS patch"
-    tkgpatch="$srcdir/0004-glitched-muqss.patch" && _tkg_patcher
-
-  elif [ "${_cpusched}" = "upds" ] || [ "${_cpusched}" = "pds" ]; then
-    # upds naming quirk
-    if [ "${_cpusched}" = "upds" ];then
-      # is it dead or alive
-      doa="-undead"
+    # TkG
+    if [ "$_clear_patches" = "true" ]; then
+      tkgpatch="$srcdir/0002-clear-patches.patch"
+      _msg="Applying clear linux patches" && _tkg_patcher
     fi
 
-    # PDS-mq
-    _msg="Applying PDS base patch"
-    if [ "${_cpusched}" = "upds" ] || ( [ "$_kver" = "504" ] || [ "$_kver" = "507" ] && [ "${_cpusched}" = "pds" ] ); then
-      tkgpatch="$srcdir/0005-v${_basekernel}_undead-pds099o.patch" && _tkg_patcher
-      if [ "${_aggressive_ondemand}" = "true" ]; then
-        _msg="Applying PDS agressive ondemand governor patch"
-        tkgpatch="$srcdir/0005${doa}-glitched-ondemand-pds.patch" && _tkg_patcher
+    if [ "$_glitched_base" = "true" ]; then
+      tkgpatch="$srcdir/0003-glitched-base.patch"
+      _msg="Applying glitched base patch" && _tkg_patcher
+    fi
+
+    if [ "${_preempt_rt}" != "1" ]; then
+      tkgpatch="$srcdir/0003-glitched-base-nonrt.patch"
+      _msg="Applying glitched base non-rt additions patch" && _tkg_patcher
+    fi
+
+    tkgpatch="$srcdir/0013-fedora-rpm.patch"
+    _msg="RPM: fixing spec generator" && _tkg_patcher
+
+    if [[ "$_STRIP" == "true" ]]; then
+      tkgpatch="$srcdir/0013-fedora-strip-modules.patch"
+      _msg="RPM: strip modules" && _tkg_patcher
+    fi
+
+    if [ "$_distro" = "Suse" ]; then
+      tkgpatch="$srcdir/0013-suse-additions.patch"
+      _msg="Import Suse-specific patches" && _tkg_patcher
+    fi
+
+    if [ "$_distro" = "Gentoo" ]; then
+      # https://dev.gentoo.org/~mpagano/genpatches/trunk/
+      tkgpatch="$srcdir/0013-gentoo-kconfig.patch"
+      _msg="Import Gentoo-kconfig patches" && _tkg_patcher
+      tkgpatch="$srcdir/0013-gentoo-print-loaded-firmware.patch"
+      _msg="Print firmware names on load" && _tkg_patcher
+    fi
+
+    if [ -z $_misc_adds ]; then
+      plain "Enable misc additions ? They may contain temporary fixes pending upstream, or some other changes that can break on non-Arch distros."
+      read -rp "`echo $'    > [Y]/n : '`" _interactive_misc_adds;
+      if [ "$_interactive_misc_adds" != "n" ] && [ "$_interactive_misc_adds" != "N" ]; then
+        _misc_adds="true"
       fi
-    else
-      tkgpatch="$srcdir/0009-prjc.patch" && _tkg_patcher
+    fi
+
+    if [ "$_misc_adds" = "true" ]; then
+      tkgpatch="$srcdir/0012-misc-additions.patch"
+      _msg="Applying misc additions patch" && _tkg_patcher
+    fi
+
+    _msg="Applying patches for WRITE_WATCH support in Wine"
+    tkgpatch="$srcdir/0001-mm-Support-soft-dirty-flag-reset-for-VA-range.patch" && _tkg_patcher
+    tkgpatch="$srcdir/0002-mm-Support-soft-dirty-flag-read-with-reset.patch" && _tkg_patcher
+
+    if [ "${_cpusched}" = "muqss" ]; then
+      # MuQSS
+      _msg="Applying MuQSS base patch"
+      tkgpatch="$srcdir/0004-${_basekernel}-ck1.patch" && _tkg_patcher
+
       if [ "${_aggressive_ondemand}" = "true" ]; then
-        _msg="Applying prjc PDS/BMQ agressive ondemand governor patch"
+        _msg="Applying MuQSS agressive ondemand governor patch"
+        tkgpatch="$srcdir/0004-glitched-ondemand-muqss.patch" && _tkg_patcher
+      fi
+
+      _msg="Applying Glitched MuQSS patch"
+      tkgpatch="$srcdir/0004-glitched-muqss.patch" && _tkg_patcher
+
+    elif [ "${_cpusched}" = "upds" ] || [ "${_cpusched}" = "pds" ]; then
+      # upds naming quirk
+      if [ "${_cpusched}" = "upds" ];then
+        # is it dead or alive
+        doa="-undead"
+      fi
+
+      # PDS-mq
+      _msg="Applying PDS base patch"
+      if [ "${_cpusched}" = "upds" ] || ( [ "$_kver" = "504" ] || [ "$_kver" = "507" ] && [ "${_cpusched}" = "pds" ] ); then
+        tkgpatch="$srcdir/0005-v${_basekernel}_undead-pds099o.patch" && _tkg_patcher
+        if [ "${_aggressive_ondemand}" = "true" ]; then
+          _msg="Applying PDS agressive ondemand governor patch"
+          tkgpatch="$srcdir/0005${doa}-glitched-ondemand-pds.patch" && _tkg_patcher
+        fi
+      else
+        tkgpatch="$srcdir/0009-prjc.patch" && _tkg_patcher
+        if [ "${_aggressive_ondemand}" = "true" ]; then
+          _msg="Applying prjc PDS/BMQ agressive ondemand governor patch"
+          tkgpatch="$srcdir/0009-glitched-ondemand-bmq.patch" && _tkg_patcher
+        fi
+      fi
+
+      _msg="Applying Glitched PDS patch"
+      tkgpatch="$srcdir/0005${doa}-glitched-pds.patch" && _tkg_patcher
+
+    elif [ "${_cpusched}" = "bmq" ]; then
+      # Project C / BMQ
+      _msg="Applying Project C / BMQ base patch"
+      if [ "$_kver" != "504" ]; then
+        tkgpatch="$srcdir/0009-prjc.patch" && _tkg_patcher
+      else
+        tkgpatch="$srcdir/0009-bmq.patch" && _tkg_patcher
+      fi
+
+      if [ "${_aggressive_ondemand}" = "true" ] && [ "$_kver" != "504" ]; then
+        _msg="Applying BMQ agressive ondemand governor patch"
         tkgpatch="$srcdir/0009-glitched-ondemand-bmq.patch" && _tkg_patcher
       fi
+
+      _msg="Applying Glitched BMQ patch"
+      tkgpatch="$srcdir/0009-glitched-bmq.patch" && _tkg_patcher
+    elif [ "${_cpusched}" = "bore" ]; then
+      _msg="Applying BORE patch"
+      tkgpatch="$srcdir/0001-bore.patch" && _tkg_patcher
+    elif [ "${_cpusched}" = "cfs" ]; then
+      _msg="Applying Glitched CFS additions patch"
+      tkgpatch="$srcdir/0003-glitched-cfs-additions.patch" && _tkg_patcher
+    elif [[ "${_cpusched}" =~ "eevdf" ]]; then
+      if [[ $_kver == "604" || $_kver == "605" ]]; then
+        _msg="Applying Earliest Eligible Virtual Deadline First (EEVDF) scheduler patch"
+        tkgpatch="$srcdir/0003-eevdf.patch" && _tkg_patcher
+
+        _msg="Applying eevdf-Disable-DELAY_DEQUEUE patch"
+        tkgpatch="$srcdir/0004-eevdf-Disable-DELAY_DEQUEUE.patch" && _tkg_patcher
+
+      elif [[ $_kver -ge 606 ]]; then
+        _msg="Applying Glitched EEVDF additions patch"
+        tkgpatch="$srcdir/0003-glitched-eevdf-additions.patch" && _tkg_patcher
+      fi
     fi
 
-    _msg="Applying Glitched PDS patch"
-    tkgpatch="$srcdir/0005${doa}-glitched-pds.patch" && _tkg_patcher
-
-  elif [ "${_cpusched}" = "bmq" ]; then
-    # Project C / BMQ
-    _msg="Applying Project C / BMQ base patch"
-    if [ "$_kver" != "504" ]; then
-      tkgpatch="$srcdir/0009-prjc.patch" && _tkg_patcher
-    else
-      tkgpatch="$srcdir/0009-bmq.patch" && _tkg_patcher
+    if [ "${_cpusched}" = "cfs" ] || [ "${_cpusched}" = "bore" ] || [[ "${_cpusched}" =~ "eevdf" ]]; then
+      _msg="Applying Glitched CFS/EEVDF patch"
+      tkgpatch="$srcdir/0003-glitched-cfs.patch" && _tkg_patcher
     fi
-
-    if [ "${_aggressive_ondemand}" = "true" ] && [ "$_kver" != "504" ]; then
-      _msg="Applying BMQ agressive ondemand governor patch"
-      tkgpatch="$srcdir/0009-glitched-ondemand-bmq.patch" && _tkg_patcher
-    fi
-
-    _msg="Applying Glitched BMQ patch"
-    tkgpatch="$srcdir/0009-glitched-bmq.patch" && _tkg_patcher
-  elif [ "${_cpusched}" = "bore" ]; then
-    _msg="Applying BORE patch"
-    tkgpatch="$srcdir/0001-bore.patch" && _tkg_patcher
-  elif [ "${_cpusched}" = "cfs" ]; then
-    _msg="Applying Glitched CFS additions patch"
-    tkgpatch="$srcdir/0003-glitched-cfs-additions.patch" && _tkg_patcher
-  elif [[ "${_cpusched}" =~ "eevdf" ]]; then
-    if [[ $_kver == "604" || $_kver == "605" ]]; then
-      _msg="Applying Earliest Eligible Virtual Deadline First (EEVDF) scheduler patch"
-      tkgpatch="$srcdir/0003-eevdf.patch" && _tkg_patcher
-
-      _msg="Applying eevdf-Disable-DELAY_DEQUEUE patch"
-      tkgpatch="$srcdir/0004-eevdf-Disable-DELAY_DEQUEUE.patch" && _tkg_patcher
-
-    elif [[ $_kver -ge 606 ]]; then
-      _msg="Applying Glitched EEVDF additions patch"
-      tkgpatch="$srcdir/0003-glitched-eevdf-additions.patch" && _tkg_patcher
-    fi
-  fi
-
-  if [ "${_cpusched}" = "cfs" ] || [ "${_cpusched}" = "bore" ] || [[ "${_cpusched}" =~ "eevdf" ]]; then
-    _msg="Applying Glitched CFS/EEVDF patch"
-    tkgpatch="$srcdir/0003-glitched-cfs.patch" && _tkg_patcher
-  fi
 
   fi
 
@@ -928,116 +995,116 @@ _tkg_srcprep() {
 
   if [ -z $_debug ]; then
 
-  # Set some -tkg defaults
-  _disable "DYNAMIC_FAULT" "DEFAULT_FQ_CODEL" "WERROR"
-  _enable "DEFAULT_CAKE" "AMD_PRIVATE_COLOR"
-  if [ "$_kver" = "504" ]; then
-    _module "TP_SMAPI"
-    _enable "RAID6_USE_PREFER_GEN"
-  fi
-  if [ "$_kver" = "504" ] || [ "$_kver" = "509" ]; then
-    scripts/config --set-val "RCU_BOOST_DELAY" "0"
-  fi
-  _disable "NTP_PPS" "ZSWAP_COMPRESSOR_DEFAULT_LZO" "PROFILE_ALL_BRANCHES"
-  _enable "CRYPTO_LZ4" "CRYPTO_LZ4HC" "LZ4_COMPRESS" "LZ4HC_COMPRESS" "X86_AMD_PSTATE" "AMD_PINCTRL"
-  _disable "DEBUG_FORCE_FUNCTION_ALIGN_64B" "X86_P6_NOP" "RCU_STRICT_GRACE_PERIOD"
-  if [ $_kver -le 605 ]; then
-    _enable "ZSWAP_COMPRESSOR_DEFAULT_LZ4"
-    scripts/config --set-str "ZSWAP_COMPRESSOR_DEFAULT" "lz4"
-  fi
-  _enable "CPU_FREQ_DEFAULT_GOV_SCHEDUTIL"
-  _disable "CPU_FREQ_DEFAULT_GOV_ONDEMAND" "CPU_FREQ_DEFAULT_GOV_CONSERVATIVE" "CPU_FREQ_DEFAULT_GOV_PERFORMANCE" "CPU_FREQ_DEFAULT_GOV_PERFORMANCE_NODEF"
-  _module "BLK_DEV_LOOP"
-
-  # Arch tends to set voluntary preemption when moving kernels to LTS, which we don't want as default
-  _disable "PREEMPT_VOLUNTARY"
-  _enable "PREEMPT"
-  if [ "${_preempt_rt}" = "1" ]; then
-    if [ $_kver -ge 612 ]; then
-      _enable "CONFIG_EXPERT" && _expert="true"
+    # Set some -tkg defaults
+    _disable "DYNAMIC_FAULT" "DEFAULT_FQ_CODEL" "WERROR"
+    _enable "DEFAULT_CAKE" "AMD_PRIVATE_COLOR"
+    if [ "$_kver" = "504" ]; then
+      _module "TP_SMAPI"
+      _enable "RAID6_USE_PREFER_GEN"
     fi
-    _enable "PREEMPT_RT"
-  fi
-
-  # This leads to all kinds of issues everytime Arch enables it in defconfig. Let's disable it and be happy.
-  _disable "SYSFB_SIMPLEFB"
-
-  # buggy project C/PSI interaction workaround
-  if [ "${_cpusched}" = "pds" ] || [ "${_cpusched}" = "bmq" ]; then
-    _disable "PSI"
-    _enable "PSI_DEFAULT_DISABLED"
-    # Disable MLX5_CORE on Prjc
-    plain "Disable MLX5_CORE for Prjc"
-    _disable "MLX5_CORE"
-  fi
-
-  if [[ $_kver -ge 612 ]]; then
-    _enable "SCHED_CLASS_EXT"
-  fi
-
-  if [ -n "$_custom_commandline" ]; then
-    _enable "CMDLINE_BOOL"
-    _disable "CMDLINE_OVERRIDE"
-    scripts/config --set-str "CMDLINE" "${_custom_commandline}"
-  fi
-
-  # openrgb
-  _module "I2C_NCT6775"
-
-  # ccache fix
-  if [ "$_noccache" != "true" ]; then
-    if { [ "$_distro" = "Arch" ] && pacman -Qq ccache &> /dev/null; } || { [ "$_distro" = "Ubuntu" ] && dpkg -l ccache > /dev/null; }; then
-      _disable "GCC_PLUGINS"
+    if [ "$_kver" = "504" ] || [ "$_kver" = "509" ]; then
+      scripts/config --set-val "RCU_BOOST_DELAY" "0"
     fi
-  fi
-  # Clang LTO
-  if [ "$_compiler_name" = "-llvm" ] && [ $_kver -ge 512 ]; then
-    if [ "$_lto_mode" = "full" ]; then
-      _enable LTO_CLANG_FULL
-      _disable LTO_CLANG_THIN
-      _disable LTO_NONE
-    elif [ "$_lto_mode" = "thin" ]; then
-      _disable LTO_CLANG_FULL
-      _enable LTO_CLANG_THIN
-      _disable LTO_NONE
-    else
-      _disable LTO_CLANG_FULL
-      _disable LTO_CLANG_THIN
-      _enable LTO_NONE
+    _disable "NTP_PPS" "ZSWAP_COMPRESSOR_DEFAULT_LZO" "PROFILE_ALL_BRANCHES"
+    _enable "CRYPTO_LZ4" "CRYPTO_LZ4HC" "LZ4_COMPRESS" "LZ4HC_COMPRESS" "X86_AMD_PSTATE" "AMD_PINCTRL"
+    _disable "DEBUG_FORCE_FUNCTION_ALIGN_64B" "X86_P6_NOP" "RCU_STRICT_GRACE_PERIOD"
+    if [ $_kver -le 605 ]; then
+      _enable "ZSWAP_COMPRESSOR_DEFAULT_LZ4"
+      scripts/config --set-str "ZSWAP_COMPRESSOR_DEFAULT" "lz4"
     fi
-  fi
+    _enable "CPU_FREQ_DEFAULT_GOV_SCHEDUTIL"
+    _disable "CPU_FREQ_DEFAULT_GOV_ONDEMAND" "CPU_FREQ_DEFAULT_GOV_CONSERVATIVE" "CPU_FREQ_DEFAULT_GOV_PERFORMANCE" "CPU_FREQ_DEFAULT_GOV_PERFORMANCE_NODEF"
+    _module "BLK_DEV_LOOP"
 
-  if [ "$_distro" = "Gentoo" ]; then
-    # Default config for Gentoo as defined in kconfig
-    _enable "GENTOO_LINUX" "GENTOO_LINUX_UDEV" "GENTOO_LINUX_PORTAGE" "GENTOO_LINUX_INIT_SCRIPT" "GENTOO_PRINT_FIRMWARE_INFO" "GENTOO_LINUX_INIT_SYSTEMD"
-    _disable "GENTOO_KERNEL_SELF_PROTECTION"
-  fi
-
-  # Prevent Debian and Ubuntu to sign stuff because it breaks stuff
-  if [[ "$_distro" = "Debian" || "$_distro" = "Ubuntu" ]]; then
-    #Help Debian cert compile problem.
-    scripts/config --set-str "SYSTEM_TRUSTED_KEYS" ""
-    if [[ $_kver -lt 612 ]]; then # note: 6.12 removed MODULE_COMPRESS_NONE
-      #Debian/Ubuntu don't properly support zstd module compression
-      _disable "MODULE_COMPRESS_ZSTD"
-      _enable "MODULE_COMPRESS_NONE"
+    # Arch tends to set voluntary preemption when moving kernels to LTS, which we don't want as default
+    _disable "PREEMPT_VOLUNTARY"
+    _enable "PREEMPT"
+    if [ "${_preempt_rt}" = "1" ]; then
+      if [ $_kver -ge 612 ]; then
+        _enable "CONFIG_EXPERT" && _expert="true"
+      fi
+      _enable "PREEMPT_RT"
     fi
-  fi
 
-  # Arch 6.18 disabled MODULE_COMPRESS_ALL in favor of a zipkmod path for pacman
-  # This is not really functional as is for our multi-distro support, so let's re-enable it
-  # Don't enforce on lower than 6.11 due to Debian/Ubuntu + older Arch defconfigs not being concerned by this
-  if [[ $_kver -gt 611 ]]; then
-    _enable "CONFIG_MODULE_COMPRESS_ALL"
-  fi
+    # This leads to all kinds of issues everytime Arch enables it in defconfig. Let's disable it and be happy.
+    _disable "SYSFB_SIMPLEFB"
 
-  # Build kernel without debug symbols
-  [[ "$_STRIP" == "true" ]] && _enable "DEBUG_INFO_NONE"
+    # buggy project C/PSI interaction workaround
+    if [ "${_cpusched}" = "pds" ] || [ "${_cpusched}" = "bmq" ]; then
+      _disable "PSI"
+      _enable "PSI_DEFAULT_DISABLED"
+      # Disable MLX5_CORE on Prjc
+      plain "Disable MLX5_CORE for Prjc"
+      _disable "MLX5_CORE"
+    fi
 
-  if [ "$_font_autoselect" != "false" ]; then
-    _disable "FONT_TER16x32"
-    _enable "FONT_AUTOSELECT"
-  fi
+    if [[ $_kver -ge 612 ]]; then
+      _enable "SCHED_CLASS_EXT"
+    fi
+
+    if [ -n "$_custom_commandline" ]; then
+      _enable "CMDLINE_BOOL"
+      _disable "CMDLINE_OVERRIDE"
+      scripts/config --set-str "CMDLINE" "${_custom_commandline}"
+    fi
+
+    # openrgb
+    _module "I2C_NCT6775"
+
+    # ccache fix
+    if [ "$_noccache" != "true" ]; then
+      if { [ "$_distro" = "Arch" ] && pacman -Qq ccache &> /dev/null; } || { [ "$_distro" = "Ubuntu" ] && dpkg -l ccache > /dev/null; }; then
+        _disable "GCC_PLUGINS"
+      fi
+    fi
+    # Clang LTO
+    if [ "$_compiler_name" = "-llvm" ] && [ $_kver -ge 512 ]; then
+      if [ "$_lto_mode" = "full" ]; then
+        _enable LTO_CLANG_FULL
+        _disable LTO_CLANG_THIN
+        _disable LTO_NONE
+      elif [ "$_lto_mode" = "thin" ]; then
+        _disable LTO_CLANG_FULL
+        _enable LTO_CLANG_THIN
+        _disable LTO_NONE
+      else
+        _disable LTO_CLANG_FULL
+        _disable LTO_CLANG_THIN
+        _enable LTO_NONE
+      fi
+    fi
+
+    if [ "$_distro" = "Gentoo" ]; then
+      # Default config for Gentoo as defined in kconfig
+      _enable "GENTOO_LINUX" "GENTOO_LINUX_UDEV" "GENTOO_LINUX_PORTAGE" "GENTOO_LINUX_INIT_SCRIPT" "GENTOO_PRINT_FIRMWARE_INFO" "GENTOO_LINUX_INIT_SYSTEMD"
+      _disable "GENTOO_KERNEL_SELF_PROTECTION"
+    fi
+
+    # Prevent Debian and Ubuntu to sign stuff because it breaks stuff
+    if [[ "$_distro" = "Debian" || "$_distro" = "Ubuntu" ]]; then
+      #Help Debian cert compile problem.
+      scripts/config --set-str "SYSTEM_TRUSTED_KEYS" ""
+      if [[ $_kver -lt 612 ]]; then # note: 6.12 removed MODULE_COMPRESS_NONE
+        #Debian/Ubuntu don't properly support zstd module compression
+        _disable "MODULE_COMPRESS_ZSTD"
+        _enable "MODULE_COMPRESS_NONE"
+      fi
+    fi
+
+    # Arch 6.18 disabled MODULE_COMPRESS_ALL in favor of a zipkmod path for pacman
+    # This is not really functional as is for our multi-distro support, so let's re-enable it
+    # Don't enforce on lower than 6.11 due to Debian/Ubuntu + older Arch defconfigs not being concerned by this
+    if [[ $_kver -gt 611 ]]; then
+      _enable "CONFIG_MODULE_COMPRESS_ALL"
+    fi
+
+    # Build kernel without debug symbols
+    [[ "$_STRIP" == "true" ]] && _enable "DEBUG_INFO_NONE"
+
+    if [ "$_font_autoselect" != "false" ]; then
+      _disable "FONT_TER16x32"
+      _enable "FONT_AUTOSELECT"
+    fi
 
   _is_march_supported() {
     if [[ -z "$1" ]]; then
@@ -1469,17 +1536,17 @@ _tkg_srcprep() {
   tkgpatch="$srcdir/0010-lru_${_basekernel}.patch"
   if [ -e "$tkgpatch" ] && [[ ! "$CONDITION8" =~ [yY] ]]; then
     if [ -z "$_mglru" ]; then
-       plain ""
-       plain "Add multi-generational LRU framework support (improving memory pressure handling)? "
-       plain "https://lore.kernel.org/lkml/20220706220022.968789-1-yuzhao@google.com/"
-       read -rp "`echo $'    > N/y : '`" CONDITION_mglru;
+      plain ""
+      plain "Add multi-generational LRU framework support (improving memory pressure handling)? "
+      plain "https://lore.kernel.org/lkml/20220706220022.968789-1-yuzhao@google.com/"
+      read -rp "`echo $'    > N/y : '`" CONDITION_mglru;
     fi
     if [[ "$CONDITION_mglru" =~ [yY] ]] || [ "$_mglru" = "true" ]; then
-       _msg="Patching MGLRU in"
-       _tkg_patcher
+      _msg="Patching MGLRU in"
+      _tkg_patcher
 
-       _enable "LRU_GEN" "LRU_GEN_ENABLED"
-       _disable "LRU_GEN_STATS"
+      _enable "LRU_GEN" "LRU_GEN_ENABLED"
+      _disable "LRU_GEN_STATS"
     fi
   fi
 
@@ -1541,12 +1608,11 @@ _tkg_srcprep() {
           _enable "EXPERT" && _expert="true"
         fi
       fi
-
     fi
   fi
 
   if [ "$_expert" = "true" ]; then
-    echo -e "\r# start of config expert\r
+  echo -e "\r# start of config expert\r
 # CONFIG_BASE_SMALL is not set\r
 # CONFIG_DEBUG_RSEQ is not set\r
 # CONFIG_PC104 is not set\r
@@ -1652,91 +1718,92 @@ CONFIG_DEBUG_INFO_BTF_MODULES=y\r
 # CONFIG_TRIM_UNUSED_KSYMS is not set\r
 # CONFIG_VMLINUX_MAP is not set\r
 # end of config expert\n">> ./.config
-fi
+    fi
 
-  # ntsync support
-  tkgpatch="$srcdir/0007-v${_basekernel}-ntsync.patch"
-  if [ -e "$tkgpatch" ]; then
-    if [ -z "$_ntsync" ]; then
-      plain ""
-      plain "Enable support for NTsync, an experimental replacement for esync"
-      plain "https://repo.or.cz/linux/zf.git/shortlog/refs/heads/ntsync5"
-      warning "Alternatively, on Arch you can use the DKMS module which allows for using the feature on multiple kernels side by side: https://aur.archlinux.org/packages/ntsync-dkms"
-      read -rp "`echo $'    > N/y : '`" CONDITION_ntsync;
-    fi
-    if [[ "$CONDITION_ntsync" =~ [yY] ]] || [ "$_ntsync" = "true" ]; then
-      _msg="Patching NTsync support"
-      _tkg_patcher
-      _module "NTSYNC"
-      echo "KERNEL==\"ntsync\", MODE=\"0644\"" > "${srcdir}"/ntsync.rules
-      echo "ntsync" > "${srcdir}"/ntsync.conf
-    fi
-  elif (( "$_kver" >= 614 )); then
-    # For /etc/modules-load.d/ntsync.conf to autoload ntsync module
+# ntsync support
+tkgpatch="$srcdir/0007-v${_basekernel}-ntsync.patch"
+if [ -e "$tkgpatch" ]; then
+  if [ -z "$_ntsync" ]; then
+    plain ""
+    plain "Enable support for NTsync, an experimental replacement for esync"
+    plain "https://repo.or.cz/linux/zf.git/shortlog/refs/heads/ntsync5"
+    warning "Alternatively, on Arch you can use the DKMS module which allows for using the feature on multiple kernels side by side: https://aur.archlinux.org/packages/ntsync-dkms"
+    read -rp "`echo $'    > N/y : '`" CONDITION_ntsync;
+  fi
+  if [[ "$CONDITION_ntsync" =~ [yY] ]] || [ "$_ntsync" = "true" ]; then
+    _msg="Patching NTsync support"
+    _tkg_patcher
+    _module "NTSYNC"
+    echo "KERNEL==\"ntsync\", MODE=\"0644\"" > "${srcdir}"/ntsync.rules
     echo "ntsync" > "${srcdir}"/ntsync.conf
   fi
+elif (( "$_kver" >= 614 )); then
+  # For /etc/modules-load.d/ntsync.conf to autoload ntsync module
+  echo "ntsync" > "${srcdir}"/ntsync.conf
+fi
 
-  # OpenRGB support
-  tkgpatch="$srcdir/0014-OpenRGB.patch"
-  if [ -e "$tkgpatch" ]; then
-    if [ "$_openrgb" = "true" ]; then
-      _msg="Import OpenRGB patch" && _tkg_patcher
-    fi
+# OpenRGB support
+tkgpatch="$srcdir/0014-OpenRGB.patch"
+if [ -e "$tkgpatch" ]; then
+  if [ "$_openrgb" = "true" ]; then
+    _msg="Import OpenRGB patch" && _tkg_patcher
   fi
+fi
 
-  # We're done with tkgpatch
-  unset tkgpatch
-  unset _msg
+# We're done with tkgpatch
+unset tkgpatch
+unset _msg
 
-  # Waydroid - mostly for other distros as those are enabled on Arch
-  # PSI disabled on PDS/BMQ, so omit those
-  if [ "${_cpusched}" != "pds" ] && [ "${_cpusched}" != "bmq" ]; then
-    _enable "ANDROID" "ANDROID_BINDER_IPC" "ANDROID_BINDERFS"
-    _disable "ANDROID_BINDER_IPC_SELFTEST"
-    scripts/config --set-str "ANDROID_BINDER_DEVICES" ""
+# Waydroid - mostly for other distros as those are enabled on Arch
+# PSI disabled on PDS/BMQ, so omit those
+if [ "${_cpusched}" != "pds" ] && [ "${_cpusched}" != "bmq" ]; then
+  _enable "ANDROID" "ANDROID_BINDER_IPC" "ANDROID_BINDERFS"
+  _disable "ANDROID_BINDER_IPC_SELFTEST"
+  scripts/config --set-str "ANDROID_BINDER_DEVICES" ""
+fi
+
+# NR_CPUS
+if [ "$_basever" != "601" ]; then
+  if [ -n "$_NR_CPUS_value" ]; then
+    msg2 "Setting Max core number that kernel can handle to $_NR_CPUS_value"
+    _disable CPUMASK_OFFSTACK MAXSMP
+    scripts/config --set-val "NR_CPUS" "$_NR_CPUS_value"
   fi
+else
+  warning "NR_CPUS is bugged on 6.1.y, so your setting was ignored"
+fi
 
-  # NR_CPUS
-  if [ "$_basever" != "601" ]; then
-    if [ -n "$_NR_CPUS_value" ]; then
-      msg2 "Setting Max core number that kernel can handle to $_NR_CPUS_value"
-      _disable CPUMASK_OFFSTACK MAXSMP
-      scripts/config --set-val "NR_CPUS" "$_NR_CPUS_value"
-    fi
-  else
-    warning "NR_CPUS is bugged on 6.1.y, so your setting was ignored"
+fi
+
+# Community patches
+if ! _vanilla_active && [ -n "$_community_patches" ]; then
+  if [ ! -d "$_where/../community-patches" ]; then
+    cd "$_where/.." && git clone https://github.com/Frogging-Family/community-patches.git && cd "${_kernel_work_folder_abs}"
   fi
-
-  fi
-
-  # Community patches
-  if [ -n "$_community_patches" ]; then
-    if [ ! -d "$_where/../community-patches" ]; then
-      cd "$_where/.." && git clone https://github.com/Frogging-Family/community-patches.git && cd "${_kernel_work_folder_abs}"
-    fi
-    _community_patches=($_community_patches)
-    mkdir -p "$_where"/linux"$_basever"-tkg-userpatches
-    for _p in ${_community_patches[@]}; do
-      if [ ! -e "$_where/linux$_basever-tkg-userpatches/$_p" ]; then
-        ln -s "$_where"/../community-patches/linux"$_basever"-tkg/$_p "$_where"/linux"$_basever"-tkg-userpatches/$_p
-      else
-        warning "Ignoring '$_p' community patch already present in the userpatches dir"
-        _community_patches=(${_community_patches[@]/$_p})
-      fi
-    done
-  fi
-
-  # userpatches
-  if [ "$_user_patches" = "true" ]; then
-    _userpatch_target="linux-${_basekernel}"
-    _userpatch_ext="my"
-    user_patcher
-  fi
-
-  # Community patches removal
+  _community_patches=($_community_patches)
+  mkdir -p "$_where"/linux"$_basever"-tkg-userpatches
   for _p in ${_community_patches[@]}; do
-    rm -f "$_where"/linux"$_basever"-tkg-userpatches/$_p
+    if [ ! -e "$_where/linux$_basever-tkg-userpatches/$_p" ]; then
+      ln -s "$_where"/../community-patches/linux"$_basever"-tkg/$_p "$_where"/linux"$_basever"-tkg-userpatches/$_p
+    else
+      warning "Ignoring '$_p' community patch already present in the userpatches dir"
+      _community_patches=(${_community_patches[@]/$_p})
+    fi
   done
+fi
+
+# userpatches
+if ! _vanilla_active && [ "$_user_patches" = "true" ]; then
+  _userpatch_target="linux-${_basekernel}"
+  _userpatch_ext="my"
+  user_patcher
+fi
+
+# Community patches removal
+for _p in ${_community_patches[@]}; do
+  rm -f "$_where"/linux"$_basever"-tkg-userpatches/$_p
+done
+
 
   if [ "$_distro" = "Arch" ]; then
     # don't run depmod on 'make install'. We'll do this ourselves in packaging
