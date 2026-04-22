@@ -112,6 +112,8 @@ prepare() {
   ln -s "${_kernel_work_folder_abs}" "${srcdir}"
 
   _tkg_srcprep
+
+  _module_drv_clone
 }
 
 build() {
@@ -167,6 +169,8 @@ build() {
     time ( make ${_force_all_threads} ${llvm_opt} LOCALVERSION= bzImage modules 2>&1 ) 3>&1 1>&2 2>&3
     return 0
   )
+
+  _module_drv_build
 }
 
 hackbase() {
@@ -187,6 +191,7 @@ hackbase() {
   else
     provides=("linux=${pkgver}" "${pkgbase}" VIRTUALBOX-GUEST-MODULES WIREGUARD-MODULE)
   fi
+  [[ "$_module_drv" == *v4l2loopback* ]] && provides+=(V4L2LOOPBACK-MODULE)
   replaces=(virtualbox-guest-modules-arch wireguard-arch)
 
   cd "$_kernel_work_folder_abs"
@@ -241,6 +246,8 @@ hackbase() {
     msg2 "Installing udev rule for ntsync"
     install -Dm644 "${srcdir}"/ntsync.rules "${pkgdir}/etc/udev/rules.d/ntsync.rules"
   fi
+
+  _module_drv_install
 }
 
 hackheaders() {

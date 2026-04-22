@@ -58,6 +58,55 @@ The `customization.cfg` file offers many toggles for extra tweaks:
 - Provide own kernel `.config` file
 - ...
 
+<br />
+
+#### `_module_drv` — build third-party out-of-tree (e.g. motherboard chipset)
+
+Examples:
+
+```properties
+# enable modules
+_module_drv="nct6687 v4l2loopback"
+
+# disable all — skips prompt
+_module_drv="false"
+```
+
+Builds selected out-of-tree kernel modules into the main kernel package at build time. Supported modules:
+
+| Module | Chip / Controller | Description | Source |
+|---|---|---|---|
+| `nct6687` | Nuvoton NCT6687-R (common on MSI & Gigabyte boards) | Hardware monitoring driver (fans, temps, voltages) | [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) |
+| `it87` | ITE IT8689E / IT8792E / IT87xx series (common on ASUS & ASRock boards) | Hardware monitoring driver (fans, temps, voltages) | [frankcrawford/it87](https://github.com/frankcrawford/it87) |
+| `v4l2loopback` | Virtual (no physical chip; kernel-level loopback) | Creates virtual video devices usable as webcam sources (e.g. OBS → Zoom) | [v4l2loopback/v4l2loopback](https://github.com/v4l2loopback/v4l2loopback) |
+
+**Companion options** (all ignored when `_module_drv` is empty):
+
+| Option | Description |
+|---|---|
+| `_module_drv_autoload` | Space-separated subset of modules to autoload at boot via `/usr/lib/modules-load.d/`. `v4l2loopback` is autoloaded by default for compatibility. |
+| `_module_drv_options_<name>` | Per-module modprobe options written to `/usr/lib/modprobe.d/`. Available for `nct6687`, `it87`, and `v4l2loopback`. |
+| `_module_drv_git_<name>` | Pin a specific git ref (branch, tag, or commit) for a module, or set a full URL (`https://…` / `git@…`) to clone from a different fork entirely. Leave empty to use the default upstream repository at its default branch. |
+
+Examples:
+
+```properties
+# Enable two modules
+_module_drv="nct6687 v4l2loopback"
+
+# Autoload nct6687 at boot
+_module_drv_autoload="nct6687"
+
+# modprobe options for nct6687 (space-separated, produces a single "options" line)
+_module_drv_options_nct6687="fan_config=msi_alt1 msi_fan_brute_force=1"
+
+# Pin nct6687 to a specific commit
+_module_drv_git_nct6687="abc1234"
+
+# Or switch to a completely different fork URL
+_module_drv_git_nct6687="https://github.com/otherfork/nct6687d.git"
+```
+
 #### User patches
 
 To apply your own patch files using the provided scripts, you will need to put them in a `linux<VERSION><PATCHLEVEL>-tkg-userpatches` folder -- where _VERSION_ and _PATCHLEVEL_ are the kernel version and patch level, as specified in [linux Makefile](https://github.com/torvalds/linux/blob/master/Makefile), the patch works on, _e.g_ `linux65-tkg-userpatches` -- at the same level as the `PKGBUILD` file, with the `.mypatch` extension. The script will by default ask if you want to apply them, one by one. The option `_user_patches` should be set to `true` in the `customization.cfg` file for this to work.
