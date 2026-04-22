@@ -445,9 +445,12 @@ _set_compiler(){
       warning "Clang LTO is only available on linux 5.12 onwards."
       _lto_mode="no"
     fi
+    # BUILD_FLAGS: array-safe form of llvm_opt, derived directly from it
+    read -ra BUILD_FLAGS <<< "$llvm_opt"
   else # GCC
     _compiler_name=""
     llvm_opt=""
+    BUILD_FLAGS=()
   fi
 
   echo -e "_compiler_name='$_compiler_name'\nllvm_opt='$llvm_opt'" >> "$_where"/BIG_UGLY_FROGMINER
@@ -572,6 +575,100 @@ _setup_kernel_work_folder() {
   _set_kver_internal_vars
 }
 
+# ! NVIDIA OPEN BUILD ! — sets variables related to building the open NVIDIA kernel modules
+
+_nvidia_open_latest_version="595.58.03"
+_nvidia_open_vulkan_version="595.44.05"
+_nvidia_open_legacy_version="580.142"
+_nvidia_open_supported_kernels=("6.18" "7.0")
+
+_set_nvidia_open() {
+  if [ "$_nvidia_open" = "false" ]; then
+    return
+  fi
+
+  # RT must be disabled
+  if [ "$_preempt_rt" = "1" ] || [ "$_preempt_rt_force" = "1" ]; then
+    warning "PREEMPT_RT is enabled — nvidia-open is incompatible due to licensing issues. Disabling automatically."
+    _nvidia_open="false"
+    echo -e "_nvidia_open='false'" >> "$_where"/BIG_UGLY_FROGMINER
+    return
+  fi
+
+  # NUMA must be enabled
+  if [ "$_numadisable" = "true" ]; then
+    warning "nvidia-open requires NUMA enabled for CUDA/NvEnc. _numadisable is \"true\" — disabling nvidia-open."
+    _nvidia_open="false"
+    echo -e "_nvidia_open='false'" >> "$_where"/BIG_UGLY_FROGMINER
+    return
+  fi
+
+  # Prompt if not set
+  if [ -z "$_nvidia_open" ]; then
+      plain "Which open NVIDIA kernel module branch do you want to build as a separate package?"
+      plain "Requires Turing+ GPU (RTX 20xx or newer). Disables RT and enables NUMA."
+      plain "Enter a number, or press Enter to skip."
+      plain "  > skip"
+      plain "    0) latest (${_nvidia_open_latest_version})"
+      plain "    1) vulkan (${_nvidia_open_vulkan_version})"
+      plain "    2) legacy (${_nvidia_open_legacy_version})"
+      read -rp "[0-2/skip]: " _nvidia_open_input
+      case "$_nvidia_open_input" in
+        0) _nvidia_open="latest" ;;
+        1) _nvidia_open="vulkan" ;;
+        2) _nvidia_open="legacy" ;;
+        *) _nvidia_open="false" ;;
+      esac
+      if [ "$_nvidia_open" != "false" ]; then
+        plain "Selected: ${_nvidia_open}"
+      else
+        plain "No NVIDIA open modules selected."
+      fi
+    echo -e "_nvidia_open='$_nvidia_open'" >> "$_where"/BIG_UGLY_FROGMINER
+  fi
+
+  # Resolve version and validate kernel support
+  if [ "$_nvidia_open" != "false" ]; then
+    local _kernel_supported="false"
+    for _k in "${_nvidia_open_supported_kernels[@]}"; do
+      if [ "$_k" = "$_basekernel" ]; then
+        _kernel_supported="true"
+        break
+      fi
+    done
+    if [ "$_kernel_supported" != "true" ]; then
+      error "nvidia-open is not supported for kernel ${_basekernel}. Supported kernels: ${_nvidia_open_supported_kernels[*]}"
+      error "Disabling nvidia-open."
+      _nvidia_open="false"
+    fi
+
+    # Signing nvidia-open modules
+    if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ] && [ -z "$_nvidia_open_sign" ]; then
+      plain "[EXPERIMENTAL] Do you want to sign the NVIDIA open kernel modules?"
+      plain "Requires CONFIG_MODULE_SIG=y in your kernel config. Has no effect without _nvidia_open."
+      _nvidia_open_sign_array_text=("No (disable — recommended)" "Yes (enable — experimental)")
+      _nvidia_open_sign_array=("false" "true")
+      _default_index="0"
+      _prompt_from_array "${_nvidia_open_sign_array_text[@]}"
+      _nvidia_open_sign="${_nvidia_open_sign_array[$_selected_index]}"
+      echo -e "_nvidia_open_sign='$_nvidia_open_sign'" >> "$_where"/BIG_UGLY_FROGMINER
+    fi
+
+    # Set version based on selection
+    if [ "$_nvidia_open" = "latest" ]; then
+      _nvidia_open_version="${_nvidia_open_latest_version}"
+    elif [ "$_nvidia_open" = "vulkan" ]; then
+      _nvidia_open_version="${_nvidia_open_vulkan_version}"
+    elif [ "$_nvidia_open" = "legacy" ]; then
+      _nvidia_open_version="${_nvidia_open_legacy_version}"
+    fi
+
+    if [ "$_nvidia_open" != "false" ]; then
+      echo -e "_nvidia_open_version='$_nvidia_open_version'" >> "$_where"/BIG_UGLY_FROGMINER
+    fi
+  fi
+}
+
 
 _tkg_initscript() {
 
@@ -618,6 +715,8 @@ _tkg_initscript() {
   cp "$_where"/linux-tkg-config/${_basekernel}/* "$_where" # copy config files and hooks inside the PKGBUILD's dir to preserve makepkg sourcing and md5sum checking
 
   _set_compiler
+
+  _set_nvidia_open
 
   if [ -n "$_custom_pkgbase" ]; then
     echo -e "_custom_pkgbase=\"$_custom_pkgbase\"" >> "$_where"/BIG_UGLY_FROGMINER
@@ -1913,6 +2012,24 @@ fi
     else
       warning "Couldn't set -march and -mtune for Rust files in Makefile. Please open a bug report on this"
       [[ "$_nofallback" = "true" ]] && exit 1
+    fi
+  fi
+
+  # Apply nvidia-open patches to NVIDIA source tree (applied regardless of _vanilla)
+  if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
+    local _nv_open_src="${srcdir}/${_nv_open_pkg}"
+    msg2 "NVIDIA-open-module source version ${_nvidia_open_version} (${_nvidia_open}) will be built and installed alongside this kernel."
+
+    local _nv_patch="${srcdir}/0015-nvidia-${_nvidia_open}.patch"
+    # vulkan uses the same patch as latest when no vulkan-specific patch exists
+    if [ ! -f "$_nv_patch" ] && [ "$_nvidia_open" = "vulkan" ]; then
+      _nv_patch="${srcdir}/0015-nvidia-latest.patch"
+    fi
+    if [ -f "$_nv_patch" ]; then
+      msg2 "Applying NVIDIA-open-module patches (${_nvidia_open_version})..."
+      patch -Np1 -i "$_nv_patch" -d "${_nv_open_src}"
+    else
+      msg2 "No nvidia patch found (looked for $(basename "$_nv_patch"))."
     fi
   fi
 

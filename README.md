@@ -58,6 +58,39 @@ The `customization.cfg` file offers many toggles for extra tweaks:
 - Provide own kernel `.config` file
 - ...
 
+<br />
+
+#### `_nvidia_open` — builds the open-source NVIDIA kernel modules
+
+| Value | Description |
+|---|---|
+| `"false"` | Disable (skips prompt) |
+| `"latest"` | Latest NVIDIA driver branch |
+| `"vulkan"` | Vulkan developer beta branch |
+| `"legacy"` | Older NVIDIA LTS driver branch |
+
+Examples:
+
+```properties
+_nvidia_open="vulkan"
+```
+
+Driver versions and supported kernels are pinned in [`linux-tkg-config/prepare`](linux-tkg-config/prepare).
+
+<br />
+
+#### `_nvidia_open_sign` — sign NVIDIA open modules (experimental)
+
+```properties
+_nvidia_open_sign="false"
+```
+
+When set to `"true"`, all `nvidia*.ko` files in the NVIDIA open modules package are signed using the kernel's module signing key after building.
+
+Requires `CONFIG_MODULE_SIG=y`. Has no effect when `_nvidia_open` is `"false"` or empty.
+
+<br />
+
 #### User patches
 
 To apply your own patch files using the provided scripts, you will need to put them in a `linux<VERSION><PATCHLEVEL>-tkg-userpatches` folder -- where _VERSION_ and _PATCHLEVEL_ are the kernel version and patch level, as specified in [linux Makefile](https://github.com/torvalds/linux/blob/master/Makefile), the patch works on, _e.g_ `linux65-tkg-userpatches` -- at the same level as the `PKGBUILD` file, with the `.mypatch` extension. The script will by default ask if you want to apply them, one by one. The option `_user_patches` should be set to `true` in the `customization.cfg` file for this to work.
