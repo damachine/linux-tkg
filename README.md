@@ -144,6 +144,25 @@ _module_drv_git_nct6687="abc1234"
 _module_drv_git_nct6687="https://github.com/otherfork/nct6687d.git"
 ```
 
+<br />
+
+#### `_vanilla` — build a pure vanilla kernel without any modifications
+
+| Value | Description |
+|---|---|
+| `"false"` | Disable — normal TKG build (default) |
+| `"true"` | Enable — build a stock kernel without any TKG patches or modifications |
+
+Examples:
+
+```properties
+_vanilla="true"
+```
+
+When enabled, all TKG-specific patches, config modifications and kernel config fragments (`.myfrag`) are skipped. The CPU scheduler is set to the kernel default without prompting, the compiler is forced to `gcc`, and the kernel is named `-vanilla`.
+
+<br />
+
 #### User patches
 Examples:
 
