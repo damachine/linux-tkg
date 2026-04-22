@@ -2124,6 +2124,18 @@ fi
     fi
   fi
 
+  tkgpatch="$srcdir/0014-clang-polly.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_clang_polly" ]; then
+      plain ""
+      plain "Apply optional Clang Polly support patchset?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_clang_polly;
+    fi
+    if [[ "$CONDITION_clang_polly" =~ [yY] ]] || [ "$_clang_polly" = "true" ]; then
+      _msg="Applying Clang Polly support patchset" && _tkg_patcher
+    fi
+  fi
+
   # We're done with tkgpatch
   unset tkgpatch
   unset _msg

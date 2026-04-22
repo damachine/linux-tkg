@@ -215,6 +215,16 @@ CONVERT perf data (.afdo profile)
 SET _autofdo_profile_path to the .afdo file path, then rebuild the kernel.
 ```
 
+<br />
+
+#### `_clang_polly` — Clang Polly loop optimizer support (experimental)
+
+```properties
+_clang_polly=""
+```
+
+Applies `0014-clang-polly.patch` when available, enabling LLVM Polly for additional loop optimizations at compile time. Only meaningful when building with `_compiler="llvm"`. Leave empty to be asked at build time.
+
 #### User patches
 Examples:
 
