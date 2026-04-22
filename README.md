@@ -58,6 +58,14 @@ The `customization.cfg` file offers many toggles for extra tweaks:
 - Provide own kernel `.config` file
 - ...
 
+#### `_RESIGN_AFTER_STRIP` — re-sign all modules after stripping (experimental)
+
+```properties
+_RESIGN_AFTER_STRIP="false"
+```
+
+When set to `"true"`, all `.ko` files are re-signed with the kernel's module signing key after stripping. Prevents "module verification failed" taint messages caused by `INSTALL_MOD_STRIP=1` removing embedded signatures. Requires `CONFIG_MODULE_SIG=y`. Has no effect when `_STRIP` is not `"true"`.
+
 #### User patches
 
 To apply your own patch files using the provided scripts, you will need to put them in a `linux<VERSION><PATCHLEVEL>-tkg-userpatches` folder -- where _VERSION_ and _PATCHLEVEL_ are the kernel version and patch level, as specified in [linux Makefile](https://github.com/torvalds/linux/blob/master/Makefile), the patch works on, _e.g_ `linux65-tkg-userpatches` -- at the same level as the `PKGBUILD` file, with the `.mypatch` extension. The script will by default ask if you want to apply them, one by one. The option `_user_patches` should be set to `true` in the `customization.cfg` file for this to work.

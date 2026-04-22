@@ -169,6 +169,30 @@ build() {
   )
 }
 
+# Shared helper: resolve kernel sign-file, key, cert and hash from .config
+_resolve_signing_params() {
+  if ! grep -q 'CONFIG_MODULE_SIG=y' "${_kernel_work_folder_abs}/.config"; then
+    warning "Module signing was requested but CONFIG_MODULE_SIG=y is not set in .config — skipping."
+    return 1
+  fi
+
+  _sign_script="${_kernel_work_folder_abs}/scripts/sign-file"
+  _sign_key="$(grep -Po 'CONFIG_MODULE_SIG_KEY="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+  [[ "$_sign_key" =~ ^/ ]] || _sign_key="${_kernel_work_folder_abs}/${_sign_key}"
+  _sign_cert="${_kernel_work_folder_abs}/certs/signing_key.x509"
+  _sign_hash="$(grep -Po 'CONFIG_MODULE_SIG_HASH="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+
+  if [[ ! -f "$_sign_key" ]]; then
+    warning "Module signing key not found: ${_sign_key}"
+    return 1
+  elif [[ ! -f "$_sign_cert" ]]; then
+    warning "Module signing certificate not found: ${_sign_cert}"
+    return 1
+  fi
+
+  return 0
+}
+
 hackbase() {
   source "$_where"/BIG_UGLY_FROGMINER
 
@@ -213,6 +237,17 @@ hackbase() {
 
   # remove build and source links
   rm -f "$modulesdir"/{source,build}
+
+  # Re-sign modules after stripping (INSTALL_MOD_STRIP removes embedded signatures)
+  if [[ "$_RESIGN_AFTER_STRIP" == "true" ]] && [[ "$_STRIP" == "true" ]]; then
+    if _resolve_signing_params; then
+      msg2 "Re-signing kernel modules after strip..."
+      find "${modulesdir}" -type f -name '*.ko' \
+        -exec "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" '{}' \;
+    else
+      warning "_RESIGN_AFTER_STRIP is enabled but signing is not available — skipping module re-signing."
+    fi
+  fi
 
   # install cleanup pacman hook and script
   sed -e "s|cleanup|${pkgbase}-cleanup|g" "${srcdir}"/90-cleanup.hook |
