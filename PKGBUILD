@@ -54,6 +54,7 @@ if [ ! -e "$_where"/BIG_UGLY_FROGMINER ]; then
 fi
 
 source "$_where"/BIG_UGLY_FROGMINER
+source "$_where"/linux-tkg-config/prepare
 
 if [ -n "$_custom_pkgbase" ]; then
   pkgbase="${_custom_pkgbase}"
@@ -62,11 +63,11 @@ else
 fi
 pkgname=("${pkgbase}" "${pkgbase}-headers")
 pkgver="${_basekernel}"."${_sub}"
-pkgrel=273
+pkgrel=8086
 pkgdesc='Linux-tkg'
 arch=('x86_64') # no i686 in here
 url="https://www.kernel.org/"
-license=('GPL2')
+license=('GPL-2.0-only')
 makedepends=(
   bc
   binutils
@@ -237,7 +238,7 @@ hackbase() {
   local _STRIP_MODS=""
   [[ "$_STRIP" == "true" ]] && _STRIP_MODS="INSTALL_MOD_STRIP=1"
 
-  ZSTD_CLEVEL=19 make INSTALL_MOD_PATH="$pkgdir/usr" $_STRIP_MODS \
+  ZSTD_CLEVEL=19 make ${llvm_opt} INSTALL_MOD_PATH="$pkgdir/usr" $_STRIP_MODS \
     DEPMOD=/doesnt/exist modules_install  # Suppress depmod
 
   # remove build and source links
