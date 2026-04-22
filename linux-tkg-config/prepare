@@ -2001,6 +2001,18 @@ fi
     fi
   fi
 
+  tkgpatch="$srcdir/0014-aggressive-misc-additions.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_aggressive_misc_adds" ]; then
+      plain ""
+      plain "Apply optional aggressive misc additions patch?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_aggressive_misc_adds;
+    fi
+    if [[ "$CONDITION_aggressive_misc_adds" =~ [yY] ]] || [ "$_aggressive_misc_adds" = "true" ]; then
+      _msg="Applying aggressive misc additions patch" && _tkg_patcher
+    fi
+  fi
+
   # We're done with tkgpatch
   unset tkgpatch
   unset _msg

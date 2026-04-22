@@ -163,6 +163,16 @@ When enabled, all TKG-specific patches, config modifications and kernel config f
 
 <br />
 
+<br />
+
+#### `_aggressive_misc_adds` — aggressive misc additions (experimental)
+
+```properties
+_aggressive_misc_adds=""
+```
+
+Applies `0014-aggressive-misc-additions.patch`: may contain temporary fixes pending upstream or distro-specific compatibility fixes. Leave empty to be asked at build time.
+
 #### User patches
 Examples:
 
