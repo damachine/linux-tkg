@@ -390,6 +390,41 @@ _set_cpu_scheduler() {
     fi
   fi
 
+  # In vanilla mode, force kernel default scheduler and gcc - no scheduler patches will be applied
+  if [[ "$_vanilla" = "true" ]]; then
+    warning ""
+    warning "========================================================="
+    warning " Vanilla kernel build selected."
+    warning " All patches and kernel config modifications are ignored."
+    warning "========================================================="
+    warning ""
+    _cpusched="$_default_cpu_sched"
+    _compiler="gcc"
+    if [ "$_distro" = "Arch" ]; then
+      _configfile="config.x86_64"
+    else
+      _configfile="running-kernel"
+    fi
+    _processor_opt="x86-64"
+    _user_patches="false"
+    _community_patches=""
+    _config_fragments="false"
+    _noccache="true"
+    _autofdo=""
+    _autofdo_profile_path=""
+    # Persist vanilla overrides into BIG_UGLY_FROGMINER
+    cat >> "$_where"/BIG_UGLY_FROGMINER <<EOF
+_processor_opt="x86-64"
+_configfile="${_configfile}"
+_user_patches="false"
+_community_patches=""
+_config_fragments="false"
+_noccache="true"
+_autofdo=""
+_autofdo_profile_path=""
+EOF
+  fi
+
   if [ -z "$_cpusched" ]; then
     msg2 "Which CPU sched variant do you want to build/install?"
     msg2 "  If unsure, press enter to use \"$_recommended_sched\" (recommended)"
@@ -702,7 +737,10 @@ _tkg_srcprep() {
   fi
 
   if [ "${_distro}" = "Arch" ]; then
-    if [ -n "$_custom_pkgbase" ]; then
+    if [[ "$_vanilla" = "true" ]]; then
+      echo "-$pkgrel-vanilla${_compiler_name}" > localversion.10-pkgrel
+      echo -e "Version tail set to \"-$pkgrel-vanilla${_compiler_name}\"\n" > "$_where"/logs/prepare.log.txt
+    elif [ -n "$_custom_pkgbase" ]; then
       if [[ "$_custom_pkgbase" != *tkg* ]]; then
         _localversion_tag="-tkg-"
       else
@@ -716,6 +754,9 @@ _tkg_srcprep() {
     fi
     echo "" > localversion.20-pkgname
   fi
+
+  # ! In vanilla mode, no patches will be applied, including user patches and distro-specific patches.
+  if [[ "$_vanilla" != "true" ]]; then
 
   # Hardened Patches
   if [ "${_configfile}" = "config_hardened.x86_64" ] && [ "${_cpusched}" = "cfs" ]; then
@@ -896,6 +937,8 @@ _tkg_srcprep() {
 
   fi
 
+  fi # ! end of _vanilla check for patches
+
   if [ -z "${_configfile}" ]; then
     msg2 "Using archlinux's default config file for kernel ${_basekernel}"
     cat "${srcdir}"/config.x86_64 > ./.config
@@ -927,6 +970,9 @@ _tkg_srcprep() {
   fi
 
   if [ -z $_debug ]; then
+
+  # ! In vanilla mode, no patches will be applied, including user patches and distro-specific patches.
+  if [[ "$_vanilla" != "true" ]]; then
 
   # Set some -tkg defaults
   _disable "DYNAMIC_FAULT" "DEFAULT_FQ_CODEL" "WERROR"
@@ -1737,6 +1783,8 @@ fi
   for _p in ${_community_patches[@]}; do
     rm -f "$_where"/linux"$_basever"-tkg-userpatches/$_p
   done
+
+  fi # ! end of _vanilla check - all TKG config modifications skipped in vanilla mode
 
   if [ "$_distro" = "Arch" ]; then
     # don't run depmod on 'make install'. We'll do this ourselves in packaging

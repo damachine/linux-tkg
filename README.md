@@ -58,6 +58,25 @@ The `customization.cfg` file offers many toggles for extra tweaks:
 - Provide own kernel `.config` file
 - ...
 
+<br />
+
+#### `_vanilla` — build a pure vanilla kernel without any modifications
+
+| Value | Description |
+|---|---|
+| `"false"` | Disable — normal TKG build (default) |
+| `"true"` | Enable — build a stock kernel without any TKG patches or modifications |
+
+Examples:
+
+```properties
+_vanilla="true"
+```
+
+When enabled, all TKG-specific patches, config modifications and kernel config fragments (`.myfrag`) are skipped. The CPU scheduler is set to the kernel default without prompting, the compiler is forced to `gcc`, and the kernel is named `-vanilla`.
+
+<br />
+
 #### User patches
 
 To apply your own patch files using the provided scripts, you will need to put them in a `linux<VERSION><PATCHLEVEL>-tkg-userpatches` folder -- where _VERSION_ and _PATCHLEVEL_ are the kernel version and patch level, as specified in [linux Makefile](https://github.com/torvalds/linux/blob/master/Makefile), the patch works on, _e.g_ `linux65-tkg-userpatches` -- at the same level as the `PKGBUILD` file, with the `.mypatch` extension. The script will by default ask if you want to apply them, one by one. The option `_user_patches` should be set to `true` in the `customization.cfg` file for this to work.
