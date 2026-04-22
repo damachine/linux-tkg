@@ -766,6 +766,12 @@ _tkg_srcprep() {
     _msg="Applying clear linux patches" && _tkg_patcher
   fi
 
+  # Force _glitched_base if aggressive patch is enabled — it depends on glitched-base/eevdf/cfs.
+  if [ "$_glitched_base" != "true" ] && [ "$_aggressive_glitched_base" = "true" ]; then
+    warning "Forcing _glitched_base=\"true\" — required by 0014-aggressive-glitched-base.patch"
+    _glitched_base="true"
+  fi
+
   if [ "$_glitched_base" = "true" ]; then
     tkgpatch="$srcdir/0003-glitched-base.patch"
     _msg="Applying glitched base patch" && _tkg_patcher
@@ -1681,6 +1687,19 @@ fi
   if [ -e "$tkgpatch" ]; then
     if [ "$_openrgb" = "true" ]; then
       _msg="Import OpenRGB patch" && _tkg_patcher
+    fi
+  fi
+
+  tkgpatch="$srcdir/0014-aggressive-glitched-base.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_aggressive_glitched_base" ]; then
+      plain ""
+      plain "Apply optional aggressive glitched base patch?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_aggressive_glitched_base;
+    fi
+    if [[ "$CONDITION_aggressive_glitched_base" =~ [yY] ]] || [ "$_aggressive_glitched_base" = "true" ]; then
+      # _glitched_base is auto-forced to "true" early (before glitched patches) when _aggressive_glitched_base="true"
+      _msg="Applying aggressive glitched base patch" && _tkg_patcher
     fi
   fi
 
