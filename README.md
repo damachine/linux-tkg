@@ -76,6 +76,17 @@ _aggressive_more_opts=""
 
 Applies `0014-aggressive-more-opts.patch`: reduces `timer_slack_ns`, avoids `sched_move_task` lock contention, removes schedutil dependency, disables split-lock mitigation. Most noticeable on high core-count CPUs. Leave empty to be asked at build time.
 
+#### `_install_signing_keys` — keep signing key in headers package (experimental)
+
+```properties
+_install_signing_keys="false"
+```
+
+When set to `"true"`, the kernel module signing key and certificate are installed into the linux-headers package (useful for Secure Boot workflows or to prevent unsigned-module taint messages). Requires `CONFIG_MODULE_SIG=y`. Has no effect when is `"false"` or empty.
+
+> [!WARNING]
+> The key is stored unencrypted on disk. It is installed with permissions 400 (root-readable only), but anyone with root or physical access to the machine can extract it and sign arbitrary modules. If security is a concern, use full-disk encryption (e.g. LUKS) to protect the key against physical access.
+
 #### User patches
 Examples:
 
