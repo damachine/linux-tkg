@@ -571,6 +571,94 @@ EOF
 }
 
 _set_compiler(){
+  local _resolved_path=""
+  local _autofdo_mode=""
+
+  if [[ "$_autofdo" == "true" || -n "$_autofdo_profile_path" ]]; then
+    # Normalize profile path
+    if [[ -n "$_autofdo_profile_path" ]]; then
+      _resolved_path="${_autofdo_profile_path/#\~/$HOME}"
+    fi
+
+    # Auto-enable AutoFDO when a valid profile is detected
+    if [[ -z "$_autofdo" && -n "$_resolved_path" && -f "$_resolved_path" ]]; then
+      msg2 "AutoFDO: profile found at $_resolved_path - building with AutoFDO optimizations (Pass 2 mode)"
+      _autofdo="true"
+      _autofdo_profile_path="$_resolved_path"
+    fi
+
+    # Determine AutoFDO mode: pass1 (no profile) or pass2 (profile exists).
+    if [[ "$_autofdo" == "true" ]]; then
+      if [[ -n "$_autofdo_profile_path" ]]; then
+        _resolved_path="${_autofdo_profile_path/#\~/$HOME}"
+      else
+        _resolved_path=""
+      fi
+
+      if [[ -n "$_resolved_path" && -f "$_resolved_path" ]]; then
+        _autofdo_mode="pass2"
+        _autofdo_profile_path="$_resolved_path"
+      else
+        _autofdo_mode="pass1"
+      fi
+    fi
+
+    # Pass 1 cannot run with module stripping
+    if [[ "$_autofdo_mode" == "pass1" && "$_STRIP" == "true" ]]; then
+      if [ "$_nofallback" = "true" ]; then
+        error "AutoFDO: Pass 1 is incompatible with _STRIP=\"true\" - set _STRIP=\"false\". Exiting."
+        exit 1
+      else
+        plain "AutoFDO Pass 1 cannot be used with module stripping enabled. What would you like to do?"
+        _strip_prompt_array=(
+          "Disable stripping and keep AutoFDO enabled"
+          "Keep stripping enabled and disable AutoFDO"
+        )
+        _strip_action_array=("disable-strip" "disable-autofdo")
+
+        _default_index="0"
+        _prompt_from_array "${_strip_prompt_array[@]}"
+
+        if [ "${_strip_action_array[$_selected_index]}" = "disable-strip" ]; then
+          warning "Disabling _STRIP to allow AutoFDO Pass 1"
+          _STRIP="false"
+        else
+          warning "Disabling AutoFDO because _STRIP remains enabled"
+          _autofdo=""
+          _autofdo_profile_path=""
+          _autofdo_mode=""
+        fi
+      fi
+    fi
+
+    # AutoFDO requires LLVM
+    if [[ "$_autofdo" == "true" && "$_compiler" != "llvm" ]]; then
+      if [ "$_nofallback" = "true" ]; then
+        error "AutoFDO (_autofdo=\"true\") requires the LLVM compiler (_compiler=\"llvm\"). Exiting."
+        exit 1
+      else
+        plain "AutoFDO requires Clang/LLVM. Would you like to use Clang/LLVM for this build?"
+        _compiler_array_text=(
+          "Yes: switch to Clang/LLVM and keep AutoFDO enabled"
+          "No: keep current compiler selection and disable AutoFDO"
+        )
+        _compiler_array=("llvm" "keep")
+
+        _default_index="0"
+        _prompt_from_array "${_compiler_array_text[@]}"
+
+        if [ "${_compiler_array[$_selected_index]}" = "llvm" ]; then
+          _compiler="llvm"
+        else
+          warning "Disabling AutoFDO because LLVM was not selected"
+          _autofdo=""
+          _autofdo_profile_path=""
+          _autofdo_mode=""
+        fi
+      fi
+    fi
+  fi
+
   if ! [[ "$_compiler" =~ ^(gcc|llvm)$ ]]; then
     if [ -n "$_compiler" ] && [ "$_nofallback" = "true" ]; then
       msg2 "Compiler \" $_compiler \" not recognized, exiting..."
@@ -588,7 +676,7 @@ _set_compiler(){
 
   if [ "$_compiler" = "llvm" ]; then
     _compiler_name="-llvm"
-    llvm_opt="LLVM=1 LLVM_IAS=${_llvm_ias:-0}"
+    llvm_opt="CC=clang LD=ld.lld LLVM=1 LLVM_IAS=${_llvm_ias:-0}"
     if [ $_kver -ge 512 ]; then
       if [[ -z "$_lto_mode" || ! "$_lto_mode" =~ ^(no|thin|full)$ ]]; then
         plain "Would you like to enable Clang Link Time Optimizations (LTO) ? It may improve the performance of the kernel."
@@ -605,18 +693,32 @@ _set_compiler(){
         _lto_mode="${_lto_mode_array[$_selected_index]}"
       fi
       if [ "$_lto_mode" != "no" ]; then
-        llvm_opt="LLVM=1 LLVM_IAS=1"
+        llvm_opt="CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1"
       fi
     elif [[ -n "$_lto_mode" && "$_lto_mode" != "no" ]]; then
       warning "Clang LTO is only available on linux 5.12 onwards."
       _lto_mode="no"
     fi
+    # BUILD_FLAGS: array-safe form of llvm_opt, derived directly from it
+    read -ra BUILD_FLAGS <<< "$llvm_opt"
   else # GCC
     _compiler_name=""
     llvm_opt=""
+    BUILD_FLAGS=()
   fi
 
-  echo -e "_compiler_name='$_compiler_name'\nllvm_opt='$llvm_opt'" >> "$_where"/BIG_UGLY_FROGMINER
+  # Validate and resolve AutoFDO profile path
+  if [[ "$_autofdo" == "true" && -n "$_autofdo_profile_path" ]]; then
+    _autofdo_profile_path="${_autofdo_profile_path/#\~/$HOME}"
+    if [[ ! -f "$_autofdo_profile_path" ]]; then
+      warning "AutoFDO profile not found: $_autofdo_profile_path — building without profile (Pass 1 mode)"
+      _autofdo_profile_path=""
+    fi
+  fi
+
+  echo -e "_compiler_name='$_compiler_name'\nllvm_opt='$llvm_opt'\n_lto_mode='$_lto_mode'" >> "$_where"/BIG_UGLY_FROGMINER
+  declare -p BUILD_FLAGS >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_autofdo='$_autofdo'\n_autofdo_profile_path='$_autofdo_profile_path'" >> "$_where"/BIG_UGLY_FROGMINER
 }
 
 _define_kernel_abs_paths() {
@@ -1295,6 +1397,15 @@ _tkg_srcprep() {
       _disable LTO_CLANG_FULL
       _disable LTO_CLANG_THIN
       _enable LTO_NONE
+    fi
+  fi
+
+  # Clang AutoFDO
+  if [[ "$_compiler_name" == "-llvm" && "$_autofdo" == "true" ]]; then
+    if [[ $_kver -ge 611 ]]; then
+      _enable AUTOFDO_CLANG
+    else
+      warning "AutoFDO (_autofdo=\"true\") requires kernel >= 6.11 — skipping CONFIG_AUTOFDO_CLANG"
     fi
   fi
 
