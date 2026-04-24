@@ -191,7 +191,7 @@ build() {
     return 0
   )
 
-  # Build nvidia-open modules
+  # Build nvidia-open modules after the kernel build produced its output tree.
   if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
     local _nv_open_src="${srcdir}/${_nv_open_pkg}"
     local _kernuname
@@ -203,10 +203,41 @@ build() {
       SYSOUT="${_kernel_work_folder_abs}"
       IGNORE_CC_MISMATCH=yes
     )
+    if [ ! -d "${_nv_open_src}" ]; then
+      error "NVIDIA-open source directory not found: ${_nv_open_src}"
+      exit 1
+    fi
+
     msg2 "Building NVIDIA open kernel modules (${_nvidia_open_version})..."
-    CFLAGS= CXXFLAGS= LDFLAGS= make "${BUILD_FLAGS[@]}" "${MODULE_FLAGS[@]}" \
+    CFLAGS= CXXFLAGS= LDFLAGS= make "${MODULE_FLAGS[@]}" \
       -C "${_nv_open_src}" -j"$(nproc)" modules
   fi
+
+  _module_drv_build
+}
+
+# Shared helper: resolve kernel sign-file, key, cert and hash from .config
+_resolve_signing_params() {
+  if ! grep -q 'CONFIG_MODULE_SIG=y' "${_kernel_work_folder_abs}/.config"; then
+    warning "Module signing was requested but CONFIG_MODULE_SIG=y is not set in .config — skipping."
+    return 1
+  fi
+
+  _sign_script="${_kernel_work_folder_abs}/scripts/sign-file"
+  _sign_key="$(grep -Po 'CONFIG_MODULE_SIG_KEY="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+  [[ "$_sign_key" =~ ^/ ]] || _sign_key="${_kernel_work_folder_abs}/${_sign_key}"
+  _sign_cert="${_kernel_work_folder_abs}/certs/signing_key.x509"
+  _sign_hash="$(grep -Po 'CONFIG_MODULE_SIG_HASH="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+
+  if [[ ! -f "$_sign_key" ]]; then
+    warning "Module signing key not found: ${_sign_key}"
+    return 1
+  elif [[ ! -f "$_sign_cert" ]]; then
+    warning "Module signing certificate not found: ${_sign_cert}"
+    return 1
+  fi
+
+  return 0
 }
 
 hackbase() {
@@ -403,9 +434,20 @@ hacknvidia_open() {
   cd "$_kernel_work_folder_abs"
   local _kernver="$(<version)"
   local modulesdir="$pkgdir/usr/lib/modules/$_kernver/extramodules"
+  local -a _nv_modules
 
   install -dm755 "${modulesdir}"
-  install -m644 "${_nv_open_src}"/kernel-open/*.ko "${modulesdir}"
+  shopt -s nullglob
+  _nv_modules=("${_nv_open_src}"/kernel-open/*.ko)
+  shopt -u nullglob
+
+  if (( ${#_nv_modules[@]} == 0 )); then
+    error "No built nvidia-open modules found at ${_nv_open_src}/kernel-open/*.ko"
+    error "Build phase likely failed to compile nvidia-open modules."
+    exit 1
+  fi
+
+  install -m644 "${_nv_modules[@]}" "${modulesdir}"
   install -Dt "$pkgdir/usr/share/licenses/${pkgname}" -m644 "${_nv_open_src}/COPYING"
 
   # Strip modules
