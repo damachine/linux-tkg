@@ -195,7 +195,23 @@ build() {
   if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
     local _nv_open_src="${srcdir}/${_nv_open_pkg}"
     local _kernuname
+    local BUILD_FLAGS=()
     _kernuname="$(< "${_kernel_work_folder_abs}/include/config/kernel.release")"
+
+    # Keep external module toolchain aligned with the kernel toolchain.
+    if [ "$_compiler_name" = "-llvm" ]; then
+      BUILD_FLAGS=(
+        CC=clang
+        CXX=clang++
+        LD=ld.lld
+        AR=llvm-ar
+        NM=llvm-nm
+        OBJCOPY=llvm-objcopy
+        OBJDUMP=llvm-objdump
+        STRIP=llvm-strip
+      )
+    fi
+
     local MODULE_FLAGS=(
       KERNEL_UNAME="${_kernuname}"
       IGNORE_PREEMPT_RT_PRESENCE=1
@@ -209,7 +225,7 @@ build() {
     fi
 
     msg2 "Building NVIDIA open kernel modules (${_nvidia_open_version})..."
-    CFLAGS= CXXFLAGS= LDFLAGS= make "${MODULE_FLAGS[@]}" \
+    CFLAGS= CXXFLAGS= LDFLAGS= make "${BUILD_FLAGS[@]}" "${MODULE_FLAGS[@]}" \
       -C "${_nv_open_src}" -j"$(nproc)" modules
   fi
 
