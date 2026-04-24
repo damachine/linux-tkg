@@ -93,15 +93,12 @@ if [ "$_compiler_name" = "-llvm" ]; then
   makedepends+=('clang' 'llvm' 'lld')
 fi
 
-# nvidia-open source tarball — vulkan-beta from GitHub with fallback mirrors
+# nvidia-open source tarball from NVIDIA
+_nv_open_pkg="NVIDIA-kernel-module-source-${_nvidia_open_version}"
 if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
-  if [ "$_nvidia_open" = "vulkan" ]; then
-    _nv_open_pkg="open-gpu-kernel-modules-${_nvidia_open_version}"
-    source+=("${_nv_open_pkg}.tar.gz::https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/${_nvidia_open_version}.tar.gz")
-  else
-    _nv_open_pkg="NVIDIA-kernel-module-source-${_nvidia_open_version}"
-    source+=("https://download.nvidia.com/XFree86/NVIDIA-kernel-module-source/${_nv_open_pkg}.tar.xz")
-  fi
+  source+=(
+    "https://download.nvidia.com/XFree86/NVIDIA-kernel-module-source/${_nv_open_pkg}.tar.xz"
+  )
   sha256sums+=('SKIP')
 fi
 optdepends=('schedtool')
@@ -129,16 +126,6 @@ prepare() {
 
 build() {
   source "$_where"/BIG_UGLY_FROGMINER
-
-  # Derive _nv_open_pkg here in case it wasn't set at PKGBUILD load time
-  # (happens on fresh builds where _nvidia_open was empty in customization.cfg)
-  if [ -z "$_nv_open_pkg" ] && [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
-    if [ "$_nvidia_open" = "vulkan" ]; then
-      _nv_open_pkg="open-gpu-kernel-modules-${_nvidia_open_version}"
-    else
-      _nv_open_pkg="NVIDIA-kernel-module-source-${_nvidia_open_version}"
-    fi
-  fi
 
   cd "$_kernel_work_folder_abs"
 
@@ -191,27 +178,11 @@ build() {
     return 0
   )
 
-  # Build nvidia-open modules after the kernel build produced its output tree.
+  # Build nvidia-open modules
   if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
     local _nv_open_src="${srcdir}/${_nv_open_pkg}"
     local _kernuname
-    local BUILD_FLAGS=()
     _kernuname="$(< "${_kernel_work_folder_abs}/include/config/kernel.release")"
-
-    # Keep external module toolchain aligned with the kernel toolchain.
-    if [ "$_compiler_name" = "-llvm" ]; then
-      BUILD_FLAGS=(
-        CC=clang
-        CXX=clang++
-        LD=ld.lld
-        AR=llvm-ar
-        NM=llvm-nm
-        OBJCOPY=llvm-objcopy
-        OBJDUMP=llvm-objdump
-        STRIP=llvm-strip
-      )
-    fi
-
     local MODULE_FLAGS=(
       KERNEL_UNAME="${_kernuname}"
       IGNORE_PREEMPT_RT_PRESENCE=1
@@ -219,11 +190,6 @@ build() {
       SYSOUT="${_kernel_work_folder_abs}"
       IGNORE_CC_MISMATCH=yes
     )
-    if [ ! -d "${_nv_open_src}" ]; then
-      error "NVIDIA-open source directory not found: ${_nv_open_src}"
-      exit 1
-    fi
-
     msg2 "Building NVIDIA open kernel modules (${_nvidia_open_version})..."
     CFLAGS= CXXFLAGS= LDFLAGS= make "${BUILD_FLAGS[@]}" "${MODULE_FLAGS[@]}" \
       -C "${_nv_open_src}" -j"$(nproc)" modules
@@ -430,19 +396,10 @@ hackheaders() {
 hacknvidia_open() {
   source "$_where"/BIG_UGLY_FROGMINER
 
-  # Derive _nv_open_pkg here in case it wasn't set at PKGBUILD load time
-  if [ -z "$_nv_open_pkg" ] && [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
-    if [ "$_nvidia_open" = "vulkan" ]; then
-      _nv_open_pkg="open-gpu-kernel-modules-${_nvidia_open_version}"
-    else
-      _nv_open_pkg="NVIDIA-kernel-module-source-${_nvidia_open_version}"
-    fi
-  fi
-
-  pkgdesc="NVIDIA open modules driver $_nvidia_open_version for the $pkgdesc kernel"
-  depends=("${pkgbase}=${pkgver}" "libglvnd" "nvidia-utils-tkg>=${_nvidia_open_version}")
-  provides=("NVIDIA-MODULE")
-  conflicts=("${pkgbase}-nvidia" "NVIDIA-MODULE")
+  pkgdesc="NVIDIA open kernel modules"
+  depends=("${pkgbase}=${pkgver}" "nvidia-utils=${_nvidia_open_version}" 'libglvnd')
+  provides=('NVIDIA-MODULE' 'nvidia-open')
+  conflicts=("${pkgbase}-nvidia" 'nvidia' 'nvidia-dkms' 'nvidia-open' 'nvidia-open-dkms')
   license=('MIT AND GPL-2.0-only')
 
   local _nv_open_src="${srcdir}/${_nv_open_pkg}"
@@ -450,20 +407,9 @@ hacknvidia_open() {
   cd "$_kernel_work_folder_abs"
   local _kernver="$(<version)"
   local modulesdir="$pkgdir/usr/lib/modules/$_kernver/extramodules"
-  local -a _nv_modules
 
   install -dm755 "${modulesdir}"
-  shopt -s nullglob
-  _nv_modules=("${_nv_open_src}"/kernel-open/*.ko)
-  shopt -u nullglob
-
-  if (( ${#_nv_modules[@]} == 0 )); then
-    error "No built nvidia-open modules found at ${_nv_open_src}/kernel-open/*.ko"
-    error "Build phase likely failed to compile nvidia-open modules."
-    exit 1
-  fi
-
-  install -m644 "${_nv_modules[@]}" "${modulesdir}"
+  install -m644 "${_nv_open_src}"/kernel-open/*.ko "${modulesdir}"
   install -Dt "$pkgdir/usr/share/licenses/${pkgname}" -m644 "${_nv_open_src}/COPYING"
 
   # Strip modules
@@ -471,19 +417,12 @@ hacknvidia_open() {
   [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
   find "${modulesdir}" -type f -name '*.ko' -exec "${strip_bin}" --strip-debug '{}' \;
 
-  # Sign modules
-  if [[ "$_nvidia_open_sign" == "true" ]]; then
-    if _resolve_signing_params; then
-      msg2 "Signing NVIDIA open kernel modules..."
-      find "${modulesdir}" -type f -name '*.ko' \
-        -exec "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" '{}' \;
-    else
-      warning "_nvidia_open_sign is enabled but signing is not available — skipping module signing."
-    fi
-  fi
-
   # Compress modules
   find "${pkgdir}" -name '*.ko' -exec zstd --rm -19 -T0 {} +
+
+  # Blacklist modules
+  echo -e "blacklist nouveau\nblacklist lbm-nouveau\nblacklist nova_core\nblacklist nova_drm" |
+      install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modprobe.d/${pkgname}-blacklist.conf"
 
   # nvidia-open is the last package — do deferred srcdir cleanup now
   if [ "$_NUKR" = "true" ]; then
