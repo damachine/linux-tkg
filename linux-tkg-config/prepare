@@ -2467,6 +2467,32 @@ fi
     fi
   fi
 
+  # Apply nvidia-open patches to NVIDIA source tree (applied regardless of _vanilla)
+  if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
+    # Derive _nv_open_pkg if not set (PKGBUILD sets it at load time; install.sh path does not)
+    if [ -z "$_nv_open_pkg" ]; then
+      if [ "$_nvidia_open" = "vulkan" ]; then
+        _nv_open_pkg="open-gpu-kernel-modules-${_nvidia_open_version}"
+      else
+        _nv_open_pkg="NVIDIA-kernel-module-source-${_nvidia_open_version}"
+      fi
+    fi
+    local _nv_open_src="${srcdir}/${_nv_open_pkg}"
+    msg2 "NVIDIA-open-module source version ${_nvidia_open_version} (${_nvidia_open}) will be built and installed alongside this kernel."
+
+    local _nv_patch="${srcdir}/0015-nvidia-${_nvidia_open}.patch"
+    # vulkan uses the same patch as latest when no vulkan-specific patch exists
+    if [ ! -f "$_nv_patch" ] && [ "$_nvidia_open" = "vulkan" ]; then
+      _nv_patch="${srcdir}/0015-nvidia-latest.patch"
+    fi
+    if [ -f "$_nv_patch" ]; then
+      msg2 "Applying NVIDIA-open-module patches (${_nvidia_open_version})..."
+      patch -Np1 -i "$_nv_patch" -d "${_nv_open_src}"
+    else
+      msg2 "No nvidia patch found (looked for $(basename "$_nv_patch"))."
+    fi
+  fi
+
   # copy new config file back to the user's git folder for an eventual future use
   cp .config "${_where}"/kernelconfig.new
 }
