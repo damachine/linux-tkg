@@ -199,6 +199,27 @@ build() {
     return 0
   )
 
+  # Build nvidia-open modules after the kernel build produced its output tree.
+  if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
+    local _nv_open_src="${srcdir}/${_nv_open_pkg}"
+    local _kernuname
+    _kernuname="$(< "${_kernel_work_folder_abs}/include/config/kernel.release")"
+    local MODULE_FLAGS=(
+      KERNEL_UNAME="${_kernuname}"
+      IGNORE_PREEMPT_RT_PRESENCE=1
+      SYSSRC="${_kernel_work_folder_abs}"
+      SYSOUT="${_kernel_work_folder_abs}"
+      IGNORE_CC_MISMATCH=yes
+    )
+    if [ ! -d "${_nv_open_src}" ]; then
+      error "NVIDIA-open source directory not found: ${_nv_open_src}"
+      exit 1
+    fi
+    msg2 "Building NVIDIA open kernel modules (${_nvidia_open_version})..."
+    CFLAGS= CXXFLAGS= LDFLAGS= make "${BUILD_FLAGS[@]}" "${MODULE_FLAGS[@]}" \
+      -C "${_nv_open_src}" -j"$(nproc)" modules
+  fi
+
   _module_drv_build
 }
 
@@ -222,6 +243,8 @@ _resolve_signing_params() {
     warning "Module signing certificate not found: ${_sign_cert}"
     return 1
   fi
+
+  return 0
 }
 
 hackbase() {
