@@ -62,6 +62,7 @@ else
   pkgbase=linux"${_basever}"-tkg-"${_cpusched}"${_compiler_name}
 fi
 pkgname=("${pkgbase}" "${pkgbase}-headers")
+[ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ] && pkgname+=("${pkgbase}-nvidia-open") # Separate package for open NVIDIA kernel modules, built alongside the main kernel package.
 pkgver="${_basekernel}"."${_sub}"
 pkgrel=8086
 pkgdesc='Linux-tkg'
@@ -92,6 +93,18 @@ makedepends=(
 if [ "$_compiler_name" = "-llvm" ]; then
   makedepends+=('clang' 'llvm' 'lld')
 fi
+
+# nvidia-open source tarball — vulkan-beta from GitHub with fallback mirrors
+if [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
+  if [ "$_nvidia_open" = "vulkan" ]; then
+    _nv_open_pkg="open-gpu-kernel-modules-${_nvidia_open_version}"
+    source+=("${_nv_open_pkg}.tar.gz::https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/${_nvidia_open_version}.tar.gz")
+  else
+    _nv_open_pkg="NVIDIA-kernel-module-source-${_nvidia_open_version}"
+    source+=("https://download.nvidia.com/XFree86/NVIDIA-kernel-module-source/${_nv_open_pkg}.tar.xz")
+  fi
+  sha256sums+=('SKIP')
+fi
 optdepends=('schedtool')
 options=('!strip' 'docs')
 
@@ -119,6 +132,16 @@ prepare() {
 
 build() {
   source "$_where"/BIG_UGLY_FROGMINER
+
+  # Derive _nv_open_pkg here in case it wasn't set at PKGBUILD load time
+  # (happens on fresh builds where _nvidia_open was empty in customization.cfg)
+  if [ -z "$_nv_open_pkg" ] && [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
+    if [ "$_nvidia_open" = "vulkan" ]; then
+      _nv_open_pkg="open-gpu-kernel-modules-${_nvidia_open_version}"
+    else
+      _nv_open_pkg="NVIDIA-kernel-module-source-${_nvidia_open_version}"
+    fi
+  fi
 
   cd "$_kernel_work_folder_abs"
 
@@ -199,8 +222,6 @@ _resolve_signing_params() {
     warning "Module signing certificate not found: ${_sign_cert}"
     return 1
   fi
-
-  return 0
 }
 
 hackbase() {
@@ -396,6 +417,60 @@ hackheaders() {
     strip -v $STRIP_STATIC "$builddir/vmlinux"
   fi
 
+  # Skip srcdir cleanup if nvidia-open package still needs it (runs after headers)
+  if [ "$_NUKR" = "true" ] && { [ "$_nvidia_open" = "false" ] || [ -z "$_nvidia_open" ]; }; then
+    rm -rf "$srcdir" # Nuke the entire src folder so it'll get regenerated clean on next build
+  fi
+}
+
+hacknvidia_open() {
+  source "$_where"/BIG_UGLY_FROGMINER
+
+  # Derive _nv_open_pkg here in case it wasn't set at PKGBUILD load time
+  if [ -z "$_nv_open_pkg" ] && [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ]; then
+    if [ "$_nvidia_open" = "vulkan" ]; then
+      _nv_open_pkg="open-gpu-kernel-modules-${_nvidia_open_version}"
+    else
+      _nv_open_pkg="NVIDIA-kernel-module-source-${_nvidia_open_version}"
+    fi
+  fi
+
+  pkgdesc="NVIDIA open modules driver $_nvidia_open_version for the $pkgdesc kernel"
+  depends=("${pkgbase}=${pkgver}" "libglvnd" "nvidia-utils-tkg>=${_nvidia_open_version}")
+  provides=("NVIDIA-MODULE")
+  conflicts=("${pkgbase}-nvidia" "NVIDIA-MODULE")
+  license=('MIT AND GPL-2.0-only')
+
+  local _nv_open_src="${srcdir}/${_nv_open_pkg}"
+
+  cd "$_kernel_work_folder_abs"
+  local _kernver="$(<version)"
+  local modulesdir="$pkgdir/usr/lib/modules/$_kernver/extramodules"
+
+  install -dm755 "${modulesdir}"
+  install -m644 "${_nv_open_src}"/kernel-open/*.ko "${modulesdir}"
+  install -Dt "$pkgdir/usr/share/licenses/${pkgname}" -m644 "${_nv_open_src}/COPYING"
+
+  # Strip modules
+  local strip_bin="strip"
+  [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
+  find "${modulesdir}" -type f -name '*.ko' -exec "${strip_bin}" --strip-debug '{}' \;
+
+  # Sign modules
+  if [[ "$_nvidia_open_sign" == "true" ]]; then
+    if _resolve_signing_params; then
+      msg2 "Signing NVIDIA open kernel modules..."
+      find "${modulesdir}" -type f -name '*.ko' \
+        -exec "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" '{}' \;
+    else
+      warning "_nvidia_open_sign is enabled but signing is not available — skipping module signing."
+    fi
+  fi
+
+  # Compress modules
+  find "${pkgdir}" -name '*.ko' -exec zstd --rm -19 -T0 {} +
+
+  # nvidia-open is the last package
   if [ "$_NUKR" = "true" ]; then
     rm -rf "$srcdir" # Nuke the entire src folder so it'll get regenerated clean on next build
   fi
@@ -409,4 +484,5 @@ hackbase
 package_${pkgbase}-headers() {
 hackheaders
 }
+$( [ "$_nvidia_open" != "false" ] && [ -n "$_nvidia_open" ] && printf 'package_%s-nvidia-open() {\nhacknvidia_open\n}' "${pkgbase}" )
 EOF

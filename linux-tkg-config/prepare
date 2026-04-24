@@ -112,9 +112,13 @@ _rt_rev_map=(
   ["6.10"]="11"
 )
 
+# NVIDIA open module version definitions
+_nvidia_open_latest_version="595.45.04"
+_nvidia_open_legacy_version="580.126.18"
+_nvidia_open_supported_kernels=("6.18" "7.0")
 source "$_where"/linux-tkg-config/module-driver-registry
 
-# ! MODULE DRIVER REGISTRY ! — defines functions to manage third-party out-of-tree kernel modules, such as v4l2loopback, nct6687 and it87
+# ! MODULE DRIVER REGISTRY ! — defines functions to manage third-party out-of-tree kernel modules
 _module_drv_clone() {
   local _module_id
 
