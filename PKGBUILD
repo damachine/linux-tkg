@@ -57,7 +57,7 @@ source "$_where"/BIG_UGLY_FROGMINER
 source "$_where"/linux-tkg-config/prepare
 
 _module_split_pkg="false"
-if [ -n "${_module:-}" ] && [ "${_module_pkg:-}" = "external" ]; then
+if [ -n "${_module_pkg:-}" ] && [ "${_module_extpkg:-}" = "external" ]; then
   _module_split_pkg="true"
 fi
 
@@ -68,9 +68,10 @@ else
 fi
 pkgname=("$pkgbase")
 pkgname+=("$pkgbase-headers")
-[ "$_nvidia" != "false" ] && [ -n "$_nvidia" ] && pkgname+=("$pkgbase-nvidia-open")
+[[ "${_docs_pkg:-false}" == "true" ]] && pkgname+=("$pkgbase-docs")
+[ "$_nvidia_pkg" != "false" ] && [ -n "$_nvidia_pkg" ] && pkgname+=("$pkgbase-nvidia-open")
 if [ "$_module_split_pkg" = "true" ]; then
-  for _module_id in $_module; do
+  for _module_id in $_module_pkg; do
     [ -n "$_module_id" ] && pkgname+=("$pkgbase-${_module_id}")
   done
 fi
@@ -107,16 +108,16 @@ if [ "$_compiler_name" = "-llvm" ]; then
 fi
 
 # nvidia-open source tarball — vulkan-beta from GitHub with fallback mirrors
-if [ "$_nvidia" != "false" ] && [ -n "$_nvidia" ]; then
+if [ "$_nvidia_pkg" != "false" ] && [ -n "$_nvidia_pkg" ]; then
   _resolve_nvidia
-  if [ "$_nvidia_variant" = "vulkan" ]; then
-    source+=("${_nv_open_pkg}.tar.gz::https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/${_nvidia_version}.tar.gz")
+  if [ "$_nvidia_var" = "vulkan" ]; then
+    source+=("${_nv_pkg}.tar.gz::https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/${_nvidia_ver}.tar.gz")
   else
-    source+=("https://download.nvidia.com/XFree86/NVIDIA-kernel-module-source/${_nv_open_pkg}.tar.xz")
+    source+=("https://download.nvidia.com/XFree86/NVIDIA-kernel-module-source/${_nv_pkg}.tar.xz")
   fi
   sha256sums+=('SKIP')
 fi
-for _module_id in $_module; do
+for _module_id in $_module_pkg; do
   [ -z "$_module_id" ] && continue
   source+=("$(_module_get_source_dir "${_module_id}")::git+$(_module_get_git_url "${_module_id}")")
   sha256sums+=('SKIP')
@@ -232,8 +233,8 @@ build() {
   )
 
   # Build nvidia-open modules after the kernel build produced its output tree.
-  if [ "$_nvidia" != "false" ] && [ -n "$_nvidia" ]; then
-    local _nv_open_src="${srcdir}/${_nv_open_pkg}"
+  if [ "$_nvidia_pkg" != "false" ] && [ -n "$_nvidia_pkg" ]; then
+    local _nv_open_src="${srcdir}/${_nv_pkg}"
     local _kernuname
     _kernuname="$(< "${_kernel_work_folder_abs}/include/config/kernel.release")"
     local MODULE_FLAGS=(
@@ -247,7 +248,7 @@ build() {
       error "NVIDIA-open source directory not found: ${_nv_open_src}"
       exit 1
     fi
-    msg2 "Building NVIDIA open kernel modules (${_nvidia_version})..."
+    msg2 "Building NVIDIA open kernel modules (${_nvidia_ver})..."
     CFLAGS= CXXFLAGS= LDFLAGS= make "${BUILD_FLAGS[@]}" "${MODULE_FLAGS[@]}" \
       -C "${_nv_open_src}" -j"$(nproc)" modules
   fi
@@ -260,7 +261,9 @@ hackbase() {
 
   pkgdesc="The $pkgdesc kernel and modules - https://github.com/Frogging-Family/linux-tkg"
   depends=('coreutils' 'kmod' 'initramfs')
-  optdepends=('linux-docs: Kernel hackers manual - HTML documentation that comes with the Linux kernel.'
+  local _docs_optdepend='linux-docs: Kernel hackers manual - HTML documentation that comes with the Linux kernel.'
+  [[ "${_docs_pkg:-false}" == "true" ]] && _docs_optdepend="${pkgbase}-docs: Kernel source documentation for this build"
+  optdepends=("${_docs_optdepend}"
               'crda: to set the correct wireless channels of your country.'
               'linux-firmware: Firmware files for Linux'
               'modprobed-db: Keeps track of EVERY kernel module that has ever been probed. Useful for make localmodconfig.'
@@ -301,11 +304,11 @@ hackbase() {
   # remove build and source links
   rm -f "$modulesdir"/{source,build}
 
-  if [ -n "$_module" ] && [ "$_module_split_pkg" != "true" ]; then
+  if [ -n "$_module_pkg" ] && [ "$_module_split_pkg" != "true" ]; then
     msg2 "Installing out-of-tree modules into the main kernel package..."
     _install_module "" "${_kernver}" "${pkgdir}"
 
-    for _module_id in $_module; do
+    for _module_id in $_module_pkg; do
       case "${_module_id}" in
         nct6687)
           conflicts+=("nct6687-dkms")
@@ -473,9 +476,31 @@ hackheaders() {
   fi
 
   # Skip srcdir cleanup if nvidia-open or module packages still need it
-  if [ "$_NUKR" = "true" ] && { { [ "$_nvidia" = "false" ] || [ -z "$_nvidia" ]; } && [ "$_module_split_pkg" != "true" ]; }; then
+  if [ "$_NUKR" = "true" ] && { { [ "$_nvidia_pkg" = "false" ] || [ -z "$_nvidia_pkg" ]; } && [ "$_module_split_pkg" != "true" ]; }; then
     rm -rf "$srcdir" # Nuke the entire src folder so it'll get regenerated clean on next build
   fi
+}
+
+hackdocs() {
+  source "$_where"/BIG_UGLY_FROGMINER
+
+  pkgdesc="Documentation for the $pkgdesc kernel - https://github.com/Frogging-Family/linux-tkg"
+
+  cd "$_kernel_work_folder_abs"
+
+  local builddir="${pkgdir}/usr/lib/modules/$(<version)/build"
+  local src dst
+
+  msg2 "Installing documentation..."
+  while read -rd '' src; do
+    dst="${src#Documentation/}"
+    dst="${builddir}/Documentation/${dst#output/}"
+    install -Dm644 "$src" "$dst"
+  done < <(find Documentation -name '.*' -prune -o ! -type d -print0)
+
+  msg2 "Adding documentation symlink..."
+  mkdir -p "${pkgdir}/usr/share/doc"
+  ln -sr "${builddir}/Documentation" "${pkgdir}/usr/share/doc/${pkgbase}"
 }
 
 hacknvidia() {
@@ -483,13 +508,13 @@ hacknvidia() {
 
   _resolve_nvidia
 
-  pkgdesc="NVIDIA open modules driver $_nvidia_version for the $pkgdesc kernel"
-  depends=("${pkgbase}=${pkgver}" "libglvnd" "nvidia-utils-tkg>=${_nvidia_version}")
+  pkgdesc="NVIDIA open modules driver $_nvidia_ver for the $pkgdesc kernel"
+  depends=("${pkgbase}=${pkgver}" "libglvnd" "nvidia-utils-tkg>=${_nvidia_ver}")
   provides=("NVIDIA-MODULE")
-  conflicts=("${pkgbase}-nvidia" "NVIDIA-MODULE")
+  conflicts=("${pkgbase}-nvidia")
   license=('MIT AND GPL-2.0-only')
 
-  local _nv_open_src="${srcdir}/${_nv_open_pkg}"
+  local _nv_open_src="${srcdir}/${_nv_pkg}"
 
   cd "$_kernel_work_folder_abs"
   local _kernver="$(<version)"
@@ -521,7 +546,6 @@ hacknvidia() {
   if [ "$_NUKR" = "true" ] && [ "$_module_split_pkg" != "true" ]; then
     rm -rf "$srcdir" # Nuke the entire src folder so it'll get regenerated clean on next build
   fi
-
 }
 
 # Generic helper for module packages
@@ -563,7 +587,7 @@ _hackmodule() {
   _install_module "$_module_id" "${_kernver}" "${pkgdir}"
 
   # Cleanup only after the last enabled module package.
-  for _tmp_m in $_module; do
+  for _tmp_m in $_module_pkg; do
     [ -n "$_tmp_m" ] && _last_module_id="$_tmp_m"
   done
 
@@ -582,10 +606,12 @@ package_${pkgbase}-headers() {
 hackheaders
 }
 
-$( [ "$_nvidia" != "false" ] && [ -n "$_nvidia" ] && printf 'package_%s-nvidia-open() {\n  hacknvidia\n}\n' "${pkgbase}" )
+$( [[ "${_docs_pkg:-false}" == "true" ]] && printf 'package_%s-docs() {\n  hackdocs\n}\n' "${pkgbase}" )
+
+$( [ "$_nvidia_pkg" != "false" ] && [ -n "$_nvidia_pkg" ] && printf 'package_%s-nvidia-open() {\n  hacknvidia\n}\n' "${pkgbase}" )
 
 $( if [ "$_module_split_pkg" = "true" ]; then
-     for _m in $_module; do
+     for _m in $_module_pkg; do
        [ -z "$_m" ] && continue
        printf 'package_%s-%s() {\n  _hackmodule "%s"\n}\n' "${pkgbase}" "$_m" "$_m"
      done

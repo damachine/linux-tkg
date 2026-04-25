@@ -18,14 +18,15 @@ All on top of what upstream already offers — knobs live in [`customization.cfg
 - [Linux-tkg](#linux-tkg)
     - [This fork tracks upstream closely and adds some spice on top.](#this-fork-tracks-upstream-closely-and-adds-some-spice-on-top)
     - [Extra knobs in `customization.cfg`](#extra-knobs-in-customizationcfg)
-      - [`_nvidia` — builds the open-source NVIDIA kernel modules](#_nvidia--builds-the-open-source-nvidia-kernel-modules)
-      - [`_module` — build third-party out-of-tree (e.g. motherboard chipset)](#_module--build-third-party-out-of-tree-eg-motherboard-chipset)
+      - [`_nvidia_pkg` — builds the open-source NVIDIA kernel modules](#_nvidia_pkg--builds-the-open-source-nvidia-kernel-modules)
+      - [`_module_pkg` — build third-party out-of-tree (e.g. motherboard chipset)](#_module_pkg--build-third-party-out-of-tree-eg-motherboard-chipset)
       - [`_aggressive_glitched_base` — aggressive MM/scheduler tuning defaults](#_aggressive_glitched_base--aggressive-mmscheduler-tuning-defaults)
       - [`_aggressive_misc_adds` — aggressive misc additions](#_aggressive_misc_adds--aggressive-misc-additions)
       - [`_aggressive_more_opts` — CPU/scheduler misc optimizations](#_aggressive_more_opts--cpuscheduler-misc-optimizations)
       - [`_clang_polly` — Clang Polly loop optimizer support](#_clang_polly--clang-polly-loop-optimizer-support)
       - [`_autofdo` / `_autofdo_profile_path` — Clang AutoFDO](#_autofdo--_autofdo_profile_path--clang-autofdo)
       - [`_vanilla` — build a pure vanilla kernel without any modifications](#_vanilla--build-a-pure-vanilla-kernel-without-any-modifications)
+      - [`_docs_pkg` — split kernel documentation package](#_docs_pkg--split-kernel-documentation-package)
       - [`_nvidia_sign` — sign NVIDIA open modules](#_nvidia_sign--sign-nvidia-open-modules)
       - [`_module_sign` — out-of-tree module signing](#_module_sign--out-of-tree-module-signing)
       - [`_RESIGN_AFTER_STRIP` — re-sign all modules after stripping](#_resign_after_strip--re-sign-all-modules-after-stripping)
@@ -35,7 +36,7 @@ All on top of what upstream already offers — knobs live in [`customization.cfg
 <br />
 
 
-#### `_nvidia` — builds the open-source NVIDIA kernel modules
+#### `_nvidia_pkg` — builds the open-source NVIDIA kernel modules
 
 | Value | Description |
 |---|---|
@@ -47,27 +48,27 @@ All on top of what upstream already offers — knobs live in [`customization.cfg
 Examples:
 
 ```properties
-_nvidia="595.44.05"
-_nvidia="default"
-_nvidia="vulkan"
-_nvidia="latest"
-_nvidia="false"
+_nvidia_pkg="595.44.05"
+_nvidia_pkg="default"
+_nvidia_pkg="vulkan"
+_nvidia_pkg="latest"
+_nvidia_pkg="false"
 ```
 
 Driver versions and supported kernels are pinned in [`linux-tkg-config/prepare`](https://github.com/damachine/linux-tkg/blob/staging/linux-tkg-config/prepare#L114-L118). Numeric versions are the canonical config format; alias values are accepted for backward compatibility.
 
 <br />
 
-#### `_module` — build third-party out-of-tree (e.g. motherboard chipset)
+#### `_module_pkg` — build third-party out-of-tree (e.g. motherboard chipset)
 
 Examples:
 
 ```properties
 # enable modules
-_module="nct6687 v4l2loopback"
+_module_pkg="nct6687 v4l2loopback"
 
 # disable all — skips prompt
-_module="false"
+_module_pkg="false"
 ```
 
 Builds selected out-of-tree kernel modules into the main kernel package at build time. Supported modules:
@@ -78,11 +79,11 @@ Builds selected out-of-tree kernel modules into the main kernel package at build
 | `it87` | ITE IT8689E / IT8792E / IT87xx series (common on ASUS & ASRock boards) | Hardware monitoring driver (fans, temps, voltages) | [frankcrawford/it87](https://github.com/frankcrawford/it87) |
 | `v4l2loopback` | Virtual (no physical chip; kernel-level loopback) | Creates virtual video devices usable as webcam sources (e.g. OBS → Zoom) | [v4l2loopback/v4l2loopback](https://github.com/v4l2loopback/v4l2loopback) |
 
-**Companion options** (all ignored when `_module` is empty):
+**Companion options** (all ignored when `_module_pkg` is empty):
 
 | Option | Description |
 |---|---|
-| `_module_pkg` | Package layout for Arch PKGBUILD builds: `"internal"` installs selected modules into the main kernel package, `"external"` creates one extra package per selected module. Empty defaults to `"internal"` when `_module` is set. Ignored when `_module` is empty. |
+| `_module_extpkg` | Package layout for Arch PKGBUILD builds: `"internal"` installs selected modules into the main kernel package, `"external"` creates one extra package per selected module. Empty defaults to `"internal"` when `_module_pkg` is set. Ignored when `_module_pkg` is empty. |
 | `_module_autoload` | Space-separated subset of modules to autoload at boot via `/usr/lib/modules-load.d/`. `v4l2loopback` is autoloaded by default for compatibility. |
 | `_module_options_<name>` | Per-module modprobe options written to `/usr/lib/modprobe.d/`. Available for `nct6687`, `it87`, and `v4l2loopback`. |
 | `_module_git_<name>` | Pin a specific git ref (branch, tag, or commit) for a module, or set a full URL (`https://…` / `git@…`) to clone from a different fork entirely. Leave empty to use the default upstream repository at its default branch. |
@@ -91,10 +92,10 @@ Examples:
 
 ```properties
 # Enable two modules
-_module="nct6687 v4l2loopback"
+_module_pkg="nct6687 v4l2loopback"
 
-# Keep module artifacts inside the main kernel package (default when _module is set)
-_module_pkg="internal"
+# Keep module artifacts inside the main kernel package (default when _module_pkg is set)
+_module_extpkg="internal"
 
 # Autoload nct6687 at boot
 _module_autoload="nct6687"
@@ -206,6 +207,16 @@ _vanilla="true"
 When enabled, all TKG-specific patches, config modifications and kernel config fragments (`.myfrag`) are skipped. The CPU scheduler is set to the kernel default without prompting, the compiler is forced to `gcc`, and the kernel is named `-vanilla`.
 
 <br />
+
+#### `_docs_pkg` — split kernel documentation package
+
+```properties
+_docs_pkg="false"
+```
+
+When set to `"true"`, an extra `${pkgbase}-docs` package is built on Arch PKGBUILD builds. It installs the kernel `Documentation/` tree under `/usr/lib/modules/<version>/build/Documentation` and adds a symlink at `/usr/share/doc/${pkgbase}`.
+
+<br />
 <br />
 
 <a name="signing--module-extras"></a>
@@ -220,7 +231,7 @@ _nvidia_sign="false"
 
 When set to `"true"`, all `nvidia*.ko` files in the NVIDIA open modules package are signed using the kernel's module signing key after building.
 
-Useful in combination with `_RESIGN_AFTER_STRIP` to prevent unsigned-module taint messages. Requires `CONFIG_MODULE_SIG=y`. Has no effect when `_nvidia` is `"false"` or empty.
+Useful in combination with `_RESIGN_AFTER_STRIP` to prevent unsigned-module taint messages. Requires `CONFIG_MODULE_SIG=y`. Has no effect when `_nvidia_pkg` is `"false"` or empty.
 
 #### `_module_sign` — out-of-tree module signing
 
@@ -228,7 +239,7 @@ Useful in combination with `_RESIGN_AFTER_STRIP` to prevent unsigned-module tain
 _module_sign="false"
 ```
 
-When set to `"true"`, all active out-of-tree modules are signed using the kernel's module signing key after building. Alternatively, pass a space-separated subset of module names to sign only those selectively. Requires `CONFIG_MODULE_SIG=y`. Has no effect when `_module` is empty.
+When set to `"true"`, all active out-of-tree modules are signed using the kernel's module signing key after building. Alternatively, pass a space-separated subset of module names to sign only those selectively. Requires `CONFIG_MODULE_SIG=y`. Has no effect when `_module_pkg` is empty.
 
 #### `_RESIGN_AFTER_STRIP` — re-sign all modules after stripping
 
@@ -284,7 +295,7 @@ cd linux-tkg
 ./install.sh install
 ```
 
-> `_module` and its companion options should also work on **Generic** and **Gentoo**. Untested, use at your own risk.
+> `_module_pkg` and its companion options should also work on **Generic** and **Gentoo**. Untested, use at your own risk.
 >
 > `install.sh` has no effect when using on Debian, Ubuntu, Fedora.
 
