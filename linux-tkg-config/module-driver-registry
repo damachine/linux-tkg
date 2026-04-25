@@ -1,24 +1,24 @@
 # Module driver registry and helper functions
 # This file defines functions to manage the list of supported module drivers and their properties.
 
-_module_drv_list_has() {
+_module_list_has() {
   local _list="$1"
   local _item="$2"
   [[ " ${_list} " == *" ${_item} "* ]]
 }
 
-_module_drv_append_unique() {
+_module_append_unique() {
   local _list="$1"
   local _item="$2"
 
-  if [ -z "${_item}" ] || _module_drv_list_has "${_list}" "${_item}"; then
+  if [ -z "${_item}" ] || _module_list_has "${_list}" "${_item}"; then
     printf '%s\n' "${_list}"
   else
     printf '%s\n' "${_list:+${_list} }${_item}"
   fi
 }
 
-_module_drv_validate_id() {
+_module_validate_id() {
   case "$1" in
     v4l2loopback|nct6687|it87)
       return 0
@@ -28,14 +28,14 @@ _module_drv_validate_id() {
   return 1
 }
 
-_module_drv_get_display_name() {
+_module_get_display_name() {
   printf '%s\n' "$1"
 }
 
-# If _module_drv_git_<id> is a URL, use that instead.
-_module_drv_get_git_url() {
+# If _module_git_<id> is a URL, use that instead.
+_module_get_git_url() {
   local _module_id="$1"
-  local _var_name="_module_drv_git_${_module_id}"
+  local _var_name="_module_git_${_module_id}"
   local _val="${!_var_name}"
 
   # URL
@@ -58,21 +58,21 @@ _module_drv_get_git_url() {
 }
 
 # Subdirectory name
-_module_drv_get_source_dir() {
+_module_get_source_dir() {
   printf '%s\n' "$1"
 }
 
 # Kernel module name
-_module_drv_get_module_name() {
+_module_get_module_name() {
   printf '%s\n' "$1"
 }
 
 # .ko filename for a module
-_module_drv_get_module_filename() {
-  printf '%s.ko\n' "$(_module_drv_get_module_name "$1")"
+_module_get_module_filename() {
+  printf '%s.ko\n' "$(_module_get_module_name "$1")"
 }
 
-_module_drv_get_license_file() {
+_module_get_license_file() {
   case "$1" in
     nct6687)
       printf '%s\n' 'LICENSE'
@@ -87,9 +87,9 @@ _module_drv_get_license_file() {
 }
 
 # Return the git ref to check out (branch/tag/commit).
-_module_drv_get_git() {
+_module_get_git() {
   local _module_id="$1"
-  local _var_name="_module_drv_git_${_module_id}"
+  local _var_name="_module_git_${_module_id}"
   local _val="${!_var_name}"
 
   # If the value is a URL it is used as the repo URL, not as a git ref — return empty
@@ -100,15 +100,15 @@ _module_drv_get_git() {
   printf '%s\n' "$_val"
 }
 
-# Return the _module_drv_options_<id> string for modprobe.d
-_module_drv_get_modprobe_options() {
+# Return the _module_options_<id> string for modprobe.d
+_module_get_modprobe_options() {
   local _module_id="$1"
-  local _var_name="_module_drv_options_${_module_id}"
+  local _var_name="_module_options_${_module_id}"
   printf '%s\n' "${!_var_name}"
 }
 
-# Modules that are autoloaded by default even without _module_drv_autoload
-_module_drv_default_autoload() {
+# Modules that are autoloaded by default even without _module_autoload
+_module_default_autoload() {
   case "$1" in
     v4l2loopback)
       return 0
@@ -119,24 +119,24 @@ _module_drv_default_autoload() {
 }
 
 # Return 0 if the module should be autoloaded at boot
-_module_drv_should_autoload() {
+_module_should_autoload() {
   local _module_id="$1"
 
-  if _module_drv_list_has "${_module_drv_autoload_resolved}" "${_module_id}"; then
+  if _module_list_has "${_module_autoload_resolved}" "${_module_id}"; then
     return 0
   fi
 
-  _module_drv_default_autoload "${_module_id}"
+  _module_default_autoload "${_module_id}"
 }
 
 # Return 0 if the module should be signed after build
-_module_drv_should_sign() {
+_module_should_sign() {
   local _module_id="$1"
-  _module_drv_list_has "${_module_drv_sign_resolved}" "${_module_id}"
+  _module_list_has "${_module_sign_resolved}" "${_module_id}"
 }
 
 # Shared helper: resolve kernel sign-file, key, cert and hash from .config
-_resolve_signing_params() {
+_signing() {
   if ! grep -q 'CONFIG_MODULE_SIG=y' "${_kernel_work_folder_abs}/.config"; then
     warning "Module signing was requested but CONFIG_MODULE_SIG=y is not set in .config — skipping."
     return 1

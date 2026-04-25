@@ -121,8 +121,8 @@ if [ "$1" = "install" ] || [ "$1" = "config" ]; then
   _tkg_srcprep
 
   # Clone third-party module sources for Generic/Gentoo
-  if [[ "$_distro" =~ ^(Generic|Gentoo)$ ]] && [ -n "${_module_drv_resolved}" ]; then
-    _module_drv_clone
+  if [[ "$_distro" =~ ^(Generic|Gentoo)$ ]] && [ -n "${_module_resolved}" ]; then
+    _git_module
   fi
 
   _build_dir="$_kernel_work_folder_abs/.."
@@ -404,9 +404,9 @@ if [ "$1" = "install" ]; then
     sudo make modules_install $_STRIP_MODS
 
     # Install third-party kernel modules (Generic/Gentoo)
-    if [ -n "${_module_drv_resolved}" ]; then
-      _module_drv_build
-      _module_drv_install_live
+    if [ -n "${_module_resolved}" ]; then
+      _build_module
+      _install_module_generic
     fi
 
     msg2 "Removing modules from source folder in /usr/src/${_kernel_src_gentoo}"
