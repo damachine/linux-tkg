@@ -1,16 +1,18 @@
-From f721e454ad8db633c2267415e4169b9af3dd7a4b Mon Sep 17 00:00:00 2001
-From: damachine <damachine@users.noreply.github.com>
-Date: Wed, 18 Mar 2026 22:07:19 +0100
-Subject: [PATCH] nvidia: enable atomic modesetting by default, add -mharden-sls=all, fix pahole for kernel 7.0
+From dd4cef478c3ec2277749a4551ace3eb2dda08d73 Mon Sep 17 00:00:00 2001
+From: Frogging-Family
+From: damachine <damachin3@proton.me>
+Date: Mon, 27 Apr 2026 21:15:07 +0200
+Subject: [PATCH] nvidia open-kernel legacy: atomic modesetting default + hardening
 
-- kernel-open/Makefile: also check for scripts/gen-btf.sh (introduced in 7.0) before
-  setting PAHOLE_VARIABLES to avoid incompatible awk wrapper
-- nvidia-drm-linux.c: update MODULE_PARM_DESC to show modesetting enabled by default
-- nvidia-drm-os-interface.c: set nv_drm_modeset_module_param = true (was false)
+Patches against the NVIDIA 580.x LTS open-gpu-kernel-modules release:
+- kernel-open/nvidia-drm/nvidia-drm-linux.c: update MODULE_PARM_DESC to
+  reflect modesetting enabled by default
+- kernel-open/nvidia-drm/nvidia-drm-os-interface.c: set
+  nv_drm_modeset_module_param = true (was false)
 - src/nvidia-modeset/Makefile: add -mharden-sls=all for x86_64 hardening
 
-Required for proper Wayland functionality. fbdev is already default
-enabled since 580, so no fbdev hunk needed.
+Signed-off-by: damachine <damachin3@proton.me>
+
 ---
  kernel-open/Makefile                             | 13 +++++++++----
  kernel-open/nvidia-drm/nvidia-drm-linux.c        |  2 +-
@@ -81,5 +83,4 @@ index c674508..eaa071f 100644
  
  CFLAGS += $(CONDITIONAL_CFLAGS)
 -- 
-2.53.0
-
+2.54.0

@@ -1,7 +1,7 @@
-From b1ca42d2c2ff32fcd380e6667437139e6fb5f465 Mon Sep 17 00:00:00 2001
+From f39b7dec6ccf135e01c1b825944ab1e1574ca9c9 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Felix=20H=C3=A4dicke?= <felixhaedicke@web.de>
 Date: Thu, 19 Nov 2020 09:22:32 +0100
-Subject: [PATCH 1/6] HID: quirks: Add Apple Magic Trackpad 2 to
+Subject: [PATCH 1/5] HID: quirks: Add Apple Magic Trackpad 2 to
  hid_have_special_driver list
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -19,10 +19,10 @@ Signed-off-by: Felix Hädicke <felixhaedicke@web.de>
  1 file changed, 2 insertions(+)
 
 diff --git a/drivers/hid/hid-quirks.c b/drivers/hid/hid-quirks.c
-index 02f7db5c10..c8a82fae97 100644
+index 9e88c9d6c..0efb14e17 100644
 --- a/drivers/hid/hid-quirks.c
 +++ b/drivers/hid/hid-quirks.c
-@@ -539,6 +539,8 @@ static const struct hid_device_id hid_have_special_driver[] = {
+@@ -540,6 +540,8 @@ static const struct hid_device_id hid_have_special_driver[] = {
  #if IS_ENABLED(CONFIG_HID_MAGICMOUSE)
  	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_APPLE, USB_DEVICE_ID_APPLE_MAGICMOUSE) },
  	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_APPLE, USB_DEVICE_ID_APPLE_MAGICTRACKPAD) },
@@ -35,10 +35,10 @@ index 02f7db5c10..c8a82fae97 100644
 2.54.0
 
 
-From 00cb07f3321251d7b5ffc72c2a7eb8160b31fe19 Mon Sep 17 00:00:00 2001
+From 4d5e395342f620ee5cbd9c825a9507bca22a3c6e Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
 Date: Wed, 3 Feb 2021 11:20:12 +0200
-Subject: [PATCH 2/6] Revert "cpufreq: Avoid configuring old governors as
+Subject: [PATCH 2/5] Revert "cpufreq: Avoid configuring old governors as
  default with intel_pstate"
 
 This is an undesirable behavior for us since our aggressive ondemand performs
@@ -49,7 +49,7 @@ Also it interferes with the option to select the desired default governor we hav
  1 file changed, 2 deletions(-)
 
 diff --git a/drivers/cpufreq/Kconfig b/drivers/cpufreq/Kconfig
-index 78702a0836..a9458f88a0 100644
+index db83f3365..a9135d76d 100644
 --- a/drivers/cpufreq/Kconfig
 +++ b/drivers/cpufreq/Kconfig
 @@ -71,7 +71,6 @@ config CPU_FREQ_DEFAULT_GOV_USERSPACE
@@ -72,10 +72,10 @@ index 78702a0836..a9458f88a0 100644
 2.54.0
 
 
-From 03873e24b762ee9ec6d85a407522a837412f1aa5 Mon Sep 17 00:00:00 2001
+From 4d99d11e92f8fb80b32ac07cda3e47297f6869bb Mon Sep 17 00:00:00 2001
 From: "Jan Alexander Steffens (heftig)" <heftig@archlinux.org>
 Date: Sat, 13 Jan 2024 15:29:25 +0100
-Subject: [PATCH 3/6] arch/Kconfig: Default to maximum amount of ASLR bits
+Subject: [PATCH 3/5] arch/Kconfig: Default to maximum amount of ASLR bits
 
 To mitigate https://zolutal.github.io/aslrnt/; do this with a patch to
 avoid having to enable `CONFIG_EXPERT`.
@@ -84,10 +84,10 @@ avoid having to enable `CONFIG_EXPERT`.
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/arch/Kconfig b/arch/Kconfig
-index 102ddbd429..e383594e57 100644
+index e86880045..13f01979d 100644
 --- a/arch/Kconfig
 +++ b/arch/Kconfig
-@@ -1209,7 +1209,7 @@ config ARCH_MMAP_RND_BITS
+@@ -1215,7 +1215,7 @@ config ARCH_MMAP_RND_BITS
  	int "Number of bits to use for ASLR of mmap base address" if EXPERT
  	range ARCH_MMAP_RND_BITS_MIN ARCH_MMAP_RND_BITS_MAX
  	default ARCH_MMAP_RND_BITS_DEFAULT if ARCH_MMAP_RND_BITS_DEFAULT
@@ -96,7 +96,7 @@ index 102ddbd429..e383594e57 100644
  	depends on HAVE_ARCH_MMAP_RND_BITS
  	help
  	  This value can be used to select the number of bits to use to
-@@ -1243,7 +1243,7 @@ config ARCH_MMAP_RND_COMPAT_BITS
+@@ -1249,7 +1249,7 @@ config ARCH_MMAP_RND_COMPAT_BITS
  	int "Number of bits to use for ASLR of mmap base address for compatible applications" if EXPERT
  	range ARCH_MMAP_RND_COMPAT_BITS_MIN ARCH_MMAP_RND_COMPAT_BITS_MAX
  	default ARCH_MMAP_RND_COMPAT_BITS_DEFAULT if ARCH_MMAP_RND_COMPAT_BITS_DEFAULT
@@ -109,10 +109,10 @@ index 102ddbd429..e383594e57 100644
 2.54.0
 
 
-From 1d89ad24b880fe752ea13a1962dc57a801318b6e Mon Sep 17 00:00:00 2001
+From 529401a257a892c5357cff147fd7b2a961b723e1 Mon Sep 17 00:00:00 2001
 From: Peter Jung <admin@ptr1337.dev>
 Date: Thu, 21 Mar 2024 19:00:50 +0100
-Subject: [PATCH 4/6] cachy: move AMD_PRIVATE_COLOR to Kconfig
+Subject: [PATCH 4/5] cachy: move AMD_PRIVATE_COLOR to Kconfig
 
 Co-authored-by: PedroHLC <root@pedrohlc.com>
 Signed-off-by: Peter Jung <admin@ptr1337.dev>
@@ -125,7 +125,7 @@ Signed-off-by: Peter Jung <admin@ptr1337.dev>
  5 files changed, 14 insertions(+), 9 deletions(-)
 
 diff --git a/drivers/gpu/drm/amd/display/Kconfig b/drivers/gpu/drm/amd/display/Kconfig
-index abd3b65643..46937e6fa7 100644
+index abd3b6564..46937e6fa 100644
 --- a/drivers/gpu/drm/amd/display/Kconfig
 +++ b/drivers/gpu/drm/amd/display/Kconfig
 @@ -56,4 +56,10 @@ config DRM_AMD_SECURE_DISPLAY
@@ -140,7 +140,7 @@ index abd3b65643..46937e6fa7 100644
 +
  endmenu
 diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
-index 2328c1aa0e..39bde01df3 100644
+index e96a12ff2..16b814d6b 100644
 --- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
 +++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
 @@ -5033,7 +5033,7 @@ static int amdgpu_dm_mode_config_init(struct amdgpu_device *adev)
@@ -153,7 +153,7 @@ index 2328c1aa0e..39bde01df3 100644
  		return -ENOMEM;
  #endif
 diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_color.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_color.c
-index cd1e58b8de..adfaf5df6c 100644
+index cd1e58b8d..adfaf5df6 100644
 --- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_color.c
 +++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_color.c
 @@ -184,7 +184,7 @@ static inline struct fixed31_32 amdgpu_dm_fixpt_from_s3132(__u64 x)
@@ -166,10 +166,10 @@ index cd1e58b8de..adfaf5df6c 100644
   *
   * AMD driver supports pre-defined mathematical functions for transferring
 diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_crtc.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_crtc.c
-index 304437c228..e6ddcefc82 100644
+index d69f5a75b..29a197d92 100644
 --- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_crtc.c
 +++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_crtc.c
-@@ -503,7 +503,7 @@ static int amdgpu_dm_crtc_late_register(struct drm_crtc *crtc)
+@@ -490,7 +490,7 @@ static int amdgpu_dm_crtc_late_register(struct drm_crtc *crtc)
  }
  #endif
  
@@ -178,7 +178,7 @@ index 304437c228..e6ddcefc82 100644
  /**
   * dm_crtc_additional_color_mgmt - enable additional color properties
   * @crtc: DRM CRTC
-@@ -585,7 +585,7 @@ static const struct drm_crtc_funcs amdgpu_dm_crtc_funcs = {
+@@ -572,7 +572,7 @@ static const struct drm_crtc_funcs amdgpu_dm_crtc_funcs = {
  #if defined(CONFIG_DEBUG_FS)
  	.late_register = amdgpu_dm_crtc_late_register,
  #endif
@@ -187,7 +187,7 @@ index 304437c228..e6ddcefc82 100644
  	.atomic_set_property = amdgpu_dm_atomic_crtc_set_property,
  	.atomic_get_property = amdgpu_dm_atomic_crtc_get_property,
  #endif
-@@ -780,7 +780,7 @@ int amdgpu_dm_crtc_init(struct amdgpu_display_manager *dm,
+@@ -798,7 +798,7 @@ int amdgpu_dm_crtc_init(struct amdgpu_display_manager *dm,
  
  	drm_mode_crtc_set_gamma_size(&acrtc->base, MAX_COLOR_LEGACY_LUT_ENTRIES);
  
@@ -197,10 +197,10 @@ index 304437c228..e6ddcefc82 100644
  #endif
  	return 0;
 diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c
-index 127207e18d..f486e075a0 100644
+index 81e43534e..b9b52fc60 100644
 --- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c
 +++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c
-@@ -1615,7 +1615,7 @@ static void amdgpu_dm_plane_drm_plane_destroy_state(struct drm_plane *plane,
+@@ -1630,7 +1630,7 @@ static void amdgpu_dm_plane_drm_plane_destroy_state(struct drm_plane *plane,
  	drm_atomic_helper_plane_destroy_state(plane, state);
  }
  
@@ -209,7 +209,7 @@ index 127207e18d..f486e075a0 100644
  static void
  dm_atomic_plane_attach_color_mgmt_properties(struct amdgpu_display_manager *dm,
  					     struct drm_plane *plane)
-@@ -1844,7 +1844,7 @@ static const struct drm_plane_funcs dm_plane_funcs = {
+@@ -1859,7 +1859,7 @@ static const struct drm_plane_funcs dm_plane_funcs = {
  	.atomic_duplicate_state = amdgpu_dm_plane_drm_plane_duplicate_state,
  	.atomic_destroy_state = amdgpu_dm_plane_drm_plane_destroy_state,
  	.format_mod_supported = amdgpu_dm_plane_format_mod_supported,
@@ -218,7 +218,7 @@ index 127207e18d..f486e075a0 100644
  	.atomic_set_property = dm_atomic_plane_set_property,
  	.atomic_get_property = dm_atomic_plane_get_property,
  #endif
-@@ -1940,7 +1940,7 @@ int amdgpu_dm_plane_init(struct amdgpu_display_manager *dm,
+@@ -1956,7 +1956,7 @@ int amdgpu_dm_plane_init(struct amdgpu_display_manager *dm,
  	else
  		drm_plane_helper_add(plane, &dm_plane_helper_funcs);
  
@@ -227,7 +227,7 @@ index 127207e18d..f486e075a0 100644
  	dm_atomic_plane_attach_color_mgmt_properties(dm, plane);
  #else
  	res = dm_plane_init_colorops(plane);
-@@ -1965,4 +1965,3 @@ bool amdgpu_dm_plane_is_video_format(uint32_t format)
+@@ -1981,4 +1981,3 @@ bool amdgpu_dm_plane_is_video_format(uint32_t format)
  
  	return false;
  }
@@ -236,10 +236,10 @@ index 127207e18d..f486e075a0 100644
 2.54.0
 
 
-From a744c16ddf1708390b6ce45ea36445ac6ee3641e Mon Sep 17 00:00:00 2001
+From 3b65457ee46b3c2115e40e447a4ec2a2331cc4b5 Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Fri, 15 Mar 2024 12:36:51 -0500
-Subject: [PATCH 5/6] ZEN: drm/amdgpu/pm: Allow override of min_power_limit
+Subject: [PATCH 5/5] ZEN: drm/amdgpu/pm: Allow override of min_power_limit
  with ignore_min_pcap
 
 ---
@@ -250,10 +250,10 @@ Subject: [PATCH 5/6] ZEN: drm/amdgpu/pm: Allow override of min_power_limit
  4 files changed, 26 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu.h b/drivers/gpu/drm/amd/amdgpu/amdgpu.h
-index 447e734c36..f509aff720 100644
+index 8bc591deb..d4ebcfcdd 100644
 --- a/drivers/gpu/drm/amd/amdgpu/amdgpu.h
 +++ b/drivers/gpu/drm/amd/amdgpu/amdgpu.h
-@@ -159,6 +159,7 @@ struct amdgpu_watchdog_timer {
+@@ -160,6 +160,7 @@ struct amdgpu_watchdog_timer {
   */
  extern int amdgpu_modeset;
  extern unsigned int amdgpu_vram_limit;
@@ -262,7 +262,7 @@ index 447e734c36..f509aff720 100644
  extern int amdgpu_gart_size;
  extern int amdgpu_gtt_size;
 diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
-index c91638e651..c8d7e21017 100644
+index e47921e2a..2c9ffe703 100644
 --- a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
 +++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
 @@ -150,6 +150,7 @@ enum AMDGPU_DEBUG_MASK {
@@ -273,7 +273,7 @@ index c91638e651..c8d7e21017 100644
  int amdgpu_vis_vram_limit;
  int amdgpu_gart_size = -1; /* auto */
  int amdgpu_gtt_size = -1; /* auto */
-@@ -272,6 +273,15 @@ struct amdgpu_watchdog_timer amdgpu_watchdog_timer = {
+@@ -270,6 +271,15 @@ struct amdgpu_watchdog_timer amdgpu_watchdog_timer = {
  	.period = 0x0, /* default to 0x0 (timeout disable) */
  };
  
@@ -290,10 +290,10 @@ index c91638e651..c8d7e21017 100644
   * DOC: vramlimit (int)
   * Restrict the total amount of VRAM in MiB for testing.  The default is 0 (Use full VRAM).
 diff --git a/drivers/gpu/drm/amd/pm/amdgpu_pm.c b/drivers/gpu/drm/amd/pm/amdgpu_pm.c
-index eca93a9d0b..b1514e40c8 100644
+index 736304e73..9ad4a77d6 100644
 --- a/drivers/gpu/drm/amd/pm/amdgpu_pm.c
 +++ b/drivers/gpu/drm/amd/pm/amdgpu_pm.c
-@@ -3386,6 +3386,9 @@ static ssize_t amdgpu_hwmon_show_power_cap_min(struct device *dev,
+@@ -3385,6 +3385,9 @@ static ssize_t amdgpu_hwmon_show_power_cap_min(struct device *dev,
  					 struct device_attribute *attr,
  					 char *buf)
  {
@@ -304,10 +304,10 @@ index eca93a9d0b..b1514e40c8 100644
  }
  
 diff --git a/drivers/gpu/drm/amd/pm/swsmu/amdgpu_smu.c b/drivers/gpu/drm/amd/pm/swsmu/amdgpu_smu.c
-index b05c8bbdf2..2c1d03cf38 100644
+index 8faf7de7a..aff4eda3e 100644
 --- a/drivers/gpu/drm/amd/pm/swsmu/amdgpu_smu.c
 +++ b/drivers/gpu/drm/amd/pm/swsmu/amdgpu_smu.c
-@@ -2969,7 +2969,10 @@ int smu_get_power_limit(void *handle,
+@@ -2987,7 +2987,10 @@ int smu_get_power_limit(void *handle,
  			*limit = smu->max_power_limit;
  			break;
  		case SMU_PPT_LIMIT_MIN:
@@ -319,7 +319,7 @@ index b05c8bbdf2..2c1d03cf38 100644
  			break;
  		default:
  			return -EINVAL;
-@@ -2990,7 +2993,14 @@ static int smu_set_power_limit(void *handle, uint32_t limit_type, uint32_t limit
+@@ -3008,7 +3011,14 @@ static int smu_set_power_limit(void *handle, uint32_t limit_type, uint32_t limit
  	if (limit_type == SMU_DEFAULT_PPT_LIMIT) {
  		if (!limit)
  			limit = smu->current_power_limit;
@@ -337,3 +337,4 @@ index b05c8bbdf2..2c1d03cf38 100644
  				limit, smu->min_power_limit, smu->max_power_limit);
 -- 
 2.54.0
+

@@ -1,11 +1,22 @@
-From 15c2c93cf33bad6f6f87601f3cb533eebca6963e Mon Sep 17 00:00:00 2001
-From: damachine <damachine@users.noreply.github.com>
-Date: Sat, 14 Mar 2026 21:31:48 +0100
-Subject: [PATCH] nvidia: add -mharden-sls=all + fix pahole for kernel 7.0, dsc/dp fixes
+From a3ea8ddb93ccd93b1fecbbb24cebd0a61fdb07c6 Mon Sep 17 00:00:00 2001
+From: Frogging-Family
+From: damachine <damachin3@proton.me>
+Date: Mon, 27 Apr 2026 21:14:59 +0200
+Subject: [PATCH] nvidia open-kernel: hardening, pahole compat, dsc/dp fixes
 
-- kernel-open/Makefile: also check for scripts/gen-btf.sh (introduced in 7.0) before
-  setting PAHOLE_VARIABLES to avoid incompatible awk wrapper
-- src/nvidia-modeset/Makefile: add -mharden-sls=all to CONDITIONAL_CFLAGS for x86_64
+Patches against the latest NVIDIA open-gpu-kernel-modules release:
+- kernel-open/Makefile: check for scripts/gen-btf.sh before setting
+  PAHOLE_VARIABLES (introduced in kernel 7.0, avoids awk wrapper conflict)
+- src/nvidia-modeset/Makefile: add -mharden-sls=all for x86_64 hardening
+- src/common/displayport/src/dp_wardatabase.cpp: add Bigscreen Beyond VR
+  headset (ManufID 0x2709, ProdID 0x1234) to DP WAR database (4 lanes HBR2)
+- src/common/modeset/timing/nvt_dsc_pps.c: correct DSC RC parameter tables
+  to match VESA DSC 1.1 (9 fixes in minqp444_8b, maxqp444_8b, ofs_und8)
+- src/nvidia-modeset/src/nvkms-evo3.c: fix flatnessDetThresh computation
+  (bitsPerPixelX16 → bits_per_component)
+- src/nvidia-modeset/src/nvkms-evo4.c: same fix for Ada/Blackwell path
+
+Signed-off-by: damachine <damachin3@proton.me>
 
 ---
  kernel-open/Makefile                          | 13 +++++++++----
@@ -40,8 +51,24 @@ index f7a8db6..9a3fc28 100644
  
    ifndef ARCH
      ARCH := $(shell uname -m | sed -e 's/i.86/i386/' \
+diff --git a/kernel-open/common/inc/nv-linux.h b/kernel-open/common/inc/nv-linux.h
+--- a/kernel-open/common/inc/nv-linux.h
++++ b/kernel-open/common/inc/nv-linux.h
+@@ -1726,4 +1726,11 @@
+ #include <linux/gpio.h>
+-#include <linux/of_gpio.h>
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 1, 0)
++#include <linux/of_gpio.h>
++#else
++/* of_get_named_gpio() was removed with linux/of_gpio.h in kernel 7.1 */
++static inline int of_get_named_gpio(struct device_node *np,
++    const char *propname, int index)
++{ return -ENOSYS; }
++#endif
+ #include <linux/of_device.h>
+ #include <linux/of_platform.h>
 diff --git a/src/common/displayport/src/dp_wardatabase.cpp b/src/common/displayport/src/dp_wardatabase.cpp
-index 74daf1e7028e..4fafb5fc85e5 100644
+index 74daf1e..4fafb5f 100644
 --- a/src/common/displayport/src/dp_wardatabase.cpp
 +++ b/src/common/displayport/src/dp_wardatabase.cpp
 @@ -547,6 +547,19 @@ void Edid::applyEdidWorkArounds(NvU32 warFlag, const DpMonitorDenylistData *pDen
@@ -65,7 +92,7 @@ index 74daf1e7028e..4fafb5fc85e5 100644
          case 0xAE0D:
              if (ProductID == 0x1747)
 diff --git a/src/common/modeset/timing/nvt_dsc_pps.c b/src/common/modeset/timing/nvt_dsc_pps.c
-index ce6d6a795470..d100c57d9351 100644
+index ce6d6a7..d100c57 100644
 --- a/src/common/modeset/timing/nvt_dsc_pps.c
 +++ b/src/common/modeset/timing/nvt_dsc_pps.c
 @@ -187,12 +187,12 @@ static const NvU8 minqp444_8b[15][37]={
@@ -101,7 +128,7 @@ index ce6d6a795470..d100c57d9351 100644
  };
  
  static const NvU8 minqp444_10b[15][49]={
-@@ -934,6 +934,6 @@ DSC_PpsCalcRcParam
+@@ -934,7 +934,7 @@ DSC_PpsCalcRcParam
              //else
              {
                  const NvU32 ofs_und6[] = { 0, -2, -2, -4, -6, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12 };
@@ -109,6 +136,7 @@ index ce6d6a795470..d100c57d9351 100644
 +                const NvU32 ofs_und8[] = { 2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12 };  // [11]: -10->-12 (VESA DSC 1.1)
                  const NvU32 ofs_und12[] = { 2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12 };
                  const NvU32 ofs_und15[] = { 10, 8, 6, 4, 2, 0, -2, -4, -6, -8, -10, -10, -12, -12, -12 };
+ 
 diff --git a/src/nvidia-modeset/Makefile b/src/nvidia-modeset/Makefile
 index b54138c..6918dde 100644
 --- a/src/nvidia-modeset/Makefile
@@ -122,10 +150,10 @@ index b54138c..6918dde 100644
  
  CFLAGS += $(CONDITIONAL_CFLAGS)
 diff --git a/src/nvidia-modeset/src/nvkms-evo3.c b/src/nvidia-modeset/src/nvkms-evo3.c
-index 455836e80c96..4f329eca9909 100644
+index 13c5b1f..06fa4a1 100644
 --- a/src/nvidia-modeset/src/nvkms-evo3.c
 +++ b/src/nvidia-modeset/src/nvkms-evo3.c
-@@ -7211,10 +7211,13 @@ static void EvoSetDpDscParams(const NVDispEvoRec *pDispEvo,
+@@ -7214,10 +7214,13 @@ static void EvoSetDpDscParams(const NVDispEvoRec *pDispEvo,
  
      nvAssert(pDscInfo->type == NV_DSC_INFO_EVO_TYPE_DP);
  
@@ -144,7 +172,7 @@ index 455836e80c96..4f329eca9909 100644
      nvAssert((pDscInfo->dp.dscMode == NV_DSC_EVO_MODE_DUAL) ||
                  (pDscInfo->dp.dscMode == NV_DSC_EVO_MODE_SINGLE));
 diff --git a/src/nvidia-modeset/src/nvkms-evo4.c b/src/nvidia-modeset/src/nvkms-evo4.c
-index a2b94b16e180..e44a0d96bf0c 100644
+index a2b94b1..e44a0d9 100644
 --- a/src/nvidia-modeset/src/nvkms-evo4.c
 +++ b/src/nvidia-modeset/src/nvkms-evo4.c
 @@ -1413,10 +1413,13 @@ static void EvoSetDpDscParamsC9(const NVDispEvoRec *pDispEvo,
@@ -166,4 +194,4 @@ index a2b94b16e180..e44a0d96bf0c 100644
      nvAssert((pDscInfo->dp.dscMode == NV_DSC_EVO_MODE_DUAL) ||
                  (pDscInfo->dp.dscMode == NV_DSC_EVO_MODE_SINGLE));
 -- 
-2.53.0
+2.54.0

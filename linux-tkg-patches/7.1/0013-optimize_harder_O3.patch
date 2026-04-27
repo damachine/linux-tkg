@@ -1,7 +1,7 @@
-From f5759c25a0ccbf8cf33ba661d5c6839259bc1d61 Mon Sep 17 00:00:00 2001
+From fe3cdee12f21fa6eba3ce32bc17022903608fdc9 Mon Sep 17 00:00:00 2001
 From: Frogging-Family
 From: damachine <damachin3@proton.me>
-Date: Wed, 15 Apr 2026 21:55:26 +0200
+Date: Mon, 27 Apr 2026 21:14:47 +0200
 Subject: [PATCH] Add compiler optimization option
 
 Add CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3 Kconfig option that allows
@@ -20,10 +20,10 @@ Signed-off-by: damachine <damachin3@proton.me>
  2 files changed, 15 insertions(+)
 
 diff --git a/Makefile b/Makefile
-index 36d0a32fb..510119afd 100644
+index e27c91ea5..1d29f28f3 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -893,11 +893,20 @@ KBUILD_CFLAGS	+= -fno-delete-null-pointer-checks
+@@ -927,11 +927,20 @@ KBUILD_CFLAGS	+= -fno-delete-null-pointer-checks
  ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE
  KBUILD_CFLAGS += -O2
  KBUILD_RUSTFLAGS += -Copt-level=2
@@ -45,10 +45,10 @@ index 36d0a32fb..510119afd 100644
  # depends on `opt-level` and `debug-assertions`, respectively.
  KBUILD_RUSTFLAGS += -Cdebug-assertions=$(if $(CONFIG_RUST_DEBUG_ASSERTIONS),y,n)
 diff --git a/init/Kconfig b/init/Kconfig
-index 7484cd703..a9975a9bd 100644
+index 2937c4d30..c72a6f9d3 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
-@@ -1582,6 +1582,12 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
+@@ -1602,6 +1602,12 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
  	  with the "-O2" compiler flag for best performance and most
  	  helpful compile-time warnings.
  
@@ -62,4 +62,4 @@ index 7484cd703..a9975a9bd 100644
  	bool "Optimize for size (-Os)"
  	help
 -- 
-2.53.0
+2.54.0

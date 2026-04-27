@@ -1,54 +1,63 @@
-From 23a2a22a2f684df631e2f767c549a653f2f225af Mon Sep 17 00:00:00 2001
-From: Eric Naim <dnaim@cachyos.org>
-Date: Mon, 23 Feb 2026 13:24:14 +0800
+From ea25974413e6000fd81459f7e672cc7ac45f9c43 Mon Sep 17 00:00:00 2001
+From: Frogging-Family
+From: damachine <damachin3@proton.me>
+Date: Mon, 27 Apr 2026 21:14:49 +0200
 Subject: [PATCH] fixes, cgroup-vram and rt-i915 improvements, dkms-clang
 
-Signed-off-by: Eric Naim <dnaim@cachyos.org>
+Misc kernel additions (6.18+):
+- x86/tlb: move sync_core_before_usermode() to tlbflush.h
+- i915: RT-friendly display/vblank, RC6, execlists fixes
+- TTM: cgroup VRAM accounting (ttm_bo.c, ttm_resource.c, cgroup/dmem.c)
+- cgroup: add dmem (device memory) controller header
+- bluetooth: btusb quirk addition
+- sched: topology cleanup, remove unused FEAT_NI flags, core.c simplification
+- scripts: clang/warn Makefile cleanup
+- ksysfs: add uevent_seqnum sysfs knob
+
+Signed-off-by: damachine <damachin3@proton.me>
+
 ---
- arch/arm/include/asm/mmu_context.h                   |   2 +-
- arch/riscv/include/asm/sync_core.h                   |   2 +-
- arch/s390/include/asm/mmu_context.h                  |   2 +-
- arch/sparc/include/asm/mmu_context_64.h              |   2 +-
- arch/x86/include/asm/mmu_context.h                   |   3 ---
- arch/x86/include/asm/sync_core.h                     |   2 +-
- arch/x86/include/asm/tlbflush.h                      |  26 ++++++++++++++++++++++++++
- arch/x86/mm/tlb.c                                    |  21 ---------------------
- drivers/bluetooth/btusb.c                            |   4 ++++
- drivers/gpu/drm/i915/Kconfig                         |   1 -
- drivers/gpu/drm/i915/display/intel_crtc.c            |   9 ++++++---
- drivers/gpu/drm/i915/display/intel_cursor.c          |   9 ++++++---
- drivers/gpu/drm/i915/display/intel_display_trace.h   |   4 ++++
- drivers/gpu/drm/i915/display/intel_vblank.c          |  50 ++++++++++++++++++++++++++++++----------
- drivers/gpu/drm/i915/gt/intel_engine_cs.c            |   2 +-
- drivers/gpu/drm/i915/gt/intel_execlists_submission.c |  17 +++++------------
- drivers/gpu/drm/i915/gt/intel_rc6.c                  |  13 ++++++++++++-
- drivers/gpu/drm/i915/gt/uc/intel_guc.h               |   2 +-
- drivers/gpu/drm/i915/i915_request.c                  |   2 --
- drivers/gpu/drm/i915/i915_trace.h                    |   4 ++++
- drivers/gpu/drm/i915/intel_uncore_trace.h            |   4 ++++
- drivers/gpu/drm/ttm/ttm_bo.c                         | 221 +++++++++++++++++++++++++++++++++++-----
- drivers/gpu/drm/ttm/ttm_resource.c                   |  48 +++++++++++++++++++++++++++++-----------
- include/drm/ttm/ttm_resource.h                       |   6 +++++-
- include/linux/cgroup.h                               |  21 +++++++++++++++++++++
- include/linux/cgroup_dmem.h                          |  25 +++++++++++++++++++++++++
- include/linux/perf_event.h                           |   2 +-
- include/linux/sched/mm.h                             |  10 +++++-----
- include/linux/sched/topology.h                       |   3 ---
- include/linux/tick.h                                 |   4 ++--
- include/linux/vtime.h                                |   8 ++++----
- kernel/cgroup/dmem.c                                 |  91 ++++++++++++++++++++++++++++++++++++++++
- kernel/ksysfs.c                                      |  12 ++++++++++++
- kernel/sched/core.c                                  |  20 ++++++--------------
- kernel/sched/fair.c                                  |  44 ++++------------------------------------
- kernel/sched/features.h                              |   5 -----
- kernel/sched/sched.h                                 |  38 +++++++++++++++++---------------------
- kernel/sched/topology.c                              |   6 ------
- scripts/Makefile.clang                               |   2 --
- scripts/Makefile.warn                                |   4 ----
- 40 files changed, 536 insertions(+), 215 deletions(-)
+ arch/arm/include/asm/mmu_context.h                 |   2 +-
+ arch/riscv/include/asm/sync_core.h                 |   2 +-
+ arch/s390/include/asm/mmu_context.h                |   2 +-
+ arch/sparc/include/asm/mmu_context_64.h            |   2 +-
+ arch/x86/include/asm/sync_core.h                   |   2 +-
+ drivers/bluetooth/btusb.c                          |   4 +
+ drivers/gpu/drm/i915/Kconfig                       |   1 -
+ drivers/gpu/drm/i915/display/intel_crtc.c          |   9 +-
+ drivers/gpu/drm/i915/display/intel_cursor.c        |   9 +-
+ drivers/gpu/drm/i915/display/intel_display_trace.h |   4 +
+ drivers/gpu/drm/i915/display/intel_vblank.c        |  50 +++--
+ drivers/gpu/drm/i915/gt/intel_engine_cs.c          |   2 +-
+ .../gpu/drm/i915/gt/intel_execlists_submission.c   |  17 +-
+ drivers/gpu/drm/i915/gt/intel_rc6.c                |  13 +-
+ drivers/gpu/drm/i915/gt/uc/intel_guc.h             |   2 +-
+ drivers/gpu/drm/i915/i915_request.c                |   2 -
+ drivers/gpu/drm/i915/i915_trace.h                  |   4 +
+ drivers/gpu/drm/i915/intel_uncore_trace.h          |   4 +
+ drivers/gpu/drm/ttm/ttm_bo.c                       | 221 ++++++++++++++++++---
+ drivers/gpu/drm/ttm/ttm_resource.c                 |  48 +++--
+ include/drm/ttm/ttm_resource.h                     |   6 +-
+ include/linux/cgroup.h                             |  21 ++
+ include/linux/cgroup_dmem.h                        |  25 +++
+ include/linux/perf_event.h                         |   2 +-
+ include/linux/sched/mm.h                           |  10 +-
+ include/linux/sched/topology.h                     |   4 -
+ include/linux/tick.h                               |   4 +-
+ include/linux/vtime.h                              |   8 +-
+ kernel/cgroup/dmem.c                               |  91 +++++++++
+ kernel/ksysfs.c                                    |  12 ++
+ kernel/sched/core.c                                |  15 +-
+ kernel/sched/fair.c                                |  67 +------
+ kernel/sched/features.h                            |   6 -
+ kernel/sched/sched.h                               |  31 ++-
+ kernel/sched/topology.c                            |   6 -
+ scripts/Makefile.clang                             |   2 -
+ scripts/Makefile.warn                              |   4 -
+ 37 files changed, 505 insertions(+), 209 deletions(-)
 
 diff --git a/arch/arm/include/asm/mmu_context.h b/arch/arm/include/asm/mmu_context.h
-index db2cb06aa8cf..bebde469f81a 100644
+index db2cb06aa..bebde469f 100644
 --- a/arch/arm/include/asm/mmu_context.h
 +++ b/arch/arm/include/asm/mmu_context.h
 @@ -80,7 +80,7 @@ static inline void check_and_switch_context(struct mm_struct *mm,
@@ -61,7 +70,7 @@ index db2cb06aa8cf..bebde469f81a 100644
  	struct mm_struct *mm = current->mm;
  
 diff --git a/arch/riscv/include/asm/sync_core.h b/arch/riscv/include/asm/sync_core.h
-index 9153016da8f1..2fe6b7fe6b12 100644
+index 9153016da..2fe6b7fe6 100644
 --- a/arch/riscv/include/asm/sync_core.h
 +++ b/arch/riscv/include/asm/sync_core.h
 @@ -6,7 +6,7 @@
@@ -74,7 +83,7 @@ index 9153016da8f1..2fe6b7fe6b12 100644
  	asm volatile ("fence.i" ::: "memory");
  }
 diff --git a/arch/s390/include/asm/mmu_context.h b/arch/s390/include/asm/mmu_context.h
-index bd1ef5e2d2eb..95d03be2ce45 100644
+index bd1ef5e2d..95d03be2c 100644
 --- a/arch/s390/include/asm/mmu_context.h
 +++ b/arch/s390/include/asm/mmu_context.h
 @@ -93,7 +93,7 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
@@ -87,7 +96,7 @@ index bd1ef5e2d2eb..95d03be2ce45 100644
  	struct task_struct *tsk = current;
  	struct mm_struct *mm = tsk->mm;
 diff --git a/arch/sparc/include/asm/mmu_context_64.h b/arch/sparc/include/asm/mmu_context_64.h
-index 78bbacc14d2d..d1967214ef25 100644
+index 78bbacc14..d1967214e 100644
 --- a/arch/sparc/include/asm/mmu_context_64.h
 +++ b/arch/sparc/include/asm/mmu_context_64.h
 @@ -160,7 +160,7 @@ static inline void arch_start_context_switch(struct task_struct *prev)
@@ -99,22 +108,8 @@ index 78bbacc14d2d..d1967214ef25 100644
  {
  	/* Restore the state of MCDPER register for the new process
  	 * just switched to.
-diff --git a/arch/x86/include/asm/mmu_context.h b/arch/x86/include/asm/mmu_context.h
-index 1acafb1c6a93..ef5b507de34e 100644
---- a/arch/x86/include/asm/mmu_context.h
-+++ b/arch/x86/include/asm/mmu_context.h
-@@ -136,9 +136,6 @@ static inline void mm_reset_untag_mask(struct mm_struct *mm)
- }
- #endif
- 
--#define enter_lazy_tlb enter_lazy_tlb
--extern void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk);
--
- extern void mm_init_global_asid(struct mm_struct *mm);
- extern void mm_free_global_asid(struct mm_struct *mm);
- 
 diff --git a/arch/x86/include/asm/sync_core.h b/arch/x86/include/asm/sync_core.h
-index 96bda43538ee..4b55fa353bb5 100644
+index 96bda4353..4b55fa353 100644
 --- a/arch/x86/include/asm/sync_core.h
 +++ b/arch/x86/include/asm/sync_core.h
 @@ -93,7 +93,7 @@ static __always_inline void sync_core(void)
@@ -126,84 +121,8 @@ index 96bda43538ee..4b55fa353bb5 100644
  {
  	/* With PTI, we unconditionally serialize before running user code. */
  	if (static_cpu_has(X86_FEATURE_PTI))
-diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
-index 5a3cdc439e38..0545fe75c3fa 100644
---- a/arch/x86/include/asm/tlbflush.h
-+++ b/arch/x86/include/asm/tlbflush.h
-@@ -172,6 +172,28 @@ struct tlb_state_shared {
- };
- DECLARE_PER_CPU_SHARED_ALIGNED(struct tlb_state_shared, cpu_tlbstate_shared);
- 
-+/*
-+ * Please ignore the name of this function.  It should be called
-+ * switch_to_kernel_thread().
-+ *
-+ * enter_lazy_tlb() is a hint from the scheduler that we are entering a
-+ * kernel thread or other context without an mm.  Acceptable implementations
-+ * include doing nothing whatsoever, switching to init_mm, or various clever
-+ * lazy tricks to try to minimize TLB flushes.
-+ *
-+ * The scheduler reserves the right to call enter_lazy_tlb() several times
-+ * in a row.  It will notify us that we're going back to a real mm by
-+ * calling switch_mm_irqs_off().
-+ */
-+#define enter_lazy_tlb enter_lazy_tlb
-+static __always_inline void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)
-+{
-+	if (this_cpu_read(cpu_tlbstate.loaded_mm) == &init_mm)
-+		return;
-+
-+	this_cpu_write(cpu_tlbstate_shared.is_lazy, true);
-+}
-+
- bool nmi_uaccess_okay(void);
- #define nmi_uaccess_okay nmi_uaccess_okay
- 
-@@ -480,6 +502,10 @@ static inline void cpu_tlbstate_update_lam(unsigned long lam, u64 untag_mask)
- {
- }
- #endif
-+#else /* !MODULE */
-+#define enter_lazy_tlb enter_lazy_tlb
-+extern void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)
-+	__compiletime_error("enter_lazy_tlb() should not be used in modules");
- #endif /* !MODULE */
- 
- static inline void __native_tlb_flush_global(unsigned long cr4)
-diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
-index 621e09d049cb..af43d177087e 100644
---- a/arch/x86/mm/tlb.c
-+++ b/arch/x86/mm/tlb.c
-@@ -971,27 +971,6 @@ void switch_mm_irqs_off(struct mm_struct *unused, struct mm_struct *next,
- 	}
- }
- 
--/*
-- * Please ignore the name of this function.  It should be called
-- * switch_to_kernel_thread().
-- *
-- * enter_lazy_tlb() is a hint from the scheduler that we are entering a
-- * kernel thread or other context without an mm.  Acceptable implementations
-- * include doing nothing whatsoever, switching to init_mm, or various clever
-- * lazy tricks to try to minimize TLB flushes.
-- *
-- * The scheduler reserves the right to call enter_lazy_tlb() several times
-- * in a row.  It will notify us that we're going back to a real mm by
-- * calling switch_mm_irqs_off().
-- */
--void enter_lazy_tlb(struct mm_struct *mm, struct task_struct *tsk)
--{
--	if (this_cpu_read(cpu_tlbstate.loaded_mm) == &init_mm)
--		return;
--
--	this_cpu_write(cpu_tlbstate_shared.is_lazy, true);
--}
--
- /*
-  * Using a temporary mm allows to set temporary mappings that are not accessible
-  * by other CPUs. Such mappings are needed to perform sensitive memory writes
 diff --git a/drivers/bluetooth/btusb.c b/drivers/bluetooth/btusb.c
-index a1c5eb993e47..648d60e99993 100644
+index 7f5fce93d..a38fd5fc6 100644
 --- a/drivers/bluetooth/btusb.c
 +++ b/drivers/bluetooth/btusb.c
 @@ -563,6 +563,8 @@ static const struct usb_device_id quirks_table[] = {
@@ -215,9 +134,9 @@ index a1c5eb993e47..648d60e99993 100644
  	{ USB_DEVICE(0x0489, 0xe122), .driver_info = BTUSB_REALTEK |
  						     BTUSB_WIDEBAND_SPEECH },
  
-@@ -673,6 +675,8 @@ static const struct usb_device_id quirks_table[] = {
+@@ -683,6 +685,8 @@ static const struct usb_device_id quirks_table[] = {
+ 	{ USB_DEVICE(0x13d3, 0x3596), .driver_info = BTUSB_MEDIATEK |
  						     BTUSB_WIDEBAND_SPEECH },
- 
  	/* MediaTek MT7922 Bluetooth devices */
 +	{ USB_DEVICE(0x13d3, 0x3625), .driver_info = BTUSB_MEDIATEK |
 +						     BTUSB_WIDEBAND_SPEECH },
@@ -225,7 +144,7 @@ index a1c5eb993e47..648d60e99993 100644
  						     BTUSB_WIDEBAND_SPEECH },
  	{ USB_DEVICE(0x13d3, 0x3610), .driver_info = BTUSB_MEDIATEK |
 diff --git a/drivers/gpu/drm/i915/Kconfig b/drivers/gpu/drm/i915/Kconfig
-index 5e939004b646..40a9234e6e5d 100644
+index 5e939004b..40a9234e6 100644
 --- a/drivers/gpu/drm/i915/Kconfig
 +++ b/drivers/gpu/drm/i915/Kconfig
 @@ -3,7 +3,6 @@ config DRM_I915
@@ -237,10 +156,10 @@ index 5e939004b646..40a9234e6e5d 100644
  	select INTERVAL_TREE
  	# we need shmfs for the swappable backing store, and in particular
 diff --git a/drivers/gpu/drm/i915/display/intel_crtc.c b/drivers/gpu/drm/i915/display/intel_crtc.c
-index 53378d2dcbec..3c89b9452863 100644
+index 03de219f7..77e4788cb 100644
 --- a/drivers/gpu/drm/i915/display/intel_crtc.c
 +++ b/drivers/gpu/drm/i915/display/intel_crtc.c
-@@ -587,7 +587,8 @@ void intel_pipe_update_start(struct intel_atomic_state *state,
+@@ -630,7 +630,8 @@ void intel_pipe_update_start(struct intel_atomic_state *state,
  	 */
  	intel_psr_wait_for_idle_locked(new_crtc_state);
  
@@ -250,7 +169,7 @@ index 53378d2dcbec..3c89b9452863 100644
  
  	crtc->debug.min_vbl = evade.min;
  	crtc->debug.max_vbl = evade.max;
-@@ -605,7 +606,8 @@ void intel_pipe_update_start(struct intel_atomic_state *state,
+@@ -648,7 +649,8 @@ void intel_pipe_update_start(struct intel_atomic_state *state,
  	return;
  
  irq_disable:
@@ -260,8 +179,8 @@ index 53378d2dcbec..3c89b9452863 100644
  }
  
  #if IS_ENABLED(CONFIG_DRM_I915_DEBUG_VBLANK_EVADE)
-@@ -750,7 +752,8 @@ void intel_pipe_update_end(struct intel_atomic_state *state,
- 	if (!state->base.legacy_cursor_update)
+@@ -795,7 +797,8 @@ void intel_pipe_update_end(struct intel_atomic_state *state,
+ 	     !new_crtc_state->vrr.enable))
  		intel_vrr_send_push(NULL, new_crtc_state);
  
 -	local_irq_enable();
@@ -271,10 +190,10 @@ index 53378d2dcbec..3c89b9452863 100644
  	if (intel_parent_vgpu_active(display))
  		goto out;
 diff --git a/drivers/gpu/drm/i915/display/intel_cursor.c b/drivers/gpu/drm/i915/display/intel_cursor.c
-index 2c5d917fbd7e..3477b2cebbe3 100644
+index 18d1014de..0d2541466 100644
 --- a/drivers/gpu/drm/i915/display/intel_cursor.c
 +++ b/drivers/gpu/drm/i915/display/intel_cursor.c
-@@ -919,13 +919,15 @@ intel_legacy_cursor_update(struct drm_plane *_plane,
+@@ -920,13 +920,15 @@ intel_legacy_cursor_update(struct drm_plane *_plane,
  		 */
  		intel_psr_wait_for_idle_locked(crtc_state);
  
@@ -292,7 +211,7 @@ index 2c5d917fbd7e..3477b2cebbe3 100644
  	}
  
  	if (new_plane_state->uapi.visible) {
-@@ -935,7 +937,8 @@ intel_legacy_cursor_update(struct drm_plane *_plane,
+@@ -936,7 +938,8 @@ intel_legacy_cursor_update(struct drm_plane *_plane,
  		intel_plane_disable_arm(NULL, plane, crtc_state);
  	}
  
@@ -303,7 +222,7 @@ index 2c5d917fbd7e..3477b2cebbe3 100644
  	intel_psr_unlock(crtc_state);
  
 diff --git a/drivers/gpu/drm/i915/display/intel_display_trace.h b/drivers/gpu/drm/i915/display/intel_display_trace.h
-index 27ebc32cb61a..a519d94700c3 100644
+index 27ebc32cb..a519d9470 100644
 --- a/drivers/gpu/drm/i915/display/intel_display_trace.h
 +++ b/drivers/gpu/drm/i915/display/intel_display_trace.h
 @@ -13,6 +13,10 @@
@@ -318,7 +237,7 @@ index 27ebc32cb61a..a519d94700c3 100644
  #include <linux/string_helpers.h>
  #include <linux/types.h>
 diff --git a/drivers/gpu/drm/i915/display/intel_vblank.c b/drivers/gpu/drm/i915/display/intel_vblank.c
-index 1b7cfe226ff8..a540615ba431 100644
+index 1b7cfe226..a540615ba 100644
 --- a/drivers/gpu/drm/i915/display/intel_vblank.c
 +++ b/drivers/gpu/drm/i915/display/intel_vblank.c
 @@ -316,6 +316,21 @@ static void intel_vblank_section_exit(struct intel_display *display)
@@ -422,7 +341,7 @@ index 1b7cfe226ff8..a540615ba431 100644
  
  	finish_wait(wq, &wait);
 diff --git a/drivers/gpu/drm/i915/gt/intel_engine_cs.c b/drivers/gpu/drm/i915/gt/intel_engine_cs.c
-index 54c9571327e7..97bc49fcb5e0 100644
+index c0fd349a4..9dd966512 100644
 --- a/drivers/gpu/drm/i915/gt/intel_engine_cs.c
 +++ b/drivers/gpu/drm/i915/gt/intel_engine_cs.c
 @@ -1607,7 +1607,7 @@ u64 intel_engine_get_last_batch_head(const struct intel_engine_cs *engine)
@@ -435,7 +354,7 @@ index 54c9571327e7..97bc49fcb5e0 100644
  
  	/*
 diff --git a/drivers/gpu/drm/i915/gt/intel_execlists_submission.c b/drivers/gpu/drm/i915/gt/intel_execlists_submission.c
-index cafe0b8e6bdd..55f94c5feaa3 100644
+index 1359fc9cb..e11db81dc 100644
 --- a/drivers/gpu/drm/i915/gt/intel_execlists_submission.c
 +++ b/drivers/gpu/drm/i915/gt/intel_execlists_submission.c
 @@ -1300,7 +1300,7 @@ static void execlists_dequeue(struct intel_engine_cs *engine)
@@ -498,7 +417,7 @@ index cafe0b8e6bdd..55f94c5feaa3 100644
  	}
  
 diff --git a/drivers/gpu/drm/i915/gt/intel_rc6.c b/drivers/gpu/drm/i915/gt/intel_rc6.c
-index 286d49ecc449..472c68b32516 100644
+index e91e5cdca..a0361f823 100644
 --- a/drivers/gpu/drm/i915/gt/intel_rc6.c
 +++ b/drivers/gpu/drm/i915/gt/intel_rc6.c
 @@ -2,9 +2,9 @@
@@ -511,8 +430,8 @@ index 286d49ecc449..472c68b32516 100644
 +#include <linux/dmi.h>
  
  #include <drm/drm_print.h>
- 
-@@ -497,6 +497,17 @@ static bool rc6_supported(struct intel_rc6 *rc6)
+ #include <drm/intel/intel_pcode_regs.h>
+@@ -499,6 +499,17 @@ static bool rc6_supported(struct intel_rc6 *rc6)
  	if (!HAS_RC6(i915))
  		return false;
  
@@ -531,7 +450,7 @@ index 286d49ecc449..472c68b32516 100644
  		return false;
  
 diff --git a/drivers/gpu/drm/i915/gt/uc/intel_guc.h b/drivers/gpu/drm/i915/gt/uc/intel_guc.h
-index 053780f562c1..b25fa8f4dc4b 100644
+index 053780f56..b25fa8f4d 100644
 --- a/drivers/gpu/drm/i915/gt/uc/intel_guc.h
 +++ b/drivers/gpu/drm/i915/gt/uc/intel_guc.h
 @@ -362,7 +362,7 @@ static inline int intel_guc_send_busy_loop(struct intel_guc *guc,
@@ -544,7 +463,7 @@ index 053780f562c1..b25fa8f4dc4b 100644
  	/*
  	 * FIXME: Have caller pass in if we are in an atomic context to avoid
 diff --git a/drivers/gpu/drm/i915/i915_request.c b/drivers/gpu/drm/i915/i915_request.c
-index d2c7b1090df0..f66f8efc7062 100644
+index d2c7b1090..f66f8efc7 100644
 --- a/drivers/gpu/drm/i915/i915_request.c
 +++ b/drivers/gpu/drm/i915/i915_request.c
 @@ -610,7 +610,6 @@ bool __i915_request_submit(struct i915_request *request)
@@ -564,7 +483,7 @@ index d2c7b1090df0..f66f8efc7062 100644
  
  	/*
 diff --git a/drivers/gpu/drm/i915/i915_trace.h b/drivers/gpu/drm/i915/i915_trace.h
-index 7ed41ce9b708..6b87ef6005c6 100644
+index 7ed41ce9b..6b87ef600 100644
 --- a/drivers/gpu/drm/i915/i915_trace.h
 +++ b/drivers/gpu/drm/i915/i915_trace.h
 @@ -6,6 +6,10 @@
@@ -579,7 +498,7 @@ index 7ed41ce9b708..6b87ef6005c6 100644
  #include <linux/types.h>
  #include <linux/tracepoint.h>
 diff --git a/drivers/gpu/drm/i915/intel_uncore_trace.h b/drivers/gpu/drm/i915/intel_uncore_trace.h
-index f13ff71edf2d..3c67e267fb60 100644
+index f13ff71ed..3c67e267f 100644
 --- a/drivers/gpu/drm/i915/intel_uncore_trace.h
 +++ b/drivers/gpu/drm/i915/intel_uncore_trace.h
 @@ -7,6 +7,10 @@
@@ -594,10 +513,10 @@ index f13ff71edf2d..3c67e267fb60 100644
  
  #include <linux/types.h>
 diff --git a/drivers/gpu/drm/ttm/ttm_bo.c b/drivers/gpu/drm/ttm/ttm_bo.c
-index 0765d69423d2..73b19c5d06f7 100644
+index d85f0a37a..815e9e835 100644
 --- a/drivers/gpu/drm/ttm/ttm_bo.c
 +++ b/drivers/gpu/drm/ttm/ttm_bo.c
-@@ -489,6 +489,117 @@ int ttm_bo_evict_first(struct ttm_device *bdev, struct ttm_resource_manager *man
+@@ -488,6 +488,117 @@ int ttm_bo_evict_first(struct ttm_device *bdev, struct ttm_resource_manager *man
  	return ret;
  }
  
@@ -715,7 +634,7 @@ index 0765d69423d2..73b19c5d06f7 100644
  /**
   * struct ttm_bo_evict_walk - Parameters for the evict walk.
   */
-@@ -504,22 +615,61 @@ struct ttm_bo_evict_walk {
+@@ -503,22 +614,61 @@ struct ttm_bo_evict_walk {
  	/** @evicted: Number of successful evictions. */
  	unsigned long evicted;
  
@@ -781,7 +700,7 @@ index 0765d69423d2..73b19c5d06f7 100644
  		return 0;
  
  	if (bo->pin_count || !bo->bdev->funcs->eviction_valuable(bo, evict_walk->place))
-@@ -538,8 +688,9 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
+@@ -537,8 +687,9 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
  
  	evict_walk->evicted++;
  	if (evict_walk->res)
@@ -793,7 +712,7 @@ index 0765d69423d2..73b19c5d06f7 100644
  	if (lret == 0)
  		return 1;
  out:
-@@ -561,7 +712,7 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+@@ -560,7 +711,7 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
  			      struct ttm_operation_ctx *ctx,
  			      struct ww_acquire_ctx *ticket,
  			      struct ttm_resource **res,
@@ -802,7 +721,7 @@ index 0765d69423d2..73b19c5d06f7 100644
  {
  	struct ttm_bo_evict_walk evict_walk = {
  		.walk = {
-@@ -574,15 +725,21 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+@@ -573,15 +724,21 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
  		.place = place,
  		.evictor = evictor,
  		.res = res,
@@ -827,7 +746,7 @@ index 0765d69423d2..73b19c5d06f7 100644
  		evict_walk.try_low = true;
  		lret = ttm_lru_walk_for_evict(&evict_walk.walk, bdev, man, 1);
  	}
-@@ -603,11 +760,13 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+@@ -602,11 +759,13 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
  	} while (!lret && evict_walk.evicted);
  
  	/* We hit the low limit? Try once more */
@@ -842,7 +761,7 @@ index 0765d69423d2..73b19c5d06f7 100644
  	if (lret < 0)
  		return lret;
  	if (lret == 0)
-@@ -725,9 +884,8 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
+@@ -724,9 +883,8 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
  
  	for (i = 0; i < placement->num_placement; ++i) {
  		const struct ttm_place *place = &placement->placement[i];
@@ -853,7 +772,7 @@ index 0765d69423d2..73b19c5d06f7 100644
  
  		man = ttm_manager_type(bdev, place->mem_type);
  		if (!man || !ttm_resource_manager_used(man))
-@@ -737,25 +895,30 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
+@@ -736,25 +894,30 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
  				    TTM_PL_FLAG_FALLBACK))
  			continue;
  
@@ -901,7 +820,7 @@ index 0765d69423d2..73b19c5d06f7 100644
  
  		ret = ttm_bo_add_pipelined_eviction_fences(bo, man, ctx->no_wait_gpu);
 diff --git a/drivers/gpu/drm/ttm/ttm_resource.c b/drivers/gpu/drm/ttm/ttm_resource.c
-index 192fca24f37e..a8a836f6e376 100644
+index 9f36631d4..c1d2ae0a6 100644
 --- a/drivers/gpu/drm/ttm/ttm_resource.c
 +++ b/drivers/gpu/drm/ttm/ttm_resource.c
 @@ -373,30 +373,52 @@ void ttm_resource_fini(struct ttm_resource_manager *man,
@@ -971,7 +890,7 @@ index 192fca24f37e..a8a836f6e376 100644
  	spin_lock(&bo->bdev->lru_lock);
  	ttm_resource_add_bulk_move(*res_ptr, bo);
 diff --git a/include/drm/ttm/ttm_resource.h b/include/drm/ttm/ttm_resource.h
-index 33e80f30b8b8..549b5b796884 100644
+index 33e80f30b..549b5b796 100644
 --- a/include/drm/ttm/ttm_resource.h
 +++ b/include/drm/ttm/ttm_resource.h
 @@ -456,10 +456,14 @@ void ttm_resource_init(struct ttm_buffer_object *bo,
@@ -991,10 +910,10 @@ index 33e80f30b8b8..549b5b796884 100644
  bool ttm_resource_intersects(struct ttm_device *bdev,
  			     struct ttm_resource *res,
 diff --git a/include/linux/cgroup.h b/include/linux/cgroup.h
-index bc892e3b37ee..560ae995e3a5 100644
+index e52160e85..660fabd00 100644
 --- a/include/linux/cgroup.h
 +++ b/include/linux/cgroup.h
-@@ -561,6 +561,27 @@ static inline struct cgroup *cgroup_ancestor(struct cgroup *cgrp,
+@@ -622,6 +622,27 @@ static inline struct cgroup *cgroup_ancestor(struct cgroup *cgrp,
  	return cgrp->ancestors[ancestor_level];
  }
  
@@ -1023,7 +942,7 @@ index bc892e3b37ee..560ae995e3a5 100644
   * task_under_cgroup_hierarchy - test task's membership of cgroup ancestry
   * @task: the task to be tested
 diff --git a/include/linux/cgroup_dmem.h b/include/linux/cgroup_dmem.h
-index dd4869f1d736..9d72457c4cb9 100644
+index dd4869f1d..9d72457c4 100644
 --- a/include/linux/cgroup_dmem.h
 +++ b/include/linux/cgroup_dmem.h
 @@ -24,6 +24,12 @@ void dmem_cgroup_uncharge(struct dmem_cgroup_pool_state *pool, u64 size);
@@ -1066,7 +985,7 @@ index dd4869f1d736..9d72457c4cb9 100644
  { }
  
 diff --git a/include/linux/perf_event.h b/include/linux/perf_event.h
-index 48d851fbd8ea..7c1dac8da5e5 100644
+index 48d851fbd..7c1dac8da 100644
 --- a/include/linux/perf_event.h
 +++ b/include/linux/perf_event.h
 @@ -1632,7 +1632,7 @@ static inline void perf_event_task_migrate(struct task_struct *task)
@@ -1079,7 +998,7 @@ index 48d851fbd8ea..7c1dac8da5e5 100644
  {
  	if (static_branch_unlikely(&perf_sched_events))
 diff --git a/include/linux/sched/mm.h b/include/linux/sched/mm.h
-index 95d0040df584..4a279ee2d026 100644
+index 95d0040df..4a279ee2d 100644
 --- a/include/linux/sched/mm.h
 +++ b/include/linux/sched/mm.h
 @@ -44,7 +44,7 @@ static inline void smp_mb__after_mmgrab(void)
@@ -1127,21 +1046,22 @@ index 95d0040df584..4a279ee2d026 100644
  	/*
  	 * The atomic_read() below prevents CSE. The following should
 diff --git a/include/linux/sched/topology.h b/include/linux/sched/topology.h
-index 45c0022b91ce..bbcfdf12aa6e 100644
+index 36553e148..ff85d738b 100644
 --- a/include/linux/sched/topology.h
 +++ b/include/linux/sched/topology.h
-@@ -92,9 +92,6 @@ struct sched_domain {
+@@ -92,10 +92,6 @@ struct sched_domain {
  	unsigned int nr_balance_failed; /* initialise to 0 */
  
  	/* idle_balance() stats */
 -	unsigned int newidle_call;
 -	unsigned int newidle_success;
 -	unsigned int newidle_ratio;
+-	u64 newidle_stamp;
  	u64 max_newidle_lb_cost;
  	unsigned long last_decay_max_lb_cost;
  
 diff --git a/include/linux/tick.h b/include/linux/tick.h
-index 738007d6f577..df9934a60faf 100644
+index 738007d6f..df9934a60 100644
 --- a/include/linux/tick.h
 +++ b/include/linux/tick.h
 @@ -177,7 +177,7 @@ extern cpumask_var_t tick_nohz_full_mask;
@@ -1163,7 +1083,7 @@ index 738007d6f577..df9934a60faf 100644
  	if (tick_nohz_full_enabled())
  		__tick_nohz_task_switch();
 diff --git a/include/linux/vtime.h b/include/linux/vtime.h
-index 29dd5b91dd7d..428464bb81b3 100644
+index 29dd5b91d..428464bb8 100644
 --- a/include/linux/vtime.h
 +++ b/include/linux/vtime.h
 @@ -67,24 +67,24 @@ static __always_inline void vtime_account_guest_exit(void)
@@ -1196,7 +1116,7 @@ index 29dd5b91dd7d..428464bb81b3 100644
  	if (vtime_accounting_enabled_this_cpu())
  		vtime_task_switch_generic(prev);
 diff --git a/kernel/cgroup/dmem.c b/kernel/cgroup/dmem.c
-index 9d95824dc6fa..29197d3801ac 100644
+index 1ab1fb47f..e62dd6b01 100644
 --- a/kernel/cgroup/dmem.c
 +++ b/kernel/cgroup/dmem.c
 @@ -694,6 +694,97 @@ int dmem_cgroup_try_charge(struct dmem_cgroup_region *region, u64 size,
@@ -1298,10 +1218,10 @@ index 9d95824dc6fa..29197d3801ac 100644
  {
  	struct dmem_cgroup_region *region;
 diff --git a/kernel/ksysfs.c b/kernel/ksysfs.c
-index a9e6354d9e25..691c5671b346 100644
+index f45ade718..670a7a57d 100644
 --- a/kernel/ksysfs.c
 +++ b/kernel/ksysfs.c
-@@ -132,6 +132,15 @@ KERNEL_ATTR_RO(vmcoreinfo);
+@@ -133,6 +133,15 @@ KERNEL_ATTR_RO(vmcoreinfo);
  
  #endif /* CONFIG_VMCORE_INFO */
  
@@ -1317,7 +1237,7 @@ index a9e6354d9e25..691c5671b346 100644
  /* whether file capabilities are enabled */
  static ssize_t fscaps_show(struct kobject *kobj,
  				  struct kobj_attribute *attr, char *buf)
-@@ -205,6 +214,9 @@ static struct attribute * kernel_attrs[] = {
+@@ -206,6 +215,9 @@ static struct attribute * kernel_attrs[] = {
  #ifndef CONFIG_TINY_RCU
  	&rcu_expedited_attr.attr,
  	&rcu_normal_attr.attr,
@@ -1328,30 +1248,18 @@ index a9e6354d9e25..691c5671b346 100644
  	NULL
  };
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index 759777694c78..6270249e1907 100644
+index da20fb6ea..d0de5aadf 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
-@@ -124,7 +124,6 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_exit_tp);
- EXPORT_TRACEPOINT_SYMBOL_GPL(sched_set_need_resched_tp);
+@@ -129,7 +129,6 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_dl_server_start_tp);
+ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_dl_server_stop_tp);
  
  DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 -DEFINE_PER_CPU(struct rnd_state, sched_rnd_state);
  
  #ifdef CONFIG_SCHED_PROXY_EXEC
  DEFINE_STATIC_KEY_TRUE(__sched_proxy_exec);
-@@ -687,11 +686,6 @@ bool raw_spin_rq_trylock(struct rq *rq)
- 	}
- }
- 
--void raw_spin_rq_unlock(struct rq *rq)
--{
--	raw_spin_unlock(rq_lockp(rq));
--}
--
- /*
-  * double_rq_lock - safely lock two runqueues
-  */
-@@ -4894,7 +4888,7 @@ static inline void prepare_task(struct task_struct *next)
+@@ -4957,7 +4956,7 @@ static inline void prepare_task(struct task_struct *next)
  	WRITE_ONCE(next->on_cpu, 1);
  }
  
@@ -1360,8 +1268,8 @@ index 759777694c78..6270249e1907 100644
  {
  	/*
  	 * This must be the very last reference to @prev from this CPU. After
-@@ -4910,7 +4904,7 @@ static inline void finish_task(struct task_struct *prev)
- 	smp_store_release(&prev->on_cpu, 0);
+@@ -5001,7 +5000,7 @@ static void zap_balance_callbacks(struct rq *rq)
+ 	rq->balance_callback = found ? &balance_push_callback : NULL;
  }
  
 -static void do_balance_callbacks(struct rq *rq, struct balance_callback *head)
@@ -1369,7 +1277,7 @@ index 759777694c78..6270249e1907 100644
  {
  	void (*func)(struct rq *rq);
  	struct balance_callback *next;
-@@ -4945,7 +4939,7 @@ struct balance_callback balance_push_callback = {
+@@ -5036,7 +5035,7 @@ struct balance_callback balance_push_callback = {
  	.func = balance_push,
  };
  
@@ -1378,7 +1286,7 @@ index 759777694c78..6270249e1907 100644
  __splice_balance_callbacks(struct rq *rq, bool split)
  {
  	struct balance_callback *head = rq->balance_callback;
-@@ -5019,7 +5013,7 @@ prepare_lock_switch(struct rq *rq, struct task_struct *next, struct rq_flags *rf
+@@ -5110,7 +5109,7 @@ prepare_lock_switch(struct rq *rq, struct task_struct *next, struct rq_flags *rf
  	__acquire(__rq_lockp(this_rq()));
  }
  
@@ -1387,7 +1295,7 @@ index 759777694c78..6270249e1907 100644
  	__releases(__rq_lockp(rq))
  {
  	/*
-@@ -5052,7 +5046,7 @@ static inline void kmap_local_sched_out(void)
+@@ -5144,7 +5143,7 @@ static inline void kmap_local_sched_out(void)
  #endif
  }
  
@@ -1396,7 +1304,7 @@ index 759777694c78..6270249e1907 100644
  {
  #ifdef CONFIG_KMAP_LOCAL
  	if (unlikely(current->kmap_ctrl.idx))
-@@ -5106,7 +5100,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
+@@ -5198,7 +5197,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
   * past. 'prev == current' is still correct but we need to recalculate this_rq
   * because prev may have moved to another CPU.
   */
@@ -1405,7 +1313,7 @@ index 759777694c78..6270249e1907 100644
  	__releases(__rq_lockp(this_rq()))
  {
  	struct rq *rq = this_rq();
-@@ -8541,8 +8535,6 @@ void __init sched_init_smp(void)
+@@ -8819,8 +8818,6 @@ void __init sched_init_smp(void)
  {
  	sched_init_numa(NUMA_NO_NODE);
  
@@ -1415,10 +1323,10 @@ index 759777694c78..6270249e1907 100644
  	 * There's no userspace yet to cause hotplug operations; hence all the
  	 * CPU masks are stable and all blatant races in the below code cannot
 diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
-index 702eb9aefd04..fcc5346fd16d 100644
+index bc55ecb12..174524bc8 100644
 --- a/kernel/sched/fair.c
 +++ b/kernel/sched/fair.c
-@@ -12242,27 +12242,11 @@ void update_max_interval(void)
+@@ -12497,50 +12497,12 @@ void update_max_interval(void)
  	max_load_balance_interval = HZ*num_online_cpus()/10;
  }
  
@@ -1428,15 +1336,38 @@ index 702eb9aefd04..fcc5346fd16d 100644
 -	sd->newidle_success += success;
 -
 -	if (sd->newidle_call >= 1024) {
--		sd->newidle_ratio = sd->newidle_success;
+-		u64 now = sched_clock();
+-		s64 delta = now - sd->newidle_stamp;
+-		sd->newidle_stamp = now;
+-		int ratio = 0;
+-
+-		if (delta < 0)
+-			delta = 0;
+-
+-		if (sched_feat(NI_RATE)) {
+-			/*
+-			 * ratio  delta   freq
+-			 *
+-			 * 1024 -  4  s -  128 Hz
+-			 *  512 -  2  s -  256 Hz
+-			 *  256 -  1  s -  512 Hz
+-			 *  128 - .5  s - 1024 Hz
+-			 *   64 - .25 s - 2048 Hz
+-			 */
+-			ratio = delta >> 22;
+-		}
+-
+-		ratio += sd->newidle_success;
+-
+-		sd->newidle_ratio = min(1024, ratio);
 -		sd->newidle_call /= 2;
 -		sd->newidle_success /= 2;
 -	}
 -}
 -
--static inline bool
+ static inline bool
 -update_newidle_cost(struct sched_domain *sd, u64 cost, unsigned int success)
-+static inline bool update_newidle_cost(struct sched_domain *sd, u64 cost)
++update_newidle_cost(struct sched_domain *sd, u64 cost)
  {
  	unsigned long next_decay = sd->last_decay_max_lb_cost + HZ;
  	unsigned long now = jiffies;
@@ -1447,7 +1378,7 @@ index 702eb9aefd04..fcc5346fd16d 100644
  	if (cost > sd->max_newidle_lb_cost) {
  		/*
  		 * Track max cost of a domain to make sure to not delay the
-@@ -12310,7 +12294,7 @@ static void sched_balance_domains(struct rq *rq, enum cpu_idle_type idle)
+@@ -12588,7 +12550,7 @@ static void sched_balance_domains(struct rq *rq, enum cpu_idle_type idle)
  		 * Decay the newidle max times here because this is a regular
  		 * visit to all the domains.
  		 */
@@ -1456,13 +1387,13 @@ index 702eb9aefd04..fcc5346fd16d 100644
  		max_cost += sd->max_newidle_lb_cost;
  
  		/*
-@@ -12953,22 +12937,6 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
+@@ -13231,37 +13193,16 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
  			break;
  
  		if (sd->flags & SD_BALANCE_NEWIDLE) {
 -			unsigned int weight = 1;
 -
--			if (sched_feat(NI_RANDOM)) {
+-			if (sched_feat(NI_RANDOM) && sd->newidle_ratio < 1024) {
 -				/*
 -				 * Throw a 1k sided dice; and only run
 -				 * newidle_balance according to the success
@@ -1476,10 +1407,10 @@ index 702eb9aefd04..fcc5346fd16d 100644
 -				}
 -				weight = (1024 + weight/2) / weight;
 -			}
- 
+-
  			pulled_task = sched_balance_rq(this_cpu, this_rq,
  						   sd, CPU_NEWLY_IDLE,
-@@ -12976,14 +12944,10 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
+ 						   &continue_balancing);
  
  			t1 = sched_clock_cpu(this_cpu);
  			domain_cost = t1 - t0;
@@ -1497,10 +1428,10 @@ index 702eb9aefd04..fcc5346fd16d 100644
  
  		/*
 diff --git a/kernel/sched/features.h b/kernel/sched/features.h
-index 136a6584be79..3c12d9f93331 100644
+index 84c4fe3ab..d9e863dbe 100644
 --- a/kernel/sched/features.h
 +++ b/kernel/sched/features.h
-@@ -121,8 +121,3 @@ SCHED_FEAT(WA_BIAS, true)
+@@ -128,9 +128,3 @@ SCHED_FEAT(WA_BIAS, true)
  SCHED_FEAT(UTIL_EST, true)
  
  SCHED_FEAT(LATENCY_WARN, false)
@@ -1509,8 +1440,9 @@ index 136a6584be79..3c12d9f93331 100644
 - * Do newidle balancing proportional to its success rate using randomization.
 - */
 -SCHED_FEAT(NI_RANDOM, true)
+-SCHED_FEAT(NI_RATE, true)
 diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
-index efdb0217a64e..4eba3ace2f9b 100644
+index 71c0155b5..f9d22a288 100644
 --- a/kernel/sched/sched.h
 +++ b/kernel/sched/sched.h
 @@ -5,7 +5,6 @@
@@ -1521,7 +1453,7 @@ index efdb0217a64e..4eba3ace2f9b 100644
  #include <linux/sched/affinity.h>
  #include <linux/sched/autogroup.h>
  #include <linux/sched/cpufreq.h>
-@@ -1372,12 +1371,6 @@ static inline bool is_migration_disabled(struct task_struct *p)
+@@ -1384,12 +1383,6 @@ static inline bool is_migration_disabled(struct task_struct *p)
  }
  
  DECLARE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
@@ -1534,7 +1466,7 @@ index efdb0217a64e..4eba3ace2f9b 100644
  
  static __always_inline struct rq *__this_rq(void)
  {
-@@ -1429,12 +1422,12 @@ static inline struct cpumask *sched_group_span(struct sched_group *sg);
+@@ -1441,12 +1434,12 @@ static inline struct cpumask *sched_group_span(struct sched_group *sg);
  
  DECLARE_STATIC_KEY_FALSE(__sched_core_enabled);
  
@@ -1549,7 +1481,7 @@ index efdb0217a64e..4eba3ace2f9b 100644
  {
  	return !static_branch_unlikely(&__sched_core_enabled);
  }
-@@ -1443,7 +1436,7 @@ static inline bool sched_core_disabled(void)
+@@ -1455,7 +1448,7 @@ static inline bool sched_core_disabled(void)
   * Be careful with this function; not for general use. The return value isn't
   * stable unless you actually hold a relevant rq->__lock.
   */
@@ -1558,7 +1490,7 @@ index efdb0217a64e..4eba3ace2f9b 100644
  {
  	if (sched_core_enabled(rq))
  		return &rq->core->__lock;
-@@ -1451,7 +1444,7 @@ static inline raw_spinlock_t *rq_lockp(struct rq *rq)
+@@ -1463,7 +1456,7 @@ static inline raw_spinlock_t *rq_lockp(struct rq *rq)
  	return &rq->__lock;
  }
  
@@ -1567,7 +1499,7 @@ index efdb0217a64e..4eba3ace2f9b 100644
  	__returns_ctx_lock(rq_lockp(rq)) /* alias them */
  {
  	if (rq->core_enabled)
-@@ -1546,12 +1539,12 @@ static inline bool sched_core_disabled(void)
+@@ -1558,12 +1551,12 @@ static inline bool sched_core_disabled(void)
  	return true;
  }
  
@@ -1582,13 +1514,10 @@ index efdb0217a64e..4eba3ace2f9b 100644
  	__returns_ctx_lock(rq_lockp(rq)) /* alias them */
  {
  	return &rq->__lock;
-@@ -1606,30 +1599,33 @@ extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass)
+@@ -1618,33 +1611,33 @@ extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass)
  extern bool raw_spin_rq_trylock(struct rq *rq)
  	__cond_acquires(true, __rq_lockp(rq));
  
--extern void raw_spin_rq_unlock(struct rq *rq)
--	__releases(__rq_lockp(rq));
--
 -static inline void raw_spin_rq_lock(struct rq *rq)
 +static __always_inline void raw_spin_rq_lock(struct rq *rq)
  	__acquires(__rq_lockp(rq))
@@ -1596,13 +1525,14 @@ index efdb0217a64e..4eba3ace2f9b 100644
  	raw_spin_rq_lock_nested(rq, 0);
  }
  
--static inline void raw_spin_rq_lock_irq(struct rq *rq)
+-static inline void raw_spin_rq_unlock(struct rq *rq)
 +static __always_inline void raw_spin_rq_unlock(struct rq *rq)
-+	__releases(__rq_lockp(rq))
-+{
-+	raw_spin_unlock(rq_lockp(rq));
-+}
-+
+ 	__releases(__rq_lockp(rq))
+ {
+ 	raw_spin_unlock(rq_lockp(rq));
+ }
+ 
+-static inline void raw_spin_rq_lock_irq(struct rq *rq)
 +static __always_inline void raw_spin_rq_lock_irq(struct rq *rq)
  	__acquires(__rq_lockp(rq))
  {
@@ -1623,7 +1553,7 @@ index efdb0217a64e..4eba3ace2f9b 100644
  	__acquires(__rq_lockp(rq))
  {
  	unsigned long flags;
-@@ -1640,7 +1636,7 @@ static inline unsigned long _raw_spin_rq_lock_irqsave(struct rq *rq)
+@@ -1655,7 +1648,7 @@ static inline unsigned long _raw_spin_rq_lock_irqsave(struct rq *rq)
  	return flags;
  }
  
@@ -1633,24 +1563,24 @@ index efdb0217a64e..4eba3ace2f9b 100644
  {
  	raw_spin_rq_unlock(rq);
 diff --git a/kernel/sched/topology.c b/kernel/sched/topology.c
-index 32dcddaead82..35ae4d1e9ad6 100644
+index a5dec42cc..262346bd4 100644
 --- a/kernel/sched/topology.c
 +++ b/kernel/sched/topology.c
-@@ -1674,12 +1674,6 @@ sd_init(struct sched_domain_topology_level *tl,
- 
+@@ -1704,12 +1704,6 @@ sd_init(struct sched_domain_topology_level *tl,
  		.last_balance		= jiffies,
  		.balance_interval	= sd_weight,
--
+ 
 -		/* 50% success rate */
 -		.newidle_call		= 512,
 -		.newidle_success	= 256,
 -		.newidle_ratio		= 512,
+-		.newidle_stamp		= now,
 -
  		.max_newidle_lb_cost	= 0,
  		.last_decay_max_lb_cost	= jiffies,
  		.child			= child,
 diff --git a/scripts/Makefile.clang b/scripts/Makefile.clang
-index b67636b28c35..062ee0211c9c 100644
+index b67636b28..062ee0211 100644
 --- a/scripts/Makefile.clang
 +++ b/scripts/Makefile.clang
 @@ -34,9 +34,7 @@ endif
@@ -1664,7 +1594,7 @@ index b67636b28c35..062ee0211c9c 100644
  KBUILD_CPPFLAGS	+= $(CLANG_FLAGS)
  export CLANG_FLAGS
 diff --git a/scripts/Makefile.warn b/scripts/Makefile.warn
-index 5567da6c7dfe..439a3c126cc4 100644
+index e77ca875a..8c41e3768 100644
 --- a/scripts/Makefile.warn
 +++ b/scripts/Makefile.warn
 @@ -13,7 +13,6 @@ KBUILD_CFLAGS += -Wundef
@@ -1675,7 +1605,7 @@ index 5567da6c7dfe..439a3c126cc4 100644
  KBUILD_CFLAGS += -Wno-format-security
  KBUILD_CFLAGS += -Wno-trigraphs
  KBUILD_CFLAGS += -Wno-frame-address
-@@ -101,8 +100,5 @@ KBUILD_CFLAGS += $(KBUILD_CFLAGS-y) $(CONFIG_CC_IMPLICIT_FALLTHROUGH)
+@@ -96,9 +95,6 @@ KBUILD_CFLAGS += $(KBUILD_CFLAGS-y) $(CONFIG_CC_IMPLICIT_FALLTHROUGH)
  # Prohibit date/time macros, which would make the build non-deterministic
  KBUILD_CFLAGS += -Werror=date-time
  
@@ -1684,5 +1614,6 @@ index 5567da6c7dfe..439a3c126cc4 100644
 -
  # Require designated initializers for all marked structures
  KBUILD_CFLAGS += $(call cc-option,-Werror=designated-init)
+ 
 -- 
-2.53.0
+2.54.0

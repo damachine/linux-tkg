@@ -1,15 +1,16 @@
-From 7ce263490167048ab6b1591a75d6d9753cdd3660 Mon Sep 17 00:00:00 2001
+From b27f13f7e6ee82264d8225d2a977c047a9845e64 Mon Sep 17 00:00:00 2001
 From: Frogging-Family
 From: damachine <damachin3@proton.me>
-Date: Fri, 27 Mar 2026 03:13:58 +0100
+Date: Mon, 27 Apr 2026 21:14:50 +0200
 Subject: [PATCH] CPU/scheduler misc optimizations
 
-- Decrease timer_slack_ns default (50us -> 35us) under CONFIG_TKG
-- Optimize sched_move_task by avoiding unnecessary lock acquisition
-- Remove schedutil dependency from Intel/AMD P-State drivers
-- Disable split lock mitigation by default under CONFIG_TKG
+CPU and scheduler tuning under CONFIG_TKG:
+- x86: disable split lock mitigation by default (bus_lock.c)
+- Driver: remove schedutil auto-select from Intel/AMD P-State Kconfig
+- Scheduler: timer_slack_ns 35us (vs 50us default) (init_task.c)
+- Scheduler: sched_move_task early-exit if group unchanged (core.c)
 
-Signed-off-by: patch-family-tool <patches@frogging-family.invalid>
+Signed-off-by: damachine <damachin3@proton.me>
 
 ---
  arch/x86/kernel/cpu/bus_lock.c |  4 ++++
@@ -19,7 +20,7 @@ Signed-off-by: patch-family-tool <patches@frogging-family.invalid>
  4 files changed, 35 insertions(+), 5 deletions(-)
 
 diff --git a/arch/x86/kernel/cpu/bus_lock.c b/arch/x86/kernel/cpu/bus_lock.c
-index fb166662b..c1bf35c47 100644
+index bba28607a..c7d2e49fb 100644
 --- a/arch/x86/kernel/cpu/bus_lock.c
 +++ b/arch/x86/kernel/cpu/bus_lock.c
 @@ -47,7 +47,11 @@ static const struct {
@@ -35,7 +36,7 @@ index fb166662b..c1bf35c47 100644
  
  #ifdef CONFIG_PROC_SYSCTL
 diff --git a/drivers/cpufreq/Kconfig.x86 b/drivers/cpufreq/Kconfig.x86
-index 2c5c22840..918e2bebf 100644
+index 027e6ea2e..497d53256 100644
 --- a/drivers/cpufreq/Kconfig.x86
 +++ b/drivers/cpufreq/Kconfig.x86
 @@ -9,7 +9,6 @@ config X86_INTEL_PSTATE
@@ -51,17 +52,17 @@ index 2c5c22840..918e2bebf 100644
  	select ACPI_PROCESSOR
  	select ACPI_CPPC_LIB if X86_64
 -	select CPU_FREQ_GOV_SCHEDUTIL if SMP
+ 	select ACPI_PLATFORM_PROFILE
+ 	select POWER_SUPPLY
  	help
- 	  This driver adds a CPUFreq driver which utilizes a fine grain
- 	  processor performance frequency control range instead of legacy
 diff --git a/init/init_task.c b/init/init_task.c
-index 5c838757f..ca48a1901 100644
+index b5f48ebdc..8e5d636e8 100644
 --- a/init/init_task.c
 +++ b/init/init_task.c
-@@ -169,7 +169,11 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
- 	.journal_info	= NULL,
+@@ -170,7 +170,11 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
  	INIT_CPU_TIMERS(init_task)
  	.pi_lock	= __RAW_SPIN_LOCK_UNLOCKED(init_task.pi_lock),
+ 	.blocked_lock	= __RAW_SPIN_LOCK_UNLOCKED(init_task.blocked_lock),
 +#ifdef CONFIG_TKG
 +	.timer_slack_ns = 35000, /* 35 usec default slack */
 +#else
@@ -71,10 +72,10 @@ index 5c838757f..ca48a1901 100644
  	.thread_node	= LIST_HEAD_INIT(init_signals.thread_head),
  #ifdef CONFIG_AUDIT
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index 496dff740..3ccba8948 100644
+index d0de5aadf..e24bd37c7 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
-@@ -9137,7 +9137,7 @@ void sched_release_group(struct task_group *tg)
+@@ -9408,7 +9408,7 @@ void sched_release_group(struct task_group *tg)
  	spin_unlock_irqrestore(&task_group_lock, flags);
  }
  
@@ -83,7 +84,7 @@ index 496dff740..3ccba8948 100644
  {
  	struct task_group *tg;
  
-@@ -9149,7 +9149,13 @@ static void sched_change_group(struct task_struct *tsk)
+@@ -9420,7 +9420,13 @@ static void sched_change_group(struct task_struct *tsk)
  	tg = container_of(task_css_check(tsk, cpu_cgrp_id, true),
  			  struct task_group, css);
  	tg = autogroup_task_group(tsk, tg);
@@ -98,7 +99,7 @@ index 496dff740..3ccba8948 100644
  
  #ifdef CONFIG_FAIR_GROUP_SCHED
  	if (tsk->sched_class->task_change_group)
-@@ -9159,6 +9165,18 @@ static void sched_change_group(struct task_struct *tsk)
+@@ -9430,6 +9436,18 @@ static void sched_change_group(struct task_struct *tsk)
  		set_task_rq(tsk, task_cpu(tsk));
  }
  
@@ -117,7 +118,7 @@ index 496dff740..3ccba8948 100644
  /*
   * Change task's runqueue when it moves between groups.
   *
-@@ -9168,16 +9186,22 @@ static void sched_change_group(struct task_struct *tsk)
+@@ -9439,16 +9457,22 @@ static void sched_change_group(struct task_struct *tsk)
   */
  void sched_move_task(struct task_struct *tsk, bool for_autogroup)
  {
@@ -142,4 +143,4 @@ index 496dff740..3ccba8948 100644
  			scx_cgroup_move_task(tsk);
  		if (scope->running)
 -- 
-2.53.0
+2.54.0

@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # List of kernels that are maintained upstream
-_current_kernels=("7.1" "7.0" "6.19" "6.18" "6.12" "6.6" "6.1" "5.15" "5.10")
+_current_kernels=("7.1" "7.0" "6.18" "6.12" "6.6" "6.1" "5.15" "5.10")
 
 # List of kernels that are no longer maintained either upstream or locally
-_eol_kernels=("6.17" "6.16" "6.15" "6.14" "6.13" "6.11" "6.10" "6.9" "6.8" "6.7" "6.5" "6.4" "6.3" "6.2" "6.0" "5.19" "5.18" "5.17" "5.16" "5.14" "5.13" "5.12" "5.11" "5.9" "5.8" "5.7" "5.4")
+_eol_kernels=("6.19" "6.17" "6.16" "6.15" "6.14" "6.13" "6.11" "6.10" "6.9" "6.8" "6.7" "6.5" "6.4" "6.3" "6.2" "6.0" "5.19" "5.18" "5.17" "5.16" "5.14" "5.13" "5.12" "5.11" "5.9" "5.8" "5.7" "5.4")
 
 _deprecated_config_vars=(
   "_use_tmpfs"
@@ -114,11 +114,11 @@ _rt_rev_map=(
 
 # nvidia-open module version
 typeset -Ag _nvidia_versions=(
-  [latest]="595.58.03"
+  [latest]="595.71.05"
   [vulkan]="595.44.05"
-  [legacy]="580.142"
+  [legacy]="580.159.03"
 )
-_nvidia_current_kernels=("6.18" "7.0")
+_nvidia_current_kernels=("6.18" "7.0" "7.1")
 
 source "$_where"/linux-tkg-config/module-driver-registry
 
@@ -423,7 +423,7 @@ _set_cpu_scheduler() {
     _noccache="true"
     _autofdo="false"
     _autofdo_profile_path=""
-    _custom_pkgbase="linux${_basever}-${_cpusched}-${_compiler}-vanilla"
+    _custom_pkgbase="linux-tkg-vanilla"
     # Persist vanilla overrides into BIG_UGLY_FROGMINER
     cat >> "$_where"/BIG_UGLY_FROGMINER <<EOF
 _cpusched="$_default_cpu_sched"
@@ -436,7 +436,7 @@ _config_fragments="false"
 _noccache="true"
 _autofdo="false"
 _autofdo_profile_path=""
-_custom_pkgbase="linux${_basever}-${_cpusched}-${_compiler}-vanilla"
+_custom_pkgbase="linux-tkg-vanilla"
 EOF
   fi
 
@@ -607,93 +607,93 @@ _set_compiler(){
 
 # ! nvidia-open handling functions
 
-# Resolves the NVIDIA open kernel module version and package name based on the provided _nvidia variable
+# Resolves the NVIDIA open kernel module version and package name based on the provided _nvidia_pkg variable
 _resolve_nvidia() {
-  _nvidia_variant=""
-  _nvidia_version=""
-  _nv_open_pkg=""
+  _nvidia_var=""
+  _nvidia_ver=""
+  _nv_pkg=""
   local _variant
 
-  case "${_nvidia:-}" in
+  case "${_nvidia_pkg:-}" in
     ""|"false")
       return 0
     ;;
     latest|vulkan|legacy)
-      _nvidia_variant="${_nvidia}"
-      _nvidia_version="${_nvidia_versions[${_nvidia_variant}]}"
-      _nvidia="${_nvidia_version}"
-      if [ "$_nvidia_variant" = "vulkan" ]; then
-        _nv_open_pkg="open-gpu-kernel-modules-${_nvidia_version}"
+      _nvidia_var="${_nvidia_pkg}"
+      _nvidia_ver="${_nvidia_versions[${_nvidia_var}]}"
+      _nvidia_pkg="${_nvidia_ver}"
+      if [ "$_nvidia_var" = "vulkan" ]; then
+        _nv_pkg="open-gpu-kernel-modules-${_nvidia_ver}"
       else
-        _nv_open_pkg="NVIDIA-kernel-module-source-${_nvidia_version}"
+        _nv_pkg="NVIDIA-kernel-module-source-${_nvidia_ver}"
       fi
       return 0
     ;;
   esac
 
   for _variant in latest vulkan legacy; do
-    if [ "${_nvidia}" = "${_nvidia_versions[${_variant}]}" ]; then
-      _nvidia_variant="${_variant}"
-      _nvidia_version="${_nvidia}"
-      if [ "$_nvidia_variant" = "vulkan" ]; then
-        _nv_open_pkg="open-gpu-kernel-modules-${_nvidia_version}"
+    if [ "${_nvidia_pkg}" = "${_nvidia_versions[${_variant}]}" ]; then
+      _nvidia_var="${_variant}"
+      _nvidia_ver="${_nvidia_pkg}"
+      if [ "$_nvidia_var" = "vulkan" ]; then
+        _nv_pkg="open-gpu-kernel-modules-${_nvidia_ver}"
       else
-        _nv_open_pkg="NVIDIA-kernel-module-source-${_nvidia_version}"
+        _nv_pkg="NVIDIA-kernel-module-source-${_nvidia_ver}"
       fi
       return 0
     fi
   done
 
-  error "Invalid _nvidia value '${_nvidia}'. Use 'false' or one of: ${_nvidia_versions[latest]}, ${_nvidia_versions[vulkan]}, ${_nvidia_versions[legacy]}"
+  error "Invalid _nvidia_pkg value '${_nvidia_pkg}'. Use 'false' or one of: ${_nvidia_versions[latest]}, ${_nvidia_versions[vulkan]}, ${_nvidia_versions[legacy]}"
   exit 1
 }
 
-# Validates and sets _nvidia_variant and _nvidia_version
+# Validates and sets _nvidia_var and _nvidia_ver
 # Checks for compatibility
 _set_nvidia() {
-  if [ "$_nvidia" = "false" ]; then
-    _nvidia_variant=""
-    _nvidia_version=""
+  if [ "$_nvidia_pkg" = "false" ]; then
+    _nvidia_var=""
+    _nvidia_ver=""
     return
   fi
 
   # NUMA must be enabled
   if [ "$_numadisable" = "true" ]; then
     warning "nvidia-open requires NUMA enabled for CUDA/NvEnc. _numadisable is \"true\" — disabling nvidia-open."
-    _nvidia="false"
-    _nvidia_variant=""
-    _nvidia_version=""
-    echo -e "_nvidia='false'\n_nvidia_variant=''\n_nvidia_version=''" >> "$_where"/BIG_UGLY_FROGMINER
+    _nvidia_pkg="false"
+    _nvidia_var=""
+    _nvidia_ver=""
+    echo -e "_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "$_where"/BIG_UGLY_FROGMINER
     return
   fi
 
   # Prompt
-  if [ -z "$_nvidia" ]; then
+  if [ -z "$_nvidia_pkg" ]; then
       local _nvidia_prompt_array=(
         "v${_nvidia_versions[latest]}"
         "v${_nvidia_versions[vulkan]}"
         "v${_nvidia_versions[legacy]}"
         "skip building NVIDIA open kernel modules (default)"
       )
-      local _nvidia_variant_map=("latest" "vulkan" "legacy" "false")
+      local _nvidia_var_map=("latest" "vulkan" "legacy" "false")
 
       msg2 "Which open NVIDIA kernel module version do you want to build as a separate package?"
       msg2 "Requires Turing+ GPU (GTX 16xx and RTX 20xx or newer). Requires NUMA enabled."
       msg2 "Select an entry, or press Enter to skip."
       _default_index="3"
       _prompt_from_array "${_nvidia_prompt_array[@]}"
-      _nvidia_variant="${_nvidia_variant_map[$_selected_index]}"
-      if [ "$_nvidia_variant" = "false" ]; then
-        _nvidia="false"
+      _nvidia_var="${_nvidia_var_map[$_selected_index]}"
+      if [ "$_nvidia_var" = "false" ]; then
+        _nvidia_pkg="false"
       else
-        _nvidia="${_nvidia_versions[${_nvidia_variant}]}"
+        _nvidia_pkg="${_nvidia_versions[${_nvidia_var}]}"
       fi
   fi
 
-  if [ "$_nvidia" = "false" ]; then
-    _nvidia_variant=""
-    _nvidia_version=""
-    echo -e "_nvidia='false'\n_nvidia_variant=''\n_nvidia_version=''" >> "$_where"/BIG_UGLY_FROGMINER
+  if [ "$_nvidia_pkg" = "false" ]; then
+    _nvidia_var=""
+    _nvidia_ver=""
+    echo -e "_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "$_where"/BIG_UGLY_FROGMINER
     return
   fi
 
@@ -701,7 +701,7 @@ _set_nvidia() {
   _resolve_nvidia
 
   # Check kernel compatibility
-  if [ "$_nvidia" != "false" ]; then
+  if [ "$_nvidia_pkg" != "false" ]; then
     local _kernel_supported="false"
     for _k in "${_nvidia_current_kernels[@]}"; do
       if [ "$_k" = "$_basekernel" ]; then
@@ -712,17 +712,17 @@ _set_nvidia() {
     if [ "$_kernel_supported" != "true" ]; then
       error "nvidia-open is not supported for kernel ${_basekernel}. Supported kernels: ${_nvidia_current_kernels[*]}"
       error "Disabling nvidia-open."
-      _nvidia="false"
-      _nvidia_variant=""
-      _nvidia_version=""
-      echo -e "_nvidia='false'\n_nvidia_variant=''\n_nvidia_version=''" >> "$_where"/BIG_UGLY_FROGMINER
+      _nvidia_pkg="false"
+      _nvidia_var=""
+      _nvidia_ver=""
+      echo -e "_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "$_where"/BIG_UGLY_FROGMINER
       return
     fi
 
     # Signing modules
-    if [ "$_nvidia" != "false" ] && [ -n "$_nvidia" ] && [ -z "$_nvidia_sign" ]; then
+    if [ "$_nvidia_pkg" != "false" ] && [ -n "$_nvidia_pkg" ] && [ -z "$_nvidia_sign" ]; then
       msg2 "[EXPERIMENTAL] Do you want to sign the NVIDIA open kernel modules?"
-      msg2 "Requires CONFIG_MODULE_SIG=y in your kernel config. Has no effect without _nvidia."
+      msg2 "Requires CONFIG_MODULE_SIG=y in your kernel config. Has no effect without _nvidia_pkg."
       _nvidia_sign_array_text=("No (disable — recommended)" "Yes (enable — experimental)")
       _nvidia_sign_array=("false" "true")
       _default_index="0"
@@ -731,11 +731,11 @@ _set_nvidia() {
       echo -e "_nvidia_sign='$_nvidia_sign'" >> "$_where"/BIG_UGLY_FROGMINER
     fi
 
-    if [ "$_nvidia" != "false" ]; then
-      echo -e "_nvidia='$_nvidia'\n_nvidia_variant='$_nvidia_variant'\n_nvidia_version='$_nvidia_version'" >> "$_where"/BIG_UGLY_FROGMINER
+    if [ "$_nvidia_pkg" != "false" ]; then
+      echo -e "_nvidia_pkg='$_nvidia_pkg'\n_nvidia_var='$_nvidia_var'\n_nvidia_ver='$_nvidia_ver'" >> "$_where"/BIG_UGLY_FROGMINER
     fi
   fi
-} 
+}
 # ! end nvidia-open handling
 
 # ! module driver handling functions
@@ -743,7 +743,7 @@ _git_module() {
   local _module_id
 
   if [ "${_ispkgbuild:-false}" = "true" ]; then
-    for _module_id in $_module; do
+    for _module_id in $_module_pkg; do
       [ -z "$_module_id" ] && continue
 
       local _module_src="${srcdir}/$(_module_get_source_dir "${_module_id}")"
@@ -893,15 +893,15 @@ _set_module() {
   local _autoload=""
   local _sign=""
 
-  if [ "$_module" = "false" ]; then
-    _module=""
+  if [ "$_module_pkg" = "false" ]; then
     _module_pkg=""
-    echo -e "_module=''\n_module_pkg=''" >> "$_where"/BIG_UGLY_FROGMINER
+    _module_extpkg=""
+    echo -e "_module_pkg=''\n_module_extpkg=''" >> "$_where"/BIG_UGLY_FROGMINER
     return
   fi
 
   # Prompt
-  if [ -z "$_module" ]; then
+  if [ -z "$_module_pkg" ]; then
     local _module_ids=("it87" "nct6687" "v4l2loopback")
     msg2 "Which out-of-tree kernel modules do you want to build alongside the kernel?"
     msg2 "Enter space-separated numbers (e.g. '0 2'), or press Enter to skip."
@@ -913,24 +913,24 @@ _set_module() {
     if [ -n "$_module_input" ]; then
       for _idx in $_module_input; do
         if [[ "$_idx" =~ ^[0-2]$ ]]; then
-          _module="$(_module_append_unique "${_module}" "${_module_ids[$_idx]}")"
+          _module_pkg="$(_module_append_unique "${_module_pkg}" "${_module_ids[$_idx]}")"
         else
           warning "Ignoring invalid selection '$_idx'"
         fi
       done
     fi
-    if [ -n "$_module" ]; then
-      plain "Selected modules: ${_module}"
+    if [ -n "$_module_pkg" ]; then
+      plain "Selected modules: ${_module_pkg}"
     else
       plain "No out-of-tree modules selected."
     fi
-    echo -e "_module='${_module}'" >> "$_where"/BIG_UGLY_FROGMINER
+    echo -e "_module_pkg='${_module_pkg}'" >> "$_where"/BIG_UGLY_FROGMINER
   fi
 
   # Validate autoload and signing lists, and build resolved lists of modules to autoload and sign
-  for _module_id in ${_module}; do
+  for _module_id in ${_module_pkg}; do
     if ! _module_validate_id "${_module_id}"; then
-      error "Unknown third-party module '${_module_id}' in _module. Supported values: v4l2loopback nct6687 it87"
+      error "Unknown third-party module '${_module_id}' in _module_pkg. Supported values: v4l2loopback nct6687 it87"
       exit 1
     fi
     _resolved="$(_module_append_unique "${_resolved}" "${_module_id}")"
@@ -960,7 +960,7 @@ _set_module() {
   if [ -n "${_resolved}" ]; then
     for _module_id in ${_autoload}; do
       if ! _module_list_has "${_resolved}" "${_module_id}"; then
-        error "_module_autoload contains '${_module_id}', but that module is not enabled in _module"
+        error "_module_autoload contains '${_module_id}', but that module is not enabled in _module_pkg"
         exit 1
       fi
       _resolved_autoload="$(_module_append_unique "${_resolved_autoload}" "${_module_id}")"
@@ -971,7 +971,7 @@ _set_module() {
   if [ -n "${_resolved}" ]; then
     for _module_id in ${_sign}; do
       if ! _module_list_has "${_resolved}" "${_module_id}"; then
-        error "_module_sign contains '${_module_id}', but that module is not enabled in _module"
+        error "_module_sign contains '${_module_id}', but that module is not enabled in _module_pkg"
         exit 1
       fi
       _resolved_sign="$(_module_append_unique "${_resolved_sign}" "${_module_id}")"
@@ -982,27 +982,27 @@ _set_module() {
   _module_autoload_resolved="${_resolved_autoload}"
   _module_sign_resolved="${_resolved_sign}"
 
-  # _module_pkg controls whether module artifacts are split into external packages or installed into the main kernel package.
+  # _module_extpkg controls whether module artifacts are split into external packages or installed into the main kernel package.
   if [ -n "${_module_resolved}" ]; then
-    if [ -z "${_module_pkg:-}" ]; then
-      _module_pkg="internal"
+    if [ -z "${_module_extpkg:-}" ]; then
+      _module_extpkg="internal"
     fi
-    if ! [[ "${_module_pkg}" =~ ^(internal|external)$ ]]; then
-      error "Invalid _module_pkg value '${_module_pkg}'. Supported values: internal, external"
+    if ! [[ "${_module_extpkg}" =~ ^(internal|external)$ ]]; then
+      error "Invalid _module_extpkg value '${_module_extpkg}'. Supported values: internal, external"
       exit 1
     fi
   else
-    _module_pkg=""
+    _module_extpkg=""
   fi
 
   echo -e "_module_resolved='${_module_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
   echo -e "_module_autoload_resolved='${_module_autoload_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
   echo -e "_module_sign_resolved='${_module_sign_resolved}'" >> "$_where"/BIG_UGLY_FROGMINER
-  echo -e "_module_pkg='${_module_pkg}'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_module_extpkg='${_module_extpkg}'" >> "$_where"/BIG_UGLY_FROGMINER
 
   if [ -n "${_module_resolved}" ] && [ "$_ispkgbuild" != "true" ] && \
      ! [[ "$_distro" =~ ^(Generic|Gentoo)$ ]]; then
-    warning "_module is currently only implemented for Arch (PKGBUILD) and Generic/Gentoo (install.sh). Other distros will ignore it."
+    warning "_module_pkg is currently only implemented for Arch (PKGBUILD) and Generic/Gentoo (install.sh). Other distros will ignore it."
   fi
 } # ! end _module_config handling
 
@@ -1259,10 +1259,7 @@ _tkg_srcprep() {
   fi
 
   if [ "${_distro}" = "Arch" ]; then
-    if [[ "$_vanilla" = "true" ]]; then
-      echo "-$pkgrel-vanilla${_compiler_name}" > localversion.10-pkgrel
-      echo -e "Version tail set to \"-$pkgrel-vanilla${_compiler_name}\"\n" > "$_where"/logs/prepare.log.txt
-    elif [ -n "$_custom_pkgbase" ]; then
+    if [ -n "$_custom_pkgbase" ]; then
       if [[ "$_custom_pkgbase" != *tkg* ]]; then
         _localversion_tag="-tkg-"
       else
@@ -2553,19 +2550,21 @@ fi
   fi
 
   # ! nvidia-open patches
-  if [ "$_nvidia" != "false" ] && [ -n "$_nvidia" ]; then
+  if [ "$_nvidia_pkg" != "false" ] && [ -n "$_nvidia_pkg" ]; then
     _resolve_nvidia
-    local _nv_open_src="${srcdir}/${_nv_open_pkg}"
-    msg2 "NVIDIA-open-module source version ${_nvidia_version} will be built and installed alongside this kernel."
+    local _nv_open_src="${srcdir}/${_nv_pkg}"
+    msg2 "NVIDIA-open-module source version ${_nvidia_ver} will be built and installed alongside this kernel."
 
-    local _nv_patch="${srcdir}/0015-nvidia-${_nvidia_variant}.patch"
+    local _nv_patch="${srcdir}/0015-nvidia-${_nvidia_var}.patch"
     # vulkan uses the same patch as latest when no vulkan-specific patch exists
-    if [ ! -f "$_nv_patch" ] && [ "$_nvidia_variant" = "vulkan" ]; then
+    if [ ! -f "$_nv_patch" ] && [ "$_nvidia_var" = "vulkan" ]; then
       _nv_patch="${srcdir}/0015-nvidia-latest.patch"
     fi
-    if [ -f "$_nv_patch" ]; then
-      msg2 "Applying NVIDIA-open-module patches (${_nvidia_version})..."
+    if [ -f "$_nv_patch" ] && (( $(vercmp "${_nvidia_ver}" "595.58.03") <= 0 )); then
+      msg2 "Applying NVIDIA-open-module patches (${_nvidia_ver})..."
       patch -Np1 -i "$_nv_patch" -d "${_nv_open_src}"
+    elif [ -f "$_nv_patch" ]; then
+      msg2 "Skipping NVIDIA-open-module patch (${_nvidia_ver} > 595.58.03, patch not needed)."
     else
       msg2 "No nvidia patch found (looked for $(basename "$_nv_patch"))."
     fi
@@ -2680,13 +2679,6 @@ exit_cleanup() {
   fi
   echo "#################" >> "$_where"/logs/system-info.txt
   gcc -v >> "$_where"/logs/system-info.txt 2>&1
-
-  # Arch: move shell-output.log to logs folder
-  if [[ "$_distro" = "Arch" && -f "$_where"/shell-output.log ]]; then
-    mv -f "$_where"/shell-output.log "$_where"/logs/shell-output.log.txt
-    sed -i 's/\x1b\[[0-9;]*m//g' "$_where"/logs/shell-output.log.txt
-    sed -i 's/\x1b(B//g' "$_where"/logs/shell-output.log.txt
-  fi
 }
 
 trap exit_cleanup EXIT
