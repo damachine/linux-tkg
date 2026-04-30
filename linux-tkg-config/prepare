@@ -2025,13 +2025,6 @@ exit_cleanup() {
   fi
   echo "#################" >> "$_where"/logs/system-info.txt
   gcc -v >> "$_where"/logs/system-info.txt 2>&1
-
-  # Arch: move shell-output.log to logs folder
-  if [[ "$_distro" = "Arch" && -f "$_where"/shell-output.log ]]; then
-    mv -f "$_where"/shell-output.log "$_where"/logs/shell-output.log.txt
-    sed -i 's/\x1b\[[0-9;]*m//g' "$_where"/logs/shell-output.log.txt
-    sed -i 's/\x1b(B//g' "$_where"/logs/shell-output.log.txt
-  fi
 }
 
 trap exit_cleanup EXIT
