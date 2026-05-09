@@ -55,10 +55,12 @@ fi
 
 source "$_where"/BIG_UGLY_FROGMINER
 
+_vanilla_tag=""
+_vanilla_mode && _vanilla_tag="vanilla-"
 if [ -n "$_custom_pkgbase" ]; then
   pkgbase="${_custom_pkgbase}"
 else
-  pkgbase=linux"${_basever}"-tkg-"${_cpusched}"${_compiler_name}
+  pkgbase="linux${_basever}-tkg-${_vanilla_tag}${_cpusched}${_compiler_name}"
 fi
 pkgname=("${pkgbase}" "${pkgbase}-headers")
 pkgver="${_basekernel}"."${_sub}"
@@ -66,7 +68,7 @@ pkgrel=273
 pkgdesc='Linux-tkg'
 arch=('x86_64') # no i686 in here
 url="https://www.kernel.org/"
-license=('GPL2')
+license=('GPL-2.0-only')
 makedepends=(
   bc
   binutils
@@ -174,18 +176,21 @@ hackbase() {
 
   pkgdesc="The $pkgdesc kernel and modules - https://github.com/Frogging-Family/linux-tkg"
   depends=('coreutils' 'kmod' 'initramfs')
-  optdepends=('linux-docs: Kernel hackers manual - HTML documentation that comes with the Linux kernel.'
-              'crda: to set the correct wireless channels of your country.'
-              'linux-firmware: Firmware files for Linux'
-              'modprobed-db: Keeps track of EVERY kernel module that has ever been probed. Useful for make localmodconfig.'
-              'nvidia-tkg: NVIDIA drivers for all installed kernels - non-dkms version.'
-              'nvidia-dkms-tkg: NVIDIA drivers for all installed kernels - dkms version.'
-              'update-grub: Simple wrapper around grub-mkconfig.'
-              'scx-scheds: to use sched-ext schedulers')
+  optdepends=(
+    "$pkgname-headers: headers and scripts for building modules"
+    'linux-firmware: firmware images needed for some devices'
+    'linux-docs: Kernel hackers manual - HTML documentation that comes with the Linux kernel.'
+    'nvidia-tkg: NVIDIA drivers for all installed kernels - non-dkms version.'
+    'nvidia-dkms-tkg: NVIDIA drivers for all installed kernels - dkms version.'
+    'modprobed-db: Keeps track of EVERY kernel module that has ever been probed. Useful for make localmodconfig.'
+    'update-grub: Simple wrapper around grub-mkconfig.'
+    'scx-scheds: to use sched-ext schedulers'
+    'wireless-regdb: to set the correct wireless channels of your country'
+  )
   if [ -e "${srcdir}/ntsync.rules" ]; then
-    provides=("linux=${pkgver}" "${pkgbase}" VIRTUALBOX-GUEST-MODULES WIREGUARD-MODULE NTSYNC-MODULE ntsync-header)
+    provides=("linux=${pkgver}" "${pkgbase}" KSMBD-MODULE VIRTUALBOX-GUEST-MODULES WIREGUARD-MODULE NTSYNC-MODULE ntsync-header)
   else
-    provides=("linux=${pkgver}" "${pkgbase}" VIRTUALBOX-GUEST-MODULES WIREGUARD-MODULE)
+    provides=("linux=${pkgver}" "${pkgbase}" KSMBD-MODULE VIRTUALBOX-GUEST-MODULES WIREGUARD-MODULE)
   fi
   replaces=(virtualbox-guest-modules-arch wireguard-arch)
 
@@ -248,9 +253,17 @@ hackheaders() {
 
   pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel - https://github.com/Frogging-Family/linux-tkg"
   provides=("linux-headers=${pkgver}" "${pkgbase}-headers=${pkgver}")
-  if [[ $_kver -gt 510 ]]; then  
-    depends=('pahole')
-  fi
+  depends=(
+    binutils
+    glibc
+    libelf
+    libgcc
+    openssl
+    pahole
+    xxhash
+    zlib
+    zstd
+  )
 
   cd "$_kernel_work_folder_abs"
 

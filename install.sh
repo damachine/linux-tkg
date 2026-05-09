@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Stop the script at any ecountered error
 set -e
@@ -158,7 +158,7 @@ if [ "$1" = "install" ]; then
   fi
 
   # ccache
-  if [ "$_noccache" != "true" ]; then
+  if [ "$_noccache" != "true" ] && command -v ccache >/dev/null 2>&1; then
     export PATH="/usr/lib64/ccache/:/usr/lib/ccache/bin/:$PATH"
 
     export CCACHE_SLOPPINESS="file_macro,locale,time_macros"
@@ -166,14 +166,16 @@ if [ "$1" = "install" ]; then
     msg2 'Enabled ccache'
   fi
 
+  _vanilla_tag=""
+  _vanilla_mode && _vanilla_tag="vanilla-"
   if [ -z "$_kernel_localversion" ]; then
     if [ "$_preempt_rt" = "1" ]; then
-      _kernel_flavor="tkg-${_cpusched}-rt${_compiler_name}"
+      _kernel_flavor="tkg-${_vanilla_tag}${_cpusched}-rt${_compiler_name}"
     else
-      _kernel_flavor="tkg-${_cpusched}${_compiler_name}"
+      _kernel_flavor="tkg-${_vanilla_tag}${_cpusched}${_compiler_name}"
     fi
   else
-    _kernel_flavor="tkg-${_kernel_localversion}"
+    _kernel_flavor="tkg-${_vanilla_tag}${_kernel_localversion}"
   fi
 
   # Setup kernel_subver variable
