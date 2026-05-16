@@ -630,20 +630,24 @@ _tkg_initscript() {
 }
 
 user_patcher() {
-    for _f in "$_where"/*."${_userpatch_ext}patch" "$_where"/*."${_userpatch_ext}revert"; do
-      if [ -e "${_f}" ]; then
-        warning "Found userpatch file ${f##*/} in the PKGBUILD directory." #"
-        warning "Userpatches must now be placed in version-specific subdirectories (linux${_basever}-tkg-userpatches for this kernel version)."
-        warning "The patch will not be applied."
-      fi
-    done
+  for _f in "$_where"/*."${_userpatch_ext}patch" "$_where"/*."${_userpatch_ext}revert"; do
+    if [ -e "${_f}" ]; then
+      warning "Found userpatch file ${_f##*/} in the PKGBUILD directory." #"
+      warning "Userpatches must now be placed in version-specific subdirectories (linux${_basever}-tkg-userpatches for this kernel version)."
+      warning "The patch will not be applied."
+      echo "### WARNING: misplaced userpatch ignored: ${_f##*/}" >> "$_where"/logs/prepare.log.txt
+    fi
+  done
 
-    echo -e "linux-tkg user patches, if any:\n" >> "$_where"/logs/prepare.log.txt
+  echo -e "linux-tkg user patches, if any:\n" >> "$_where"/logs/prepare.log.txt
 
 	# To patch the user because all your base are belong to us
 	local _patches=("$_where"/linux"$_basever"-tkg-userpatches/*."${_userpatch_ext}revert")
 	if [ ${#_patches[@]} -ge 2 ] || [ -e "${_patches}" ]; then
-    _vanilla_mode && warning "Vanilla mode is enabled, you may not want to apply some of these user revert patches."
+    if _vanilla_mode; then
+      warning "Vanilla mode is enabled, you may not want to apply some of these user revert patches."
+      echo "### WARNING: vanilla mode active — user revert patches present" >> "$_where"/logs/prepare.log.txt
+    fi
 	  if [ "$_user_patches_no_confirm" != "true" ]; then
 	    msg2 "Found ${#_patches[@]} 'to revert' userpatches for ${_userpatch_target}:"
 	    printf '%s\n' "${_patches[@]}"
@@ -657,16 +661,24 @@ user_patcher() {
 	        msg2 "Reverting your own ${_userpatch_target} patch ${_f}"
 	        msg2 ""
 	        msg2 "######################################################"
-	        patch -Np1 -R < "${_f}"
-	        echo "Reverted your own patch ${_f}" >> "$_where"/logs/prepare.log.txt
+	        echo "### Reverting user patch ${_f##*/}... ###" >> "$_where"/logs/prepare.log.txt
+	        patch -Np1 -R < "${_f}" >> "$_where"/logs/prepare.log.txt || error "An error was encountered reverting user patch ${_f##*/}. It was logged to the prepare.log.txt file."
+	        echo >> "$_where"/logs/prepare.log.txt
 	      fi
 	    done
+	  else
+	    echo "### User declined to apply revert patches" >> "$_where"/logs/prepare.log.txt
 	  fi
+	else
+	  echo "### No user revert patches found" >> "$_where"/logs/prepare.log.txt
 	fi
 
 	_patches=("$_where"/linux"$_basever"-tkg-userpatches/*."${_userpatch_ext}patch")
 	if [ ${#_patches[@]} -ge 2 ] || [ -e "${_patches}" ]; then
-    _vanilla_mode && warning "Vanilla mode is enabled, you may not want to apply some of these user patches."
+    if _vanilla_mode; then
+      warning "Vanilla mode is enabled, you may not want to apply some of these user patches."
+      echo "### WARNING: vanilla mode active — user patches present" >> "$_where"/logs/prepare.log.txt
+    fi
 	  if [ "$_user_patches_no_confirm" != "true" ]; then
 	    msg2 "Found ${#_patches[@]} userpatches for ${_userpatch_target}:"
 	    printf '%s\n' "${_patches[@]}"
@@ -680,24 +692,31 @@ user_patcher() {
 	        msg2 "Applying your own ${_userpatch_target} patch ${_f}"
 	        msg2 ""
 	        msg2 "######################################################"
-	        patch -Np1 < "${_f}"
-	        echo "Applied your own patch ${_f}" >> "$_where"/logs/prepare.log.txt
+	        echo "### Applying user patch ${_f##*/}... ###" >> "$_where"/logs/prepare.log.txt
+	        patch -Np1 < "${_f}" >> "$_where"/logs/prepare.log.txt || error "An error was encountered applying user patch ${_f##*/}. It was logged to the prepare.log.txt file."
+	        echo >> "$_where"/logs/prepare.log.txt
 	      fi
 	    done
+	  else
+	    echo "### User declined to apply patches" >> "$_where"/logs/prepare.log.txt
 	  fi
+	else
+	  echo "### No user patches found" >> "$_where"/logs/prepare.log.txt
 	fi
 }
 
 _tkg_patcher() {
   if _vanilla_mode && [[ "$1" != "--vanilla-friendly" ]]; then
     warning "_vanilla toggle active: not applying ${tkgpatch##*/}"
+    echo "### _vanilla toggle active: not applying ${tkgpatch##*/}" >> "$_where"/logs/prepare.log.txt
+    echo >> "$_where"/logs/prepare.log.txt
     return 0
   fi
   if [ -e "$tkgpatch" ] && [[ $(wc -l <"$tkgpatch") -ge 7 ]]; then
     msg2 "$_msg"
-    echo -e "### Applying ${tkgpatch##*/}... ###" >> "$_where"/logs/prepare.log.txt
+    echo "### Applying ${tkgpatch##*/}... ###" >> "$_where"/logs/prepare.log.txt
     patch -Np1 -i "$tkgpatch" >> "$_where"/logs/prepare.log.txt || error "An error was encountered applying patches. It was logged to the prepare.log.txt file."
-    echo -e "\n" >> "$_where"/logs/prepare.log.txt
+    echo >> "$_where"/logs/prepare.log.txt
   else
     msg2 "Skipping patch ${tkgpatch##*/}...\n         (unavailable for this kernel version)"
   fi
