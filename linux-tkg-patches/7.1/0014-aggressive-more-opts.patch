@@ -1,0 +1,146 @@
+From b27f13f7e6ee82264d8225d2a977c047a9845e64 Mon Sep 17 00:00:00 2001
+From: Frogging-Family
+From: damachine <damachin3@proton.me>
+Date: Mon, 27 Apr 2026 21:14:50 +0200
+Subject: [PATCH] CPU/scheduler misc optimizations
+
+CPU and scheduler tuning under CONFIG_TKG:
+- x86: disable split lock mitigation by default (bus_lock.c)
+- Driver: remove schedutil auto-select from Intel/AMD P-State Kconfig
+- Scheduler: timer_slack_ns 35us (vs 50us default) (init_task.c)
+- Scheduler: sched_move_task early-exit if group unchanged (core.c)
+
+Signed-off-by: damachine <damachin3@proton.me>
+
+---
+ arch/x86/kernel/cpu/bus_lock.c |  4 ++++
+ drivers/cpufreq/Kconfig.x86    |  2 --
+ init/init_task.c               |  4 ++++
+ kernel/sched/core.c            | 30 +++++++++++++++++++++++++++---
+ 4 files changed, 35 insertions(+), 5 deletions(-)
+
+diff --git a/arch/x86/kernel/cpu/bus_lock.c b/arch/x86/kernel/cpu/bus_lock.c
+index bba28607a..c7d2e49fb 100644
+--- a/arch/x86/kernel/cpu/bus_lock.c
++++ b/arch/x86/kernel/cpu/bus_lock.c
+@@ -47,7 +47,11 @@ static const struct {
+ 
+ static struct ratelimit_state bld_ratelimit;
+ 
++#ifdef CONFIG_TKG
++static unsigned int sysctl_sld_mitigate = 0;
++#else
+ static unsigned int sysctl_sld_mitigate = 1;
++#endif /* CONFIG_TKG */
+ static DEFINE_SEMAPHORE(buslock_sem, 1);
+ 
+ #ifdef CONFIG_PROC_SYSCTL
+diff --git a/drivers/cpufreq/Kconfig.x86 b/drivers/cpufreq/Kconfig.x86
+index 027e6ea2e..497d53256 100644
+--- a/drivers/cpufreq/Kconfig.x86
++++ b/drivers/cpufreq/Kconfig.x86
+@@ -9,7 +9,6 @@ config X86_INTEL_PSTATE
+ 	select ACPI_PROCESSOR if ACPI
+ 	select ACPI_CPPC_LIB if X86_64 && ACPI && SCHED_MC_PRIO
+ 	select CPU_FREQ_GOV_PERFORMANCE
+-	select CPU_FREQ_GOV_SCHEDUTIL if SMP
+ 	help
+ 	  This driver provides a P state for Intel core processors.
+ 	  The driver implements an internal governor and will become
+@@ -39,7 +38,6 @@ config X86_AMD_PSTATE
+ 	depends on X86 && ACPI
+ 	select ACPI_PROCESSOR
+ 	select ACPI_CPPC_LIB if X86_64
+-	select CPU_FREQ_GOV_SCHEDUTIL if SMP
+ 	select ACPI_PLATFORM_PROFILE
+ 	select POWER_SUPPLY
+ 	help
+diff --git a/init/init_task.c b/init/init_task.c
+index b5f48ebdc..8e5d636e8 100644
+--- a/init/init_task.c
++++ b/init/init_task.c
+@@ -170,7 +170,11 @@ struct task_struct init_task __aligned(L1_CACHE_BYTES) = {
+ 	INIT_CPU_TIMERS(init_task)
+ 	.pi_lock	= __RAW_SPIN_LOCK_UNLOCKED(init_task.pi_lock),
+ 	.blocked_lock	= __RAW_SPIN_LOCK_UNLOCKED(init_task.blocked_lock),
++#ifdef CONFIG_TKG
++	.timer_slack_ns = 35000, /* 35 usec default slack */
++#else
+ 	.timer_slack_ns = 50000, /* 50 usec default slack */
++#endif /* CONFIG_TKG */
+ 	.thread_pid	= &init_struct_pid,
+ 	.thread_node	= LIST_HEAD_INIT(init_signals.thread_head),
+ #ifdef CONFIG_AUDIT
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index d0de5aadf..e24bd37c7 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -9408,7 +9408,7 @@ void sched_release_group(struct task_group *tg)
+ 	spin_unlock_irqrestore(&task_group_lock, flags);
+ }
+ 
+-static void sched_change_group(struct task_struct *tsk)
++static struct task_group *sched_get_task_group(struct task_struct *tsk)
+ {
+ 	struct task_group *tg;
+ 
+@@ -9420,7 +9420,13 @@ static void sched_change_group(struct task_struct *tsk)
+ 	tg = container_of(task_css_check(tsk, cpu_cgrp_id, true),
+ 			  struct task_group, css);
+ 	tg = autogroup_task_group(tsk, tg);
+-	tsk->sched_task_group = tg;
++
++	return tg;
++}
++
++static void sched_change_group(struct task_struct *tsk, struct task_group *group)
++{
++	tsk->sched_task_group = group;
+ 
+ #ifdef CONFIG_FAIR_GROUP_SCHED
+ 	if (tsk->sched_class->task_change_group)
+@@ -9430,6 +9436,18 @@ static void sched_change_group(struct task_struct *tsk)
+ 		set_task_rq(tsk, task_cpu(tsk));
+ }
+ 
++static struct task_group *sched_needs_group_change(struct task_struct *tsk)
++{
++	struct task_group *new_group;
++
++	new_group = sched_get_task_group(tsk);
++
++	if (likely(new_group == tsk->sched_task_group))
++		return NULL;
++
++	return new_group;
++}
++
+ /*
+  * Change task's runqueue when it moves between groups.
+  *
+@@ -9439,16 +9457,22 @@ static void sched_change_group(struct task_struct *tsk)
+  */
+ void sched_move_task(struct task_struct *tsk, bool for_autogroup)
+ {
++	struct task_group *new_group;
+ 	unsigned int queue_flags = DEQUEUE_SAVE | DEQUEUE_MOVE;
+ 	bool resched = false;
+ 	bool queued = false;
+ 	struct rq *rq;
+ 
++
++	if (!(new_group = sched_needs_group_change(tsk)))
++		return;
++
+ 	CLASS(task_rq_lock, rq_guard)(tsk);
+ 	rq = rq_guard.rq;
++	update_rq_clock(rq);
+ 
+ 	scoped_guard (sched_change, tsk, queue_flags) {
+-		sched_change_group(tsk);
++		sched_change_group(tsk, new_group);
+ 		if (!for_autogroup)
+ 			scx_cgroup_move_task(tsk);
+ 		if (scope->running)
+-- 
+2.54.0

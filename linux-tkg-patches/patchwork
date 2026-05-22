@@ -307,7 +307,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
     _rebase_start "$_patch"
 
-    elif [[ "$1" == 'rebase' && "$2" == 'end' ]]; then
+    elif [[ "$1" == 'rebase' && ( "$2" == 'end' || "$2" == 'done' ) ]]; then
 
       _rebase_end
 
@@ -330,7 +330,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
                 - [no argument]: sets a workfolder of the first kernel version x.y.z where a patch
                                 doesn't apply and starts a 'git am' with that patch.
                 - <x.y/patch-name> [optional]: sets a workfolder of kernel version x.y.z (where .z is the latest) and applies the given patch in argument
-              - 'end' : Rebase done, re-create the patch that has been pulled with the user added changes.
+              - 'end|done' : Rebase done, re-create the patch that has been pulled with the user added changes.
             Recognized env vars:
             - TKG_PATCHWORK_CHECK_SKIP: space separated regexes, if a x.y/foo.patch matches with any of them it's skipped during 'check' command and won't show even if unclean
             - TKG_PATCHWORK_SILENT_BACKEND: set to anything other than 'true' to see logs from 'prepare' backend script"

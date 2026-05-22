@@ -1,0 +1,85 @@
+From f721e454ad8db633c2267415e4169b9af3dd7a4b Mon Sep 17 00:00:00 2001
+From: damachine <damachine@users.noreply.github.com>
+Date: Wed, 18 Mar 2026 22:07:19 +0100
+Subject: [PATCH] nvidia: enable atomic modesetting by default, add -mharden-sls=all, fix pahole for kernel 7.0
+
+- kernel-open/Makefile: also check for scripts/gen-btf.sh (introduced in 7.0) before
+  setting PAHOLE_VARIABLES to avoid incompatible awk wrapper
+- nvidia-drm-linux.c: update MODULE_PARM_DESC to show modesetting enabled by default
+- nvidia-drm-os-interface.c: set nv_drm_modeset_module_param = true (was false)
+- src/nvidia-modeset/Makefile: add -mharden-sls=all for x86_64 hardening
+
+Required for proper Wayland functionality. fbdev is already default
+enabled since 580, so no fbdev hunk needed.
+---
+ kernel-open/Makefile                             | 13 +++++++++----
+ kernel-open/nvidia-drm/nvidia-drm-linux.c        |  2 +-
+ kernel-open/nvidia-drm/nvidia-drm-os-interface.c |  2 +-
+ src/nvidia-modeset/Makefile                      |  1 +
+ 4 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/kernel-open/Makefile b/kernel-open/Makefile
+index f7a8db6..9a3fc28 100644
+--- a/kernel-open/Makefile
++++ b/kernel-open/Makefile
+@@ -92,10 +92,15 @@ else
+   #     system(pahole_cmd)
+   # }
+   PAHOLE_AWK_PROGRAM = BEGIN { pahole_cmd = \"pahole\"; for (i = 1; i < ARGC; i++) { if (ARGV[i] ~ /--lang_exclude=/) { pahole_cmd = pahole_cmd sprintf(\" %s,c++\", ARGV[i]); } else { pahole_cmd = pahole_cmd sprintf(\" %s\", ARGV[i]); } } system(pahole_cmd); }
+-  # If scripts/pahole-flags.sh is not present in the kernel tree, add PAHOLE and
+-  # PAHOLE_AWK_PROGRAM assignments to PAHOLE_VARIABLES; otherwise assign the
+-  # empty string to PAHOLE_VARIABLES.
+-  PAHOLE_VARIABLES=$(if $(wildcard $(KERNEL_SOURCES)/scripts/pahole-flags.sh),,"PAHOLE=$(AWK) '$(PAHOLE_AWK_PROGRAM)'")
++  # If scripts/pahole-flags.sh is not present AND scripts/gen-btf.sh is not
++  # present in the kernel tree, add PAHOLE and PAHOLE_AWK_PROGRAM assignments
++  # to PAHOLE_VARIABLES; otherwise assign the empty string to PAHOLE_VARIABLES.
++  #
++  # scripts/gen-btf.sh was introduced in kernel 7.0 (formerly 6.17) when
++  # scripts/pahole-flags.sh was removed.  The gen-btf.sh-based BTF generation
++  # calls ${PAHOLE} inside a shell script, so the awk wrapper used here is
++  # incompatible (shell word-splitting breaks the single-quoted awk program).
++  PAHOLE_VARIABLES=$(if $(or $(wildcard $(KERNEL_SOURCES)/scripts/pahole-flags.sh),$(wildcard $(KERNEL_SOURCES)/scripts/gen-btf.sh)),,"PAHOLE=$(AWK) '$(PAHOLE_AWK_PROGRAM)'")
+ 
+   ifndef ARCH
+     ARCH := $(shell uname -m | sed -e 's/i.86/i386/' \
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-linux.c b/kernel-open/nvidia-drm/nvidia-drm-linux.c
+index 3cb1815..209cb46 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-linux.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-linux.c
+@@ -31,7 +31,7 @@
+ 
+ MODULE_PARM_DESC(
+     modeset,
+-    "Enable atomic kernel modesetting (1 = enable, 0 = disable (default))");
++    "Enable atomic kernel modesetting (1 = enable (default), 0 = disable)");
+ module_param_named(modeset, nv_drm_modeset_module_param, bool, 0400);
+ 
+ #if defined(NV_DRM_FBDEV_AVAILABLE)
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-os-interface.c b/kernel-open/nvidia-drm/nvidia-drm-os-interface.c
+index a6b3525..25ded0f 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-os-interface.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-os-interface.c
+@@ -38,7 +38,7 @@
+ #include <drm/drmP.h>
+ #endif
+ 
+-bool nv_drm_modeset_module_param = false;
++bool nv_drm_modeset_module_param = true;
+ bool nv_drm_fbdev_module_param = true;
+ 
+ void *nv_drm_calloc(size_t nmemb, size_t size)
+diff --git a/src/nvidia-modeset/Makefile b/src/nvidia-modeset/Makefile
+index c674508..eaa071f 100644
+--- a/src/nvidia-modeset/Makefile
++++ b/src/nvidia-modeset/Makefile
+@@ -155,6 +155,7 @@ ifeq ($(TARGET_ARCH),x86_64)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -fno-jump-tables)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mindirect-branch=thunk-extern)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mindirect-branch-register)
++  CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mharden-sls=all)
+ endif
+ 
+ CFLAGS += $(CONDITIONAL_CFLAGS)
+-- 
+2.53.0
+

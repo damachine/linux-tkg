@@ -54,15 +54,32 @@ if [ ! -e "$_where"/BIG_UGLY_FROGMINER ]; then
 fi
 
 source "$_where"/BIG_UGLY_FROGMINER
+source "$_where"/linux-tkg-config/prepare
 
+_module_split_pkg="false"
+if [ -n "${_module_pkg:-}" ] && [ "${_module_extpkg:-}" = "external" ]; then
+  _module_split_pkg="true"
+fi
+
+_vanilla_tag=""
+_vanilla_mode && _vanilla_tag="vanilla-"
 if [ -n "$_custom_pkgbase" ]; then
   pkgbase="${_custom_pkgbase}"
 else
-  pkgbase=linux"${_basever}"-tkg-"${_cpusched}"${_compiler_name}
+  pkgbase="linux${_basever}-tkg-${_vanilla_tag}${_cpusched}${_compiler_name}"
 fi
-pkgname=("${pkgbase}" "${pkgbase}-headers")
+pkgname=("$pkgbase")
+pkgname+=("$pkgbase-headers")
+[[ "${_docs_pkg:-false}" == "true" ]] && pkgname+=("$pkgbase-docs")
+[ "$_nvidia_pkg" != "false" ] && [ -n "$_nvidia_pkg" ] && pkgname+=("$pkgbase-nvidia-open")
+if [ "$_module_split_pkg" = "true" ]; then
+  for _module_id in $_module_pkg; do
+    [ -n "$_module_id" ] && pkgname+=("$pkgbase-${_module_id}")
+  done
+fi
+
 pkgver="${_basekernel}"."${_sub}"
-pkgrel=273
+pkgrel=8086
 pkgdesc='Linux-tkg'
 arch=('x86_64') # no i686 in here
 url="https://www.kernel.org/"
@@ -87,10 +104,33 @@ makedepends=(
   xz
   zlib
   zstd
+
+  # htmldocs
+  graphviz
+  imagemagick
+  python-sphinx
+  python-yaml
+  texlive-latexextra
 )
 if [ "$_compiler_name" = "-llvm" ]; then
   makedepends+=('clang' 'llvm' 'lld')
 fi
+
+# nvidia-open source tarball — vulkan-beta from GitHub with fallback mirrors
+if [ "$_nvidia_pkg" != "false" ] && [ -n "$_nvidia_pkg" ]; then
+  _resolve_nvidia
+  if [ "$_nvidia_var" = "vulkan" ]; then
+    source+=("${_nv_pkg}.tar.gz::https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/${_nvidia_ver}.tar.gz")
+  else
+    source+=("https://download.nvidia.com/XFree86/NVIDIA-kernel-module-source/${_nv_pkg}.tar.xz")
+  fi
+  sha256sums+=('SKIP')
+fi
+for _module_id in $_module_pkg; do
+  [ -z "$_module_id" ] && continue
+  source+=("$(_module_drv_get_source_dir "${_module_id}")::git+$(_module_drv_get_git_url "${_module_id}")")
+  sha256sums+=('SKIP')
+done
 optdepends=('schedtool')
 options=('!strip' 'docs')
 
@@ -103,6 +143,30 @@ export KBUILD_BUILD_HOST=archlinux
 export KBUILD_BUILD_USER=$pkgbase
 export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
 
+# kernel sign-file, key, cert and hash from .config
+_signing() {
+  if ! grep -q 'CONFIG_MODULE_SIG=y' "${_kernel_work_folder_abs}/.config"; then
+    warning "Module signing was requested but CONFIG_MODULE_SIG=y is not set in .config — skipping."
+    return 1
+  fi
+
+  _sign_script="${_kernel_work_folder_abs}/scripts/sign-file"
+  _sign_key="$(grep -Po 'CONFIG_MODULE_SIG_KEY="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+  [[ "$_sign_key" =~ ^/ ]] || _sign_key="${_kernel_work_folder_abs}/${_sign_key}"
+  _sign_cert="${_kernel_work_folder_abs}/certs/signing_key.x509"
+  _sign_hash="$(grep -Po 'CONFIG_MODULE_SIG_HASH="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+
+  if [[ ! -f "$_sign_key" ]]; then
+    warning "Module signing key not found: ${_sign_key}"
+    return 1
+  elif [[ ! -f "$_sign_cert" ]]; then
+    warning "Module signing certificate not found: ${_sign_cert}"
+    return 1
+  fi
+
+  return 0
+}
+
 prepare() {
   source "$_where"/BIG_UGLY_FROGMINER
   source "$_where"/linux-tkg-config/prepare
@@ -112,10 +176,14 @@ prepare() {
   ln -s "${_kernel_work_folder_abs}" "${srcdir}"
 
   _tkg_srcprep
+
+  _git_module
 }
 
 build() {
   source "$_where"/BIG_UGLY_FROGMINER
+
+  _resolve_nvidia
 
   cd "$_kernel_work_folder_abs"
 
@@ -146,7 +214,12 @@ build() {
   # remove -O2 flag and place user optimization flag
   CFLAGS=${CFLAGS/-O2/}
   CFLAGS+=" ${_compileropt}"
-
+  # AutoFDO profile flag
+  local _autofdo_make_flag=""
+  if [[ -n "$_autofdo_profile_path" && -f "$_autofdo_profile_path" ]]; then
+    _autofdo_make_flag="CLANG_AUTOFDO_PROFILE=${_autofdo_profile_path}"
+    msg2 "AutoFDO: using profile ${_autofdo_profile_path}"
+  fi
   # build!
   if pacman -Qq schedtool &> /dev/null; then
     msg2 "Using schedtool"
@@ -164,9 +237,32 @@ build() {
     export KCFLAGS
     export KRUSTFLAGS
 
-    time ( make ${_force_all_threads} ${llvm_opt} LOCALVERSION= bzImage modules 2>&1 ) 3>&1 1>&2 2>&3
+    time ( make ${_force_all_threads} ${llvm_opt} ${_autofdo_make_flag} LOCALVERSION= bzImage modules 2>&1 ) 3>&1 1>&2 2>&3
     return 0
   )
+
+  # Build nvidia-open modules after the kernel build produced its output tree.
+  if [ "$_nvidia_pkg" != "false" ] && [ -n "$_nvidia_pkg" ]; then
+    local _nv_open_src="${srcdir}/${_nv_pkg}"
+    local _kernuname
+    _kernuname="$(< "${_kernel_work_folder_abs}/include/config/kernel.release")"
+    local MODULE_FLAGS=(
+      KERNEL_UNAME="${_kernuname}"
+      IGNORE_PREEMPT_RT_PRESENCE=1
+      SYSSRC="${_kernel_work_folder_abs}"
+      SYSOUT="${_kernel_work_folder_abs}"
+      IGNORE_CC_MISMATCH=yes
+    )
+    if [ ! -d "${_nv_open_src}" ]; then
+      error "NVIDIA-open source directory not found: ${_nv_open_src}"
+      exit 1
+    fi
+    msg2 "Building NVIDIA open kernel modules (${_nvidia_ver})..."
+    CFLAGS= CXXFLAGS= LDFLAGS= make "${BUILD_FLAGS[@]}" "${MODULE_FLAGS[@]}" \
+      -C "${_nv_open_src}" -j"$(nproc)" modules
+  fi
+
+  _build_module
 }
 
 hackbase() {
@@ -174,6 +270,8 @@ hackbase() {
 
   pkgdesc="The $pkgdesc kernel and modules - https://github.com/Frogging-Family/linux-tkg"
   depends=('coreutils' 'kmod' 'initramfs')
+  local _docs_optdepend='linux-docs: Kernel hackers manual - HTML documentation that comes with the Linux kernel.'
+  [[ "${_docs_pkg:-false}" == "true" ]] && _docs_optdepend="${pkgbase}-docs: Kernel source documentation for this build"
   optdepends=(
     "$pkgname-headers: headers and scripts for building modules"
     'linux-firmware: firmware images needed for some devices'
@@ -196,6 +294,7 @@ hackbase() {
 
   # get kernel version
   local _kernver="$(<version)"
+  local _module_id
   local modulesdir="$pkgdir/usr/lib/modules/$_kernver"
 
   msg2 "Installing boot image..."
@@ -211,11 +310,48 @@ hackbase() {
   local _STRIP_MODS=""
   [[ "$_STRIP" == "true" ]] && _STRIP_MODS="INSTALL_MOD_STRIP=1"
 
-  ZSTD_CLEVEL=19 make INSTALL_MOD_PATH="$pkgdir/usr" $_STRIP_MODS \
+  ZSTD_CLEVEL=19 make ${llvm_opt} INSTALL_MOD_PATH="$pkgdir/usr" $_STRIP_MODS \
     DEPMOD=/doesnt/exist modules_install  # Suppress depmod
 
   # remove build and source links
   rm -f "$modulesdir"/{source,build}
+
+  if [ -n "$_module_pkg" ] && [ "$_module_split_pkg" != "true" ]; then
+    msg2 "Installing out-of-tree modules into the main kernel package..."
+    _install_module "" "${_kernver}" "${pkgdir}"
+
+    for _module_id in $_module_pkg; do
+      case "${_module_id}" in
+        nct6687)
+          conflicts+=("nct6687-dkms")
+          provides+=("NCT6687-MODULE")
+        ;;
+        v4l2loopback)
+          conflicts+=("v4l2loopback-dkms")
+          provides+=("V4L2LOOPBACK-MODULE")
+        ;;
+        it87)
+          conflicts+=("it87-dkms")
+          provides+=("IT87-MODULE")
+        ;;
+        *)
+          conflicts+=("${_module_id}-dkms")
+          provides+=("${_module_id}")
+        ;;
+      esac
+    done
+  fi
+
+  # Re-sign modules after stripping
+  if [[ "$_RESIGN_AFTER_STRIP" == "true" ]] && [[ "$_STRIP" == "true" ]]; then
+    if _signing; then
+      msg2 "Re-signing kernel modules after strip..."
+      find "${modulesdir}" -type f -name '*.ko' \
+        -exec "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" '{}' \;
+    else
+      warning "_RESIGN_AFTER_STRIP is enabled but signing is not available — skipping module re-signing."
+    fi
+  fi
 
   # install cleanup pacman hook and script
   sed -e "s|cleanup|${pkgbase}-cleanup|g" "${srcdir}"/90-cleanup.hook |
@@ -250,7 +386,7 @@ hackheaders() {
   source "$_where"/BIG_UGLY_FROGMINER
 
   pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel - https://github.com/Frogging-Family/linux-tkg"
-  provides=("linux-headers=${pkgver}" "${pkgbase}-headers=${pkgver}")
+  provides=("linux-headers=${pkgver}" "${pkgbase}-headers=${pkgver}" LINUX-HEADERS)
   depends=(
     binutils
     glibc
@@ -273,6 +409,12 @@ hackheaders() {
   install -Dt "$builddir/kernel" -m644 kernel/Makefile
   install -Dt "$builddir/arch/x86" -m644 arch/x86/Makefile
   cp -t "$builddir" -a scripts
+
+  # Install kernel signing keys for later out-of-tree module signing
+  if [[ "$_install_signing_keys" == "true" ]] && [[ -f "certs/signing_key.pem" ]]; then
+    msg2 "Installing module signing keys..."
+    install -Dt "$builddir/certs" -m 400 certs/signing_key.pem certs/signing_key.x509
+  fi
 
   # add objtool for external module building and enabled VALIDATION_STACK option
   install -Dt "$builddir/tools/objtool" tools/objtool/objtool
@@ -345,11 +487,128 @@ hackheaders() {
     strip -v $STRIP_STATIC "$builddir/vmlinux"
   fi
 
-  if [ "$_NUKR" = "true" ]; then
+  # Skip srcdir cleanup if nvidia-open or module packages still need it
+  if [ "$_NUKR" = "true" ] && { { [ "$_nvidia_pkg" = "false" ] || [ -z "$_nvidia_pkg" ]; } && [ "$_module_split_pkg" != "true" ]; }; then
     rm -rf "$srcdir" # Nuke the entire src folder so it'll get regenerated clean on next build
   fi
 }
 
+hackdocs() {
+  source "$_where"/BIG_UGLY_FROGMINER
+
+  pkgdesc="Documentation for the $pkgdesc kernel - https://github.com/Frogging-Family/linux-tkg"
+
+  cd "$_kernel_work_folder_abs"
+
+  local builddir="${pkgdir}/usr/lib/modules/$(<version)/build"
+  local src dst
+
+  msg2 "Installing documentation..."
+  while read -rd '' src; do
+    dst="${src#Documentation/}"
+    dst="${builddir}/Documentation/${dst#output/}"
+    install -Dm644 "$src" "$dst"
+  done < <(find Documentation -name '.*' -prune -o ! -type d -print0)
+
+  msg2 "Adding documentation symlink..."
+  mkdir -p "${pkgdir}/usr/share/doc"
+  ln -sr "${builddir}/Documentation" "${pkgdir}/usr/share/doc/${pkgbase}"
+}
+
+hacknvidia() {
+  source "$_where"/BIG_UGLY_FROGMINER
+
+  _resolve_nvidia
+
+  pkgdesc="NVIDIA open modules driver $_nvidia_ver for the $pkgdesc kernel"
+  depends=("${pkgbase}=${pkgver}" "libglvnd" "nvidia-utils-tkg>=${_nvidia_ver}")
+  provides=("NVIDIA-MODULE")
+  conflicts=("${pkgbase}-nvidia")
+  license=('MIT AND GPL-2.0-only')
+
+  local _nv_open_src="${srcdir}/${_nv_pkg}"
+
+  cd "$_kernel_work_folder_abs"
+  local _kernver="$(<version)"
+  local modulesdir="$pkgdir/usr/lib/modules/$_kernver/extramodules"
+
+  install -dm755 "${modulesdir}"
+  install -m644 "${_nv_open_src}"/kernel-open/*.ko "${modulesdir}"
+  install -Dt "$pkgdir/usr/share/licenses/${pkgname}" -m644 "${_nv_open_src}/COPYING"
+
+  # Strip modules
+  local strip_bin="strip"
+  [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
+  find "${modulesdir}" -type f -name '*.ko' -exec "${strip_bin}" --strip-debug '{}' \;
+
+  # Sign modules
+  if [[ "$_nvidia_sign" == "true" ]]; then
+    if _signing; then
+      msg2 "Signing NVIDIA open kernel modules..."
+      find "${modulesdir}" -type f -name '*.ko' -exec "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" '{}' \;
+    else
+      warning "_nvidia_sign is enabled but signing is not available — skipping module signing."
+    fi
+  fi
+
+  # Compress modules
+  find "${pkgdir}" -name '*.ko' -exec zstd --rm -19 -T0 {} +
+
+  # nvidia-open is the last package only when no module packages are enabled
+  if [ "$_NUKR" = "true" ] && [ "$_module_split_pkg" != "true" ]; then
+    rm -rf "$srcdir" # Nuke the entire src folder so it'll get regenerated clean on next build
+  fi
+}
+
+# Generic helper for module packages
+_hackmodule() {
+  local _module_id="$1"
+  local _last_module_id=""
+  local _tmp_m
+  source "$_where"/BIG_UGLY_FROGMINER
+  source "$_where"/linux-tkg-config/prepare
+
+  local _module_display_name
+  _module_display_name="$(_module_drv_get_display_name "${_module_id}")"
+
+  pkgdesc="${_module_display_name} kernel module for the ${pkgbase} kernel"
+  depends=("${pkgbase}=${pkgver}")
+
+  # Module package metadata and dkms conflict handling.
+  case "${_module_id}" in
+    nct6687)
+      conflicts=("nct6687-dkms")
+      provides=("NCT6687-MODULE")
+    ;;
+    v4l2loopback)
+      conflicts=("v4l2loopback-dkms")
+      provides=("V4L2LOOPBACK-MODULE")
+    ;;
+    it87)
+      conflicts=("it87-dkms")
+      provides=("IT87-MODULE")
+    ;;
+    *)
+      conflicts=("${_module_id}-dkms")
+      provides=("${_module_id}")
+    ;;
+  esac
+
+  cd "$_kernel_work_folder_abs"
+  local _kernver="$(<version)"
+  _install_module "$_module_id" "${_kernver}" "${pkgdir}"
+
+  # Cleanup only after the last enabled module package.
+  for _tmp_m in $_module_pkg; do
+    [ -n "$_tmp_m" ] && _last_module_id="$_tmp_m"
+  done
+
+  if [ "$_NUKR" = "true" ] && [ -n "$_last_module_id" ] && [ "$_module_id" = "$_last_module_id" ]; then
+    rm -rf "$srcdir" # Nuke the entire src folder so it'll get regenerated clean on next build
+  fi
+}
+
+# Generate dynamic package functions
 source /dev/stdin <<EOF
 package_${pkgbase}() {
 hackbase
@@ -358,4 +617,17 @@ hackbase
 package_${pkgbase}-headers() {
 hackheaders
 }
+
+$( [[ "${_docs_pkg:-false}" == "true" ]] && printf 'package_%s-docs() {\n  hackdocs\n}\n' "${pkgbase}" )
+
+$( [ "$_nvidia_pkg" != "false" ] && [ -n "$_nvidia_pkg" ] && printf 'package_%s-nvidia-open() {\n  hacknvidia\n}\n' "${pkgbase}" )
+
+$( if [ "$_module_split_pkg" = "true" ]; then
+     for _m in $_module_pkg; do
+       [ -z "$_m" ] && continue
+       printf 'package_%s-%s() {\n  _hackmodule "%s"\n}\n' "${pkgbase}" "$_m" "$_m"
+     done
+   fi )
 EOF
+
+# vim: ts=2 sw=2 et:

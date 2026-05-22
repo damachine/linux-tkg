@@ -1,0 +1,58 @@
+From fcf177ae8fa56d98b131985af6a0be36cb65b745 Mon Sep 17 00:00:00 2001
+From: damachine <damachine@users.noreply.github.com>
+Date: Wed, 18 Mar 2026 22:07:19 +0100
+Subject: [PATCH] nvidia: enable atomic modesetting by default, add -mharden-sls=all
+
+- nvidia-drm-linux.c: update MODULE_PARM_DESC to show modesetting enabled by default
+- nvidia-drm-os-interface.c: set nv_drm_modeset_module_param = true (was false)
+- src/nvidia-modeset/Makefile: add -mharden-sls=all for x86_64 hardening
+
+Required for proper Wayland functionality. fbdev is already default
+enabled since 580, so no fbdev hunk needed.
+---
+ kernel-open/nvidia-drm/nvidia-drm-linux.c        | 2 +-
+ kernel-open/nvidia-drm/nvidia-drm-os-interface.c | 2 +-
+ src/nvidia-modeset/Makefile                      | 1 +
+ 3 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-linux.c b/kernel-open/nvidia-drm/nvidia-drm-linux.c
+index 3cb1815..209cb46 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-linux.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-linux.c
+@@ -31,7 +31,7 @@
+ 
+ MODULE_PARM_DESC(
+     modeset,
+-    "Enable atomic kernel modesetting (1 = enable, 0 = disable (default))");
++    "Enable atomic kernel modesetting (1 = enable (default), 0 = disable)");
+ module_param_named(modeset, nv_drm_modeset_module_param, bool, 0400);
+ 
+ #if defined(NV_DRM_FBDEV_AVAILABLE)
+diff --git a/kernel-open/nvidia-drm/nvidia-drm-os-interface.c b/kernel-open/nvidia-drm/nvidia-drm-os-interface.c
+index a6b3525..25ded0f 100644
+--- a/kernel-open/nvidia-drm/nvidia-drm-os-interface.c
++++ b/kernel-open/nvidia-drm/nvidia-drm-os-interface.c
+@@ -38,7 +38,7 @@
+ #include <drm/drmP.h>
+ #endif
+ 
+-bool nv_drm_modeset_module_param = false;
++bool nv_drm_modeset_module_param = true;
+ bool nv_drm_fbdev_module_param = true;
+ 
+ void *nv_drm_calloc(size_t nmemb, size_t size)
+diff --git a/src/nvidia-modeset/Makefile b/src/nvidia-modeset/Makefile
+index c674508..eaa071f 100644
+--- a/src/nvidia-modeset/Makefile
++++ b/src/nvidia-modeset/Makefile
+@@ -155,6 +155,7 @@ ifeq ($(TARGET_ARCH),x86_64)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -fno-jump-tables)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mindirect-branch=thunk-extern)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mindirect-branch-register)
++  CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mharden-sls=all)
+ endif
+ 
+ CFLAGS += $(CONDITIONAL_CFLAGS)
+-- 
+2.53.0
+

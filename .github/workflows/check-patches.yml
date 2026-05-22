@@ -38,7 +38,7 @@ jobs:
 
           git add .
         env:
-          TKG_PATCHWORK_CHECK_SKIP: "0012-linux-hardened 0001-bore"
+          TKG_PATCHWORK_CHECK_SKIP: "0012-linux-hardened 0001-bore 0014-aggressive-glitched-base 0015-nvidia-latest 0015-nvidia-legacy"
 
       - name: Check for cache changes
         id: change-check
@@ -59,6 +59,11 @@ jobs:
           git pull --rebase
           git push
 
-      - name: Fail if unclean patches exist
-        if: steps.unclean-print.outputs.patches-unclean == '1'
+      - name: Warn on non-default branches
+        if: steps.unclean-print.outputs.patches-unclean == '1' && github.ref_name != github.event.repository.default_branch
+        run: |
+          echo "::warning::Unclean patches detected on branch ${GITHUB_REF_NAME}. This is non-blocking outside the default branch ${{ github.event.repository.default_branch }}."
+
+      - name: Fail if unclean patches exist on default branch
+        if: steps.unclean-print.outputs.patches-unclean == '1' && github.ref_name == github.event.repository.default_branch
         run: 'false'

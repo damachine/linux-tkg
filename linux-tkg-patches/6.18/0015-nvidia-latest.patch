@@ -1,0 +1,26 @@
+From fa311b3238353019cb2d002a28ae9e69beac6f44 Mon Sep 17 00:00:00 2001
+From: damachine <damachine@users.noreply.github.com>
+Date: Sat, 14 Mar 2026 20:15:06 +0100
+Subject: [PATCH] nvidia: add -mharden-sls=all for x86_64 hardening
+
+- src/nvidia-modeset/Makefile: add -mharden-sls=all to CONDITIONAL_CFLAGS for x86_64
+
+---
+ src/nvidia-modeset/Makefile | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/nvidia-modeset/Makefile b/src/nvidia-modeset/Makefile
+index b54138c..6918dde 100644
+--- a/src/nvidia-modeset/Makefile
++++ b/src/nvidia-modeset/Makefile
+@@ -155,6 +155,7 @@ ifeq ($(TARGET_ARCH),x86_64)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -fno-jump-tables)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mindirect-branch=thunk-extern)
+   CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mindirect-branch-register)
++  CONDITIONAL_CFLAGS += $(call TEST_CC_ARG, -mharden-sls=all)
+ endif
+ 
+ CFLAGS += $(CONDITIONAL_CFLAGS)
+-- 
+2.53.0
+

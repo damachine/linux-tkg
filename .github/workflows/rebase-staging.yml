@@ -1,0 +1,43 @@
+name: Rebase staging on master
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+  workflow_run:
+    workflows:
+      - "Update kernel config"
+      - "sync remote patches"
+    types:
+      - completed
+
+jobs:
+  rebase-staging:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout staging branch
+        uses: actions/checkout@v4
+        with:
+          ref: staging
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch origin/master
+        run: git fetch origin master
+
+      - name: Reset staging soft onto master and recommit
+        run: |
+          git reset --soft origin/master
+          git commit --allow-empty -m "staging: all changes on top of upstream/master"
+
+      - name: Push staging
+        run: git push --force-with-lease origin staging
