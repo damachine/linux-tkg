@@ -29,18 +29,7 @@ _where="$PWD" # track basedir as different Arch based distros are moving srcdir 
 source "$_where"/linux-tkg-config/prepare
 
 # Create BIG_UGLY_FROGMINER only on first run and save in it all settings
-if [ ! -e "$_where"/BIG_UGLY_FROGMINER ]; then
-
-  aggregate_user_config
-
-  echo -e "_ispkgbuild=\"true\"\n_distro=\"Arch\"\n_where=\"$PWD\"" >> "$_where"/BIG_UGLY_FROGMINER
-
-  source "$_where"/BIG_UGLY_FROGMINER
-
-  _tkg_initscript
-fi
-
-source "$_where"/BIG_UGLY_FROGMINER
+_frogminer_bootstrap "${_where}/BIG_UGLY_FROGMINER" "${_where}/BIG_UGLY_FROGMINER.pending"
 
 if [ -n "$_custom_pkgbase" ]; then
   pkgbase="${_custom_pkgbase}"
