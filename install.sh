@@ -47,7 +47,9 @@ if which script &> /dev/null && [[ "$_logging_use_script" =~ ^(Y|y|Yes|yes)$ && 
   exit
 fi
 
-source linux-tkg-config/prepare && aggregate_user_config
+source linux-tkg-config/prepare
+source linux-tkg-config/staging # This will source the staging files for the 'knoobs' configs
+aggregate_user_config
 source "$_where/BIG_UGLY_FROGMINER"
 
 ####################################################################
@@ -107,6 +109,10 @@ if [ "$1" = "install" ] || [ "$1" = "config" ]; then
 
   _tkg_srcprep
 
+  if [[ "$_distro" =~ ^(Generic|Gentoo)$ ]]; then
+    _run_staging_knoob _prepare_after_link
+  fi
+
   _build_dir="$_kernel_work_folder_abs/.."
 
   # Uppercase characters are not allowed in source package name for debian based distros
@@ -153,14 +159,16 @@ if [ "$1" = "install" ]; then
     msg2 'Enabled ccache'
   fi
 
+  _vanilla_tag=""
+  _vanilla_mode && _vanilla_tag="vanilla-"
   if [ -z "$_kernel_localversion" ]; then
     if [ "$_preempt_rt" = "1" ]; then
-      _kernel_flavor="tkg-${_cpusched}-rt${_compiler_name}"
+      _kernel_flavor="tkg-${_vanilla_tag}${_cpusched}-rt${_compiler_name}"
     else
-      _kernel_flavor="tkg-${_cpusched}${_compiler_name}"
+      _kernel_flavor="tkg-${_vanilla_tag}${_cpusched}${_compiler_name}"
     fi
   else
-    _kernel_flavor="tkg-${_kernel_localversion}"
+    _kernel_flavor="tkg-${_vanilla_tag}${_kernel_localversion}"
   fi
 
   # Setup kernel_subver variable
@@ -183,11 +191,12 @@ if [ "$1" = "install" ]; then
   export KCPPFLAGS
   export KCFLAGS
   export KRUSTFLAGS
+  _make_extra_flags="$(_run_staging_knoob _build_make_flags)"
 
   if [[ "$_distro" =~ ^(Ubuntu|Debian)$ ]]; then
 
     msg2 "Building kernel DEB packages"
-    make ${llvm_opt} -j ${_thread_num} bindeb-pkg LOCALVERSION=-${_kernel_flavor}
+    make ${llvm_opt} ${_make_extra_flags} -j ${_thread_num} bindeb-pkg LOCALVERSION=-${_kernel_flavor}
     msg2 "Building successfully finished!"
 
     # Create DEBS folder if it doesn't exist
@@ -237,7 +246,7 @@ if [ "$1" = "install" ]; then
     _fedora_work_dir="$_kernel_work_folder_abs/rpmbuild"
 
     msg2 "Building kernel RPM packages"
-    RPMOPTS="--define '_topdir ${_fedora_work_dir}'" make ${llvm_opt} -j ${_thread_num} binrpm-pkg EXTRAVERSION="${_extra_ver_str}"
+    RPMOPTS="--define '_topdir ${_fedora_work_dir}'" make ${llvm_opt} ${_make_extra_flags} -j ${_thread_num} binrpm-pkg EXTRAVERSION="${_extra_ver_str}"
     msg2 "Building successfully finished!"
 
     # Create RPMS folder if it doesn't exist
@@ -311,7 +320,7 @@ if [ "$1" = "install" ]; then
     fi
 
     msg2 "Building kernel"
-    make ${llvm_opt} -j ${_thread_num}
+    make ${llvm_opt} ${_make_extra_flags} -j ${_thread_num}
     msg2 "Build successful"
 
     if [ "$_STRIP" = "true" ]; then
@@ -377,6 +386,11 @@ if [ "$1" = "install" ]; then
     [[ "$_STRIP" == "true" ]] && _STRIP_MODS="INSTALL_MOD_STRIP=1"
 
     sudo make modules_install $_STRIP_MODS
+
+    if [ -n "${_module_resolved:-}" ]; then
+      _module_build
+      _module_install
+    fi
 
     msg2 "Removing modules from source folder in /usr/src/${_kernel_src_gentoo}"
     sudo find . -type f -name '*.ko' -delete

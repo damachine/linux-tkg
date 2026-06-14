@@ -1,0 +1,122 @@
+# Clang Propeller feature.
+#
+# Public options:
+#   _propeller=""
+#   _propeller_profile_path="~/.config/frogminer/tkg-propeller"
+#
+# Build flow:
+#   1. Build an AutoFDO-optimized kernel with _autofdo="true",
+#      _autofdo_profile_path set, and _propeller="true" without profile files.
+#   2. Boot that kernel, collect perf data, and convert it with create_llvm_prof.
+#   3. Set _propeller_profile_path to the generated profile prefix and rebuild.
+#      The expected files are ${prefix}_cc_profile.txt and ${prefix}_ld_profile.txt.
+
+[[ -v _propeller ]] || _propeller=""
+[[ -v _propeller_profile_path ]] || _propeller_profile_path="~/.config/frogminer/tkg-propeller"
+
+propeller_enabled() {
+  [[ "${_propeller,,}" =~ ^(true|yes|y|1)$ ]]
+}
+
+propeller_preflight() {
+  local _resolved_prefix="" _cc_profile="" _ld_profile=""
+
+  if [[ -n "$_propeller_profile_path" ]]; then
+    _resolved_prefix="${_propeller_profile_path/#\~/$HOME}"
+    _cc_profile="${_resolved_prefix}_cc_profile.txt"
+    _ld_profile="${_resolved_prefix}_ld_profile.txt"
+  fi
+
+  if [[ -z "$_propeller" && -n "$_resolved_prefix" && -f "$_cc_profile" && -f "$_ld_profile" ]]; then
+    msg2 "Propeller: profiles found at ${_resolved_prefix}_{cc,ld}_profile.txt - building optimized kernel"
+    _propeller="true"
+    _propeller_profile_path="$_resolved_prefix"
+  fi
+
+  if propeller_enabled; then
+    _propeller="true"
+    msg2 "Propeller: enabled"
+
+    if [[ "$_compiler" != "llvm" ]]; then
+      if [ "$_nofallback" = "true" ]; then
+        error "Propeller (_propeller=\"true\") requires the LLVM compiler (_compiler=\"llvm\"). Exiting."
+        exit 1
+      else
+        plain "Propeller requires Clang/LLVM. Would you like to use Clang/LLVM for this build?"
+        _compiler_array_text=(
+          "Yes: switch to Clang/LLVM and keep Propeller enabled"
+          "No: keep current compiler selection and disable Propeller"
+        )
+        _compiler_array=("llvm" "keep")
+
+        _default_index="0"
+        _prompt_from_array "${_compiler_array_text[@]}"
+
+        if [ "${_compiler_array[$_selected_index]}" = "llvm" ]; then
+          _compiler="llvm"
+        else
+          warning "Disabling Propeller because LLVM was not selected"
+          _propeller=""
+          _propeller_profile_path=""
+        fi
+      fi
+    fi
+
+    if [[ "$_propeller" == "true" ]]; then
+      local _resolved_autofdo_profile="${_autofdo_profile_path/#\~/$HOME}"
+
+      if [[ "$_autofdo" != "true" || -z "$_resolved_autofdo_profile" || ! -f "$_resolved_autofdo_profile" ]]; then
+        if [ "$_nofallback" = "true" ]; then
+          error "Propeller requires an AutoFDO-optimized build. Set _autofdo=\"true\" and provide an existing _autofdo_profile_path. Exiting."
+          exit 1
+        else
+          warning "Disabling Propeller because AutoFDO is not ready"
+          _propeller=""
+          _propeller_profile_path=""
+        fi
+      fi
+    fi
+
+    if [[ "$_propeller" == "true" && -n "$_resolved_prefix" ]]; then
+      if [[ -f "$_cc_profile" && -f "$_ld_profile" ]]; then
+        _propeller_profile_path="$_resolved_prefix"
+      fi
+    fi
+  fi
+}
+
+propeller_finalize_compiler() {
+  if [[ "$_propeller" == "true" && -n "$_propeller_profile_path" ]]; then
+    _propeller_profile_path="${_propeller_profile_path/#\~/$HOME}"
+  fi
+
+  echo -e "_propeller='$_propeller'\n_propeller_profile_path='$_propeller_profile_path'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+}
+
+_config_after_lto_propeller() {
+  if [[ "$_compiler_name" == "-llvm" && "$_propeller" == "true" ]]; then
+    if [[ $_kver -ge 611 ]]; then
+      _enable PROPELLER_CLANG
+    else
+      warning "Propeller (_propeller=\"true\") requires kernel >= 6.11 - skipping CONFIG_PROPELLER_CLANG"
+    fi
+  fi
+}
+
+_build_make_flags_propeller() {
+  local _cc_profile="" _ld_profile=""
+
+  if [[ "$_propeller" != "true" || -z "$_propeller_profile_path" ]]; then
+    return 0
+  fi
+
+  _propeller_profile_path="${_propeller_profile_path/#\~/$HOME}"
+  _cc_profile="${_propeller_profile_path}_cc_profile.txt"
+  _ld_profile="${_propeller_profile_path}_ld_profile.txt"
+
+  if [[ -f "$_cc_profile" && -f "$_ld_profile" ]]; then
+    # Keep hook stdout clean: only emit make flags here.
+    msg2 "Propeller: using profile path ${_propeller_profile_path}" >&2
+    printf '%s\n' "CLANG_PROPELLER_PROFILE_PREFIX=${_propeller_profile_path}"
+  fi
+}

@@ -1,0 +1,16 @@
+# Source staging files for 'knoobs' configs
+
+_staging_knoobs=(
+	autofdo
+	propeller
+	docs-pkg
+	patches-staging
+	module-driver
+	module-signing
+	nvidia-open
+)
+
+for _knoob in "${_staging_knoobs[@]}"; do
+	[ -r "${_where}/linux-tkg-config/${_knoob}" ] && source "${_where}/linux-tkg-config/${_knoob}"
+done
+unset _knoob

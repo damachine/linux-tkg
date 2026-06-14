@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # List of kernels that are maintained upstream
 _current_kernels=("7.1" "7.0" "6.18" "6.12" "6.6" "6.1" "5.15" "5.10")
@@ -112,6 +112,27 @@ _rt_rev_map=(
   ["6.10"]="11"
 )
 
+_run_staging_knoob() {
+  local _hook="$1"
+  shift
+  local _status=0
+  local _fn
+
+  if declare -F "${_hook}" >/dev/null; then
+    "${_hook}" "$@" || _status=$?
+  fi
+
+  if [ "${_hook}" = "_build_after_kernel" ] && declare -F _build_after_kmod >/dev/null; then
+    _build_after_kmod "$@" || _status=$?
+  fi
+
+  while IFS= read -r _fn; do
+    "${_fn}" "$@" || _status=$?
+  done < <(declare -F | awk '{print $3}' | grep -E "^${_hook}_" | sort)
+
+  return "${_status}"
+}
+
 _undefine() {
   for _config_name in "$@"; do
     scripts/config -k --undefine "${_config_name}"
@@ -138,6 +159,10 @@ _module() {
     scripts/config -k --module "${_config_name}"
     echo "Defined ${_config_name} as module" >> "$_where"/logs/prepare.log.txt
   done
+}
+
+_vanilla_mode() {
+  [[ "$_vanilla" =~ ^(Y|y|Yes|yes|true|1)$ ]];
 }
 
 _prompt_from_array() {
@@ -255,7 +280,7 @@ _set_kver_internal_vars() {
     _default_cpu_sched="eevdf"
   fi
 
-  echo -e "_basekernel='$_basekernel'\n_basever='$_basever'\n_sub='$_sub'\n_kver='$_kver'\n_default_cpu_sched='$_default_cpu_sched'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_basekernel='$_basekernel'\n_basever='$_basever'\n_sub='$_sub'\n_kver='$_kver'\n_default_cpu_sched='$_default_cpu_sched'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 }
 
 _set_kernel_version() {
@@ -325,7 +350,7 @@ _set_kernel_version() {
 
     _kernel_git_tag="$_selected_value"
   fi
-  echo -e "_kernel_git_tag='$_kernel_git_tag'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_kernel_git_tag='$_kernel_git_tag'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 }
 
 _set_cpu_scheduler() {
@@ -367,8 +392,9 @@ _set_cpu_scheduler() {
     _avail_cpu_scheds+=("muqss")
   fi
 
-  if [ "${_preempt_rt}" = "1" ]; then
-    warning "! Since you have enabled _preempt_rt, incompatible cpu schedulers will not be available !"
+  if [[ "${_preempt_rt}" == "1" ]] || _vanilla_mode; then
+    [[ "${_preempt_rt}" == "1" ]] && warning "! Since you have enabled _preempt_rt, incompatible cpu schedulers will not be available !"
+    _vanilla_mode && warning "_vanilla toggle active, only default scheduler available"
     _avail_cpu_scheds=("$_default_cpu_sched")
   fi
 
@@ -401,10 +427,13 @@ _set_cpu_scheduler() {
 
   msg2 "Using $_cpusched CPU schduler"
 
-  echo -e "_cpusched='$_cpusched'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_cpusched='$_cpusched'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 }
 
 _set_compiler(){
+  _run_staging_knoob autofdo_preflight
+  _run_staging_knoob propeller_preflight
+
   if ! [[ "$_compiler" =~ ^(gcc|llvm)$ ]]; then
     if [ -n "$_compiler" ] && [ "$_nofallback" = "true" ]; then
       msg2 "Compiler \" $_compiler \" not recognized, exiting..."
@@ -422,7 +451,7 @@ _set_compiler(){
 
   if [ "$_compiler" = "llvm" ]; then
     _compiler_name="-llvm"
-    llvm_opt="LLVM=1 LLVM_IAS=${_llvm_ias:-0}"
+    llvm_opt="CC=clang LD=ld.lld LLVM=1 LLVM_IAS=${_llvm_ias:-0}"
     if [ $_kver -ge 512 ]; then
       if [[ -z "$_lto_mode" || ! "$_lto_mode" =~ ^(no|thin|full)$ ]]; then
         plain "Would you like to enable Clang Link Time Optimizations (LTO) ? It may improve the performance of the kernel."
@@ -439,7 +468,7 @@ _set_compiler(){
         _lto_mode="${_lto_mode_array[$_selected_index]}"
       fi
       if [ "$_lto_mode" != "no" ]; then
-        llvm_opt="LLVM=1 LLVM_IAS=1"
+        llvm_opt="CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1"
       fi
     elif [[ -n "$_lto_mode" && "$_lto_mode" != "no" ]]; then
       warning "Clang LTO is only available on linux 5.12 onwards."
@@ -450,7 +479,29 @@ _set_compiler(){
     llvm_opt=""
   fi
 
-  echo -e "_compiler_name='$_compiler_name'\nllvm_opt='$llvm_opt'" >> "$_where"/BIG_UGLY_FROGMINER
+  if [ "$_compiler" = "llvm" ]; then
+    read -ra BUILD_FLAGS <<< "$llvm_opt"
+  else
+    BUILD_FLAGS=()
+  fi
+
+  _run_staging_knoob autofdo_finalize_compiler
+  _run_staging_knoob propeller_finalize_compiler
+
+  echo -e "_compiler_name='$_compiler_name'\nllvm_opt='$llvm_opt'\n_lto_mode='$_lto_mode'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+  if ((${#BUILD_FLAGS[@]})); then
+    {
+      local _build_flag _build_flag_sep=""
+      printf 'BUILD_FLAGS=('
+      for _build_flag in "${BUILD_FLAGS[@]}"; do
+        printf '%s%q' "$_build_flag_sep" "$_build_flag"
+        _build_flag_sep=" "
+      done
+      printf ')\n'
+    } >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+  else
+    printf 'BUILD_FLAGS=()\n' >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+  fi
 }
 
 _define_kernel_abs_paths() {
@@ -459,13 +510,13 @@ _define_kernel_abs_paths() {
   if [[ "$_kernel_work_folder" == /* ]]; then
     _kernel_work_folder_abs="$_kernel_work_folder/linux-tkg/linux-src-git"
   fi
-  echo -e "_kernel_work_folder_abs=\"$_kernel_work_folder_abs\"" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_kernel_work_folder_abs=\"$_kernel_work_folder_abs\"" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 
   _kernel_source_folder_abs="$_where/$_kernel_source_folder/linux-kernel.git"
   if [[ "$_kernel_source_folder" == /* ]]; then
     _kernel_source_folder_abs="$_kernel_source_folder/linux-tkg/linux-kernel.git"
   fi
-  echo -e "_kernel_source_folder_abs=\"$_kernel_source_folder_abs\"" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_kernel_source_folder_abs=\"$_kernel_source_folder_abs\"" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 
 }
 
@@ -603,9 +654,51 @@ aggregate_user_config() {
     cat "$_cfg"
   } | grep -v -E '^[[:space:]]*(#|$)' \
     | awk -F= '!seen[$1]++' \
-    > "${_where}/BIG_UGLY_FROGMINER"
+    > "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 }
 
+
+_frogminer_bootstrap() {
+  if [[ -n "${FAKEROOTKEY:-}" ]]; then
+    if [[ ! -f "${1:-${_where}/BIG_UGLY_FROGMINER}" ]]; then
+      error "Missing BIG_UGLY_FROGMINER in fakeroot phase."
+      exit 1
+    fi
+    source "${1:-${_where}/BIG_UGLY_FROGMINER}"
+    return
+  fi
+
+  if [[ "${_FROGMINER_BOOTSTRAPPED:-}" == "${_where}" ]]; then
+    if [[ ! -f "${1:-${_where}/BIG_UGLY_FROGMINER}" ]]; then
+      error "Missing BIG_UGLY_FROGMINER after bootstrap."
+      exit 1
+    fi
+    source "${1:-${_where}/BIG_UGLY_FROGMINER}"
+    return
+  fi
+
+  if [[ -e "${2:-${1:-${_where}/BIG_UGLY_FROGMINER}.pending}" ]]; then
+    warning "Cleaning leftover BIG_UGLY_FROGMINER.pending at startup."
+    rm -f "${2:-${1:-${_where}/BIG_UGLY_FROGMINER}.pending}"
+  fi
+  if [[ -e "${1:-${_where}/BIG_UGLY_FROGMINER}" ]]; then
+    warning "Cleaning leftover BIG_UGLY_FROGMINER at startup."
+    rm -f "${1:-${_where}/BIG_UGLY_FROGMINER}"
+  fi
+
+  _FROGMINER_TARGET="${2:-${1:-${_where}/BIG_UGLY_FROGMINER}.pending}"
+  aggregate_user_config
+  echo -e "_ispkgbuild=\"true\"\n_distro=\"Arch\"\n_where=\"${_where}\"" >> "${_FROGMINER_TARGET}"
+
+  source "${_FROGMINER_TARGET}"
+  _tkg_initscript
+
+  mv -f "${2:-${1:-${_where}/BIG_UGLY_FROGMINER}.pending}" "${1:-${_where}/BIG_UGLY_FROGMINER}"
+  unset _FROGMINER_TARGET
+  export _FROGMINER_BOOTSTRAPPED="${_where}"
+
+  source "${1:-${_where}/BIG_UGLY_FROGMINER}"
+}
 
 _tkg_initscript() {
 
@@ -653,8 +746,12 @@ _tkg_initscript() {
 
   _set_compiler
 
+  _run_staging_knoob _set_nvidia_open
+
+  _run_staging_knoob _set_module_drv
+
   if [ -n "$_custom_pkgbase" ]; then
-    echo -e "_custom_pkgbase=\"$_custom_pkgbase\"" >> "$_where"/BIG_UGLY_FROGMINER
+    echo -e "_custom_pkgbase=\"$_custom_pkgbase\"" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
   fi
 }
 
@@ -672,6 +769,7 @@ user_patcher() {
 	# To patch the user because all your base are belong to us
 	local _patches=("$_where"/linux"$_basever"-tkg-userpatches/*."${_userpatch_ext}revert")
 	if [ ${#_patches[@]} -ge 2 ] || [ -e "${_patches}" ]; then
+    _vanilla_mode && warning "Vanilla mode is enabled, you may not want to apply some of these user revert patches."
 	  if [ "$_user_patches_no_confirm" != "true" ]; then
 	    msg2 "Found ${#_patches[@]} 'to revert' userpatches for ${_userpatch_target}:"
 	    printf '%s\n' "${_patches[@]}"
@@ -694,6 +792,7 @@ user_patcher() {
 
 	_patches=("$_where"/linux"$_basever"-tkg-userpatches/*."${_userpatch_ext}patch")
 	if [ ${#_patches[@]} -ge 2 ] || [ -e "${_patches}" ]; then
+    _vanilla_mode && warning "Vanilla mode is enabled, you may not want to apply some of these user patches."
 	  if [ "$_user_patches_no_confirm" != "true" ]; then
 	    msg2 "Found ${#_patches[@]} userpatches for ${_userpatch_target}:"
 	    printf '%s\n' "${_patches[@]}"
@@ -716,6 +815,11 @@ user_patcher() {
 }
 
 _tkg_patcher() {
+  _run_staging_knoob _patch_allowed "$@" || return 0
+  if _vanilla_mode && [[ "$1" != "--vanilla-friendly" ]]; then
+    warning "_vanilla toggle active: not applying ${tkgpatch##*/}"
+    return 0
+  fi
   if [ -e "$tkgpatch" ] && [[ $(wc -l <"$tkgpatch") -ge 7 ]]; then
     msg2 "$_msg"
     echo -e "### Applying ${tkgpatch##*/}... ###" >> "$_where"/logs/prepare.log.txt
@@ -736,16 +840,15 @@ _tkg_srcprep() {
   fi
 
   if [ "${_distro}" = "Arch" ]; then
+    local _vanilla_tag=""
+    _vanilla_mode && _vanilla_tag="vanilla-"
     if [ -n "$_custom_pkgbase" ]; then
-      if [[ "$_custom_pkgbase" != *tkg* ]]; then
-        _localversion_tag="-tkg-"
-      else
-        _localversion_tag="-"
-      fi
-      echo "-${pkgrel}${_localversion_tag}${_custom_pkgbase}" > localversion.10-pkgrel
+      local _tkg_watermark=""
+      [[ "$_custom_pkgbase" != *tkg* ]] && _tkg_watermark="tkg-"
+      echo "-${pkgrel}-${_tkg_watermark}${_vanilla_tag}${_custom_pkgbase}" > localversion.10-pkgrel
       echo -e "Version tail set to \"-${pkgrel}${_localversion_tag}${_custom_pkgbase}\"\n" > "$_where"/logs/prepare.log.txt
     else
-      echo "-$pkgrel-tkg-${_cpusched}${_compiler_name}" > localversion.10-pkgrel
+      echo "-$pkgrel-tkg-${_vanilla_tag}${_cpusched}${_compiler_name}" > localversion.10-pkgrel
       echo -e "Version tail set to \"-$pkgrel-tkg-${_cpusched}${_compiler_name}\"\n" > "$_where"/logs/prepare.log.txt
     fi
     echo "" > localversion.20-pkgname
@@ -811,16 +914,16 @@ _tkg_srcprep() {
   fi
 
   tkgpatch="$srcdir/0013-fedora-rpm.patch"
-  _msg="RPM: fixing spec generator" && _tkg_patcher
+  _msg="RPM: fixing spec generator" && _tkg_patcher --vanilla-friendly
 
   if [[ "$_STRIP" == "true" ]]; then
     tkgpatch="$srcdir/0013-fedora-strip-modules.patch"
-    _msg="RPM: strip modules" && _tkg_patcher
+    _msg="RPM: strip modules" && _tkg_patcher --vanilla-friendly
   fi
 
   if [ "$_distro" = "Suse" ]; then
     tkgpatch="$srcdir/0013-suse-additions.patch"
-    _msg="Import Suse-specific patches" && _tkg_patcher
+    _msg="Import Suse-specific patches" && _tkg_patcher --vanilla-friendly
   fi
 
   if [ "$_distro" = "Gentoo" ]; then
@@ -1041,6 +1144,8 @@ _tkg_srcprep() {
     fi
   fi
 
+  _run_staging_knoob _config_after_lto
+
   if [ "$_distro" = "Gentoo" ]; then
     # Default config for Gentoo as defined in kconfig
     _enable "GENTOO_LINUX" "GENTOO_LINUX_UDEV" "GENTOO_LINUX_PORTAGE" "GENTOO_LINUX_INIT_SCRIPT" "GENTOO_PRINT_FIRMWARE_INFO" "GENTOO_LINUX_INIT_SYSTEMD"
@@ -1146,7 +1251,7 @@ _tkg_srcprep() {
 
   msg2 "Setting cpu micro architecture to $_processor_opt"
 
-  echo "_processor_opt='$_processor_opt'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo "_processor_opt='$_processor_opt'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 
   # Disable some debugging
   if [ "${_debugdisable}" = "true" ]; then
@@ -1719,6 +1824,8 @@ fi
   fi
 
   # We're done with tkgpatch
+  _run_staging_knoob _staging_patches
+
   unset tkgpatch
   unset _msg
 
@@ -1950,7 +2057,9 @@ fi
     fi
   fi
 
-  # copy new config file back to the user's git folder for an eventual future use
+  # Apply NVIDIA open kernel module patches
+  _run_staging_knoob _nvidia_patch
+
   cp .config "${_where}"/kernelconfig.new
 }
 
@@ -1972,8 +2081,15 @@ exit_cleanup() {
   rm -f "$_where"/prepare
   rm -f "$_where"/minimal-modprobed.db
 
+  # Staging cleanup
+  rm -f "$_where"/kernelconfig.new
+  rm -rf "$_where"/it87
+  rm -rf "$_where"/nct6687
+  rm -rf "$_where"/v4l2loopback
+
   # Move BIG_UGLY_FROGMINER into the logs, since it has the actual final customization state
   [[ -f "$_where"/BIG_UGLY_FROGMINER ]] && mv "$_where"/BIG_UGLY_FROGMINER "$_where"/logs/customization.cfg.txt
+  rm -f "${_where}/BIG_UGLY_FROGMINER.pending"
 
   # Remove ntsync rules file
   rm -f "$_where"/ntsync.rules
