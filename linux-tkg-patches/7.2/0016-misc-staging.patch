@@ -1,0 +1,3390 @@
+From 32b9459596edd2363c37bbf7c1cca6a3ec43fdbd Mon Sep 17 00:00:00 2001
+From: Natalie Vock <natalie.vock@gmx.de>
+Date: Sun, 31 Aug 2025 17:17:20 +0200
+Subject: [PATCH 01/36] cgroup/dmem: Add queries for protection values
+
+Callers can use this feedback to be more aggressive in making space for
+allocations of a cgroup if they know it is protected.
+
+These are counterparts to memcg's mem_cgroup_below_{min,low}.
+
+Signed-off-by: Natalie Vock <natalie.vock@gmx.de>
+---
+ include/linux/cgroup_dmem.h | 16 ++++++++++
+ kernel/cgroup/dmem.c        | 62 +++++++++++++++++++++++++++++++++++++
+ 2 files changed, 78 insertions(+)
+
+diff --git a/include/linux/cgroup_dmem.h b/include/linux/cgroup_dmem.h
+index dd4869f1d..1a88cd0c9 100644
+--- a/include/linux/cgroup_dmem.h
++++ b/include/linux/cgroup_dmem.h
+@@ -24,6 +24,10 @@ void dmem_cgroup_uncharge(struct dmem_cgroup_pool_state *pool, u64 size);
+ bool dmem_cgroup_state_evict_valuable(struct dmem_cgroup_pool_state *limit_pool,
+ 				      struct dmem_cgroup_pool_state *test_pool,
+ 				      bool ignore_low, bool *ret_hit_low);
++bool dmem_cgroup_below_min(struct dmem_cgroup_pool_state *root,
++			   struct dmem_cgroup_pool_state *test);
++bool dmem_cgroup_below_low(struct dmem_cgroup_pool_state *root,
++			   struct dmem_cgroup_pool_state *test);
+ 
+ void dmem_cgroup_pool_state_put(struct dmem_cgroup_pool_state *pool);
+ #else
+@@ -59,6 +63,18 @@ bool dmem_cgroup_state_evict_valuable(struct dmem_cgroup_pool_state *limit_pool,
+ 	return true;
+ }
+ 
++static inline bool dmem_cgroup_below_min(struct dmem_cgroup_pool_state *root,
++					 struct dmem_cgroup_pool_state *test)
++{
++	return false;
++}
++
++static inline bool dmem_cgroup_below_low(struct dmem_cgroup_pool_state *root,
++					 struct dmem_cgroup_pool_state *test)
++{
++	return false;
++}
++
+ static inline void dmem_cgroup_pool_state_put(struct dmem_cgroup_pool_state *pool)
+ { }
+ 
+diff --git a/kernel/cgroup/dmem.c b/kernel/cgroup/dmem.c
+index 4753a67d0..be8499a5b 100644
+--- a/kernel/cgroup/dmem.c
++++ b/kernel/cgroup/dmem.c
+@@ -695,6 +695,68 @@ int dmem_cgroup_try_charge(struct dmem_cgroup_region *region, u64 size,
+ }
+ EXPORT_SYMBOL_GPL(dmem_cgroup_try_charge);
+ 
++/**
++ * dmem_cgroup_below_min() - Tests whether current usage is within min limit.
++ *
++ * @root: Root of the subtree to calculate protection for, or NULL to calculate global protection.
++ * @test: The pool to test the usage/min limit of.
++ *
++ * Return: true if usage is below min and the cgroup is protected, false otherwise.
++ */
++bool dmem_cgroup_below_min(struct dmem_cgroup_pool_state *root,
++			   struct dmem_cgroup_pool_state *test)
++{
++	if (root == test || !pool_parent(test))
++		return false;
++
++	if (!root) {
++		for (root = test; pool_parent(root); root = pool_parent(root))
++			{}
++	}
++
++	/*
++	 * In mem_cgroup_below_min(), the memcg pendant, this call is missing.
++	 * mem_cgroup_below_min() gets called during traversal of the cgroup tree, where
++	 * protection is already calculated as part of the traversal. dmem cgroup eviction
++	 * does not traverse the cgroup tree, so we need to recalculate effective protection
++	 * here.
++	 */
++	dmem_cgroup_calculate_protection(root, test);
++	return page_counter_read(&test->cnt) <= READ_ONCE(test->cnt.emin);
++}
++EXPORT_SYMBOL_GPL(dmem_cgroup_below_min);
++
++/**
++ * dmem_cgroup_below_low() - Tests whether current usage is within low limit.
++ *
++ * @root: Root of the subtree to calculate protection for, or NULL to calculate global protection.
++ * @test: The pool to test the usage/low limit of.
++ *
++ * Return: true if usage is below low and the cgroup is protected, false otherwise.
++ */
++bool dmem_cgroup_below_low(struct dmem_cgroup_pool_state *root,
++			   struct dmem_cgroup_pool_state *test)
++{
++	if (root == test || !pool_parent(test))
++		return false;
++
++	if (!root) {
++		for (root = test; pool_parent(root); root = pool_parent(root))
++			{}
++	}
++
++	/*
++	 * In mem_cgroup_below_low(), the memcg pendant, this call is missing.
++	 * mem_cgroup_below_low() gets called during traversal of the cgroup tree, where
++	 * protection is already calculated as part of the traversal. dmem cgroup eviction
++	 * does not traverse the cgroup tree, so we need to recalculate effective protection
++	 * here.
++	 */
++	dmem_cgroup_calculate_protection(root, test);
++	return page_counter_read(&test->cnt) <= READ_ONCE(test->cnt.elow);
++}
++EXPORT_SYMBOL_GPL(dmem_cgroup_below_low);
++
+ static int dmem_cgroup_region_capacity_show(struct seq_file *sf, void *v)
+ {
+ 	struct dmem_cgroup_region *region;
+-- 
+2.54.0
+
+
+From 3a77aa7861f9503b32a5011ffbf1e5371f710b29 Mon Sep 17 00:00:00 2001
+From: Natalie Vock <natalie.vock@gmx.de>
+Date: Sun, 14 Sep 2025 18:35:45 +0200
+Subject: [PATCH 02/36] cgroup,cgroup/dmem: Add (dmem_)cgroup_common_ancestor
+ helper
+
+This helps to find a common subtree of two resources, which is important
+when determining whether it's helpful to evict one resource in favor of
+another.
+
+To facilitate this, add a common helper to find the ancestor of two
+cgroups using each cgroup's ancestor array.
+
+Signed-off-by: Natalie Vock <natalie.vock@gmx.de>
+---
+ include/linux/cgroup.h      | 21 +++++++++++++++++++++
+ include/linux/cgroup_dmem.h |  9 +++++++++
+ kernel/cgroup/dmem.c        | 29 +++++++++++++++++++++++++++++
+ 3 files changed, 59 insertions(+)
+
+diff --git a/include/linux/cgroup.h b/include/linux/cgroup.h
+index f2aa46a4f..83a17ded1 100644
+--- a/include/linux/cgroup.h
++++ b/include/linux/cgroup.h
+@@ -623,6 +623,27 @@ static inline struct cgroup *cgroup_ancestor(struct cgroup *cgrp,
+ 	return cgrp->ancestors[ancestor_level];
+ }
+ 
++/**
++ * cgroup_common_ancestor - find common ancestor of two cgroups
++ * @a: first cgroup to find common ancestor of
++ * @b: second cgroup to find common ancestor of
++ *
++ * Find the first cgroup that is an ancestor of both @a and @b, if it exists
++ * and return a pointer to it. If such a cgroup doesn't exist, return NULL.
++ *
++ * This function is safe to call as long as both @a and @b are accessible.
++ */
++static inline struct cgroup *cgroup_common_ancestor(struct cgroup *a,
++						    struct cgroup *b)
++{
++	int level;
++
++	for (level = min(a->level, b->level); level >= 0; level--)
++		if (a->ancestors[level] == b->ancestors[level])
++			return a->ancestors[level];
++	return NULL;
++}
++
+ /**
+  * task_under_cgroup_hierarchy - test task's membership of cgroup ancestry
+  * @task: the task to be tested
+diff --git a/include/linux/cgroup_dmem.h b/include/linux/cgroup_dmem.h
+index 1a88cd0c9..9d72457c4 100644
+--- a/include/linux/cgroup_dmem.h
++++ b/include/linux/cgroup_dmem.h
+@@ -28,6 +28,8 @@ bool dmem_cgroup_below_min(struct dmem_cgroup_pool_state *root,
+ 			   struct dmem_cgroup_pool_state *test);
+ bool dmem_cgroup_below_low(struct dmem_cgroup_pool_state *root,
+ 			   struct dmem_cgroup_pool_state *test);
++struct dmem_cgroup_pool_state *dmem_cgroup_get_common_ancestor(struct dmem_cgroup_pool_state *a,
++							       struct dmem_cgroup_pool_state *b);
+ 
+ void dmem_cgroup_pool_state_put(struct dmem_cgroup_pool_state *pool);
+ #else
+@@ -75,6 +77,13 @@ static inline bool dmem_cgroup_below_low(struct dmem_cgroup_pool_state *root,
+ 	return false;
+ }
+ 
++static inline
++struct dmem_cgroup_pool_state *dmem_cgroup_get_common_ancestor(struct dmem_cgroup_pool_state *a,
++							       struct dmem_cgroup_pool_state *b)
++{
++	return NULL;
++}
++
+ static inline void dmem_cgroup_pool_state_put(struct dmem_cgroup_pool_state *pool)
+ { }
+ 
+diff --git a/kernel/cgroup/dmem.c b/kernel/cgroup/dmem.c
+index be8499a5b..7d22536be 100644
+--- a/kernel/cgroup/dmem.c
++++ b/kernel/cgroup/dmem.c
+@@ -757,6 +757,35 @@ bool dmem_cgroup_below_low(struct dmem_cgroup_pool_state *root,
+ }
+ EXPORT_SYMBOL_GPL(dmem_cgroup_below_low);
+ 
++/**
++ * dmem_cgroup_get_common_ancestor(): Find the first common ancestor of two pools.
++ * @a: First pool to find the common ancestor of.
++ * @b: First pool to find the common ancestor of.
++ *
++ * Return: The first pool that is a parent of both @a and @b, or NULL if either @a or @b are NULL,
++ * or if such a pool does not exist. A reference to the returned pool is grabbed and must be
++ * released by the caller when it is done using the pool.
++ */
++struct dmem_cgroup_pool_state *dmem_cgroup_get_common_ancestor(struct dmem_cgroup_pool_state *a,
++							       struct dmem_cgroup_pool_state *b)
++{
++	struct cgroup *ancestor_cgroup;
++	struct cgroup_subsys_state *ancestor_css;
++
++	if (!a || !b)
++		return NULL;
++
++	ancestor_cgroup = cgroup_common_ancestor(a->cs->css.cgroup, b->cs->css.cgroup);
++	if (!ancestor_cgroup)
++		return NULL;
++
++	ancestor_css = cgroup_e_css(ancestor_cgroup, &dmem_cgrp_subsys);
++	css_get(ancestor_css);
++
++	return get_cg_pool_unlocked(css_to_dmemcs(ancestor_css), a->region);
++}
++EXPORT_SYMBOL_GPL(dmem_cgroup_get_common_ancestor);
++
+ static int dmem_cgroup_region_capacity_show(struct seq_file *sf, void *v)
+ {
+ 	struct dmem_cgroup_region *region;
+-- 
+2.54.0
+
+
+From 5d3f6f6168cb6820c03b94c9b9d4d64bcdaee8cc Mon Sep 17 00:00:00 2001
+From: Natalie Vock <natalie.vock@gmx.de>
+Date: Wed, 15 Oct 2025 14:43:26 +0200
+Subject: [PATCH 03/36] drm/ttm: Extract code for attempting allocation in a
+ place
+
+Move all code for attempting allocation for a specific place to
+ttm_bo_alloc_place. With subsequent patches, this logic is going to get
+more complicated, so it helps readability to have this separate.
+
+ttm_bo_alloc_at_place takes a pointer to a struct ttm_bo_alloc_state.
+This struct holds various state produced by the allocation (e.g. cgroup
+resource associated with the allocation) that the caller needs to keep
+track of (and potentially dispose of). This is just the limiting cgroup
+pool for now, but future patches will add more state needing to be tracked.
+
+ttm_bo_alloc_at_place also communicates via return codes if eviction
+using ttm_bo_evict_alloc should be attempted. This is preparation for
+attempting eviction in more cases than just force_space being set.
+
+No functional change intended.
+
+Signed-off-by: Natalie Vock <natalie.vock@gmx.de>
+Reviewed-by: Tvrtko Ursulin <tvrtko.ursulin@igalia.com>
+---
+ drivers/gpu/drm/ttm/ttm_bo.c | 117 ++++++++++++++++++++++++++---------
+ 1 file changed, 89 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/gpu/drm/ttm/ttm_bo.c b/drivers/gpu/drm/ttm/ttm_bo.c
+index bcd76f6bb..7abb32064 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo.c
++++ b/drivers/gpu/drm/ttm/ttm_bo.c
+@@ -488,6 +488,62 @@ int ttm_bo_evict_first(struct ttm_device *bdev, struct ttm_resource_manager *man
+ 	return ret;
+ }
+ 
++struct ttm_bo_alloc_state {
++	/** @limit_pool: Which pool limit we should test against */
++	struct dmem_cgroup_pool_state *limit_pool;
++};
++
++/**
++ * ttm_bo_alloc_at_place - Attempt allocating a BO's backing store in a place
++ *
++ * @bo: The buffer to allocate the backing store of
++ * @place: The place to attempt allocation in
++ * @ctx: ttm_operation_ctx associated with this allocation
++ * @force_space: If we should evict buffers to force space
++ * @res: On allocation success, the resulting struct ttm_resource.
++ * @alloc_state: Object holding allocation state such as charged cgroups.
++ *
++ * Returns:
++ * -EBUSY: No space available, but allocation should be retried with ttm_bo_evict_alloc.
++ * -ENOSPC: No space available, allocation should not be retried.
++ * -ERESTARTSYS: An interruptible sleep was interrupted by a signal.
++ *
++ */
++static int ttm_bo_alloc_at_place(struct ttm_buffer_object *bo,
++				 const struct ttm_place *place,
++				 struct ttm_operation_ctx *ctx,
++				 bool force_space,
++				 struct ttm_resource **res,
++				 struct ttm_bo_alloc_state *alloc_state)
++{
++	bool may_evict;
++	int ret;
++
++	may_evict = force_space && place->mem_type != TTM_PL_SYSTEM;
++
++	ret = ttm_resource_alloc(bo, place, res,
++				 force_space ? &alloc_state->limit_pool : NULL);
++
++	if (ret) {
++		/*
++		 * -EAGAIN means the charge failed, which we treat like an
++		 * allocation failure. Therefore, return an error code indicating
++		 * the allocation failed - either -EBUSY if the allocation should
++		 * be retried with eviction, or -ENOSPC if there should be no second
++		 * attempt.
++		 */
++		if (ret == -EAGAIN)
++			return may_evict ? -EBUSY : -ENOSPC;
++
++		if (ret == -ENOSPC && may_evict)
++			return -EBUSY;
++
++		return ret;
++	}
++
++	return 0;
++}
++
+ /**
+  * struct ttm_bo_evict_walk - Parameters for the evict walk.
+  */
+@@ -503,12 +559,13 @@ struct ttm_bo_evict_walk {
+ 	/** @evicted: Number of successful evictions. */
+ 	unsigned long evicted;
+ 
+-	/** @limit_pool: Which pool limit we should test against */
+-	struct dmem_cgroup_pool_state *limit_pool;
+ 	/** @try_low: Whether we should attempt to evict BO's with low watermark threshold */
+ 	bool try_low;
+ 	/** @hit_low: If we cannot evict a bo when @try_low is false (first pass) */
+ 	bool hit_low;
++
++	/** @alloc_state: State associated with the allocation attempt. */
++	struct ttm_bo_alloc_state *alloc_state;
+ };
+ 
+ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *bo)
+@@ -517,8 +574,9 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
+ 		container_of(walk, typeof(*evict_walk), walk);
+ 	s64 lret;
+ 
+-	if (!dmem_cgroup_state_evict_valuable(evict_walk->limit_pool, bo->resource->css,
+-					      evict_walk->try_low, &evict_walk->hit_low))
++	if (!dmem_cgroup_state_evict_valuable(evict_walk->alloc_state->limit_pool,
++					      bo->resource->css, evict_walk->try_low,
++					      &evict_walk->hit_low))
+ 		return 0;
+ 
+ 	if (bo->pin_count || !bo->bdev->funcs->eviction_valuable(bo, evict_walk->place))
+@@ -560,7 +618,7 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+ 			      struct ttm_operation_ctx *ctx,
+ 			      struct ww_acquire_ctx *ticket,
+ 			      struct ttm_resource **res,
+-			      struct dmem_cgroup_pool_state *limit_pool)
++			      struct ttm_bo_alloc_state *state)
+ {
+ 	struct ttm_bo_evict_walk evict_walk = {
+ 		.walk = {
+@@ -573,7 +631,7 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+ 		.place = place,
+ 		.evictor = evictor,
+ 		.res = res,
+-		.limit_pool = limit_pool,
++		.alloc_state = state,
+ 	};
+ 	s64 lret;
+ 
+@@ -724,9 +782,8 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
+ 
+ 	for (i = 0; i < placement->num_placement; ++i) {
+ 		const struct ttm_place *place = &placement->placement[i];
+-		struct dmem_cgroup_pool_state *limit_pool = NULL;
++		struct ttm_bo_alloc_state alloc_state = {};
+ 		struct ttm_resource_manager *man;
+-		bool may_evict;
+ 
+ 		man = ttm_manager_type(bdev, place->mem_type);
+ 		if (!man || !ttm_resource_manager_used(man))
+@@ -736,25 +793,25 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
+ 				    TTM_PL_FLAG_FALLBACK))
+ 			continue;
+ 
+-		may_evict = (force_space && place->mem_type != TTM_PL_SYSTEM);
+-		ret = ttm_resource_alloc(bo, place, res, force_space ? &limit_pool : NULL);
+-		if (ret) {
+-			if (ret != -ENOSPC) {
+-				dmem_cgroup_pool_state_put(limit_pool);
+-				return ret;
+-			}
+-			if (!may_evict) {
+-				dmem_cgroup_pool_state_put(limit_pool);
+-				continue;
+-			}
++		ret = ttm_bo_alloc_at_place(bo, place, ctx, force_space,
++				res, &alloc_state);
+ 
++		if (ret == -ENOSPC) {
++			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
++			continue;
++		} else if (ret == -EBUSY) {
+ 			ret = ttm_bo_evict_alloc(bdev, man, place, bo, ctx,
+-						 ticket, res, limit_pool);
+-			dmem_cgroup_pool_state_put(limit_pool);
++						 ticket, res, &alloc_state);
++
++			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
++
+ 			if (ret == -EBUSY)
+ 				continue;
+-			if (ret)
++			else if (ret)
+ 				return ret;
++		} else if (ret) {
++			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
++			return ret;
+ 		}
+ 
+ 		ret = ttm_bo_add_pipelined_eviction_fences(bo, man, ctx->no_wait_gpu);
+@@ -1177,13 +1234,17 @@ ttm_bo_swapout_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *bo)
+ 		bdev->funcs->swap_notify(bo);
+ 
+ 	if (ttm_tt_is_populated(tt)) {
++		spin_lock(&bdev->lru_lock);
++		ttm_resource_del_bulk_move(bo->resource, bo);
++		spin_unlock(&bdev->lru_lock);
++
+ 		ret = ttm_tt_swapout(bdev, tt, swapout_walk->gfp_flags);
+-		if (!ret) {
+-			spin_lock(&bdev->lru_lock);
+-			ttm_resource_del_bulk_move_unevictable(bo->resource, bo);
+-			ttm_resource_move_to_lru_tail(bo->resource);
+-			spin_unlock(&bdev->lru_lock);
+-		}
++
++		spin_lock(&bdev->lru_lock);
++		if (ret)
++			ttm_resource_add_bulk_move(bo->resource, bo);
++		ttm_resource_move_to_lru_tail(bo->resource);
++		spin_unlock(&bdev->lru_lock);
+ 	}
+ 
+ out:
+-- 
+2.54.0
+
+
+From a84c1a2677cc7395a491383e87340809bf8a822d Mon Sep 17 00:00:00 2001
+From: Natalie Vock <natalie.vock@gmx.de>
+Date: Wed, 25 Feb 2026 11:29:40 +0100
+Subject: [PATCH 04/36] drm/ttm: Split cgroup charge and resource allocation
+
+Coupling resource allocation and cgroup charging is racy when charging
+succeeds, but subsequent resource allocation fails. Certain eviction
+decisions are made on the basis of whether the allocating cgroup is
+protected, i.e. within its min/low limits, but with the charge being
+tied to resource allocation (and uncharged when the resource allocation
+fails), this check is done at a point where the allocation is not actually
+charged to the cgroup.
+
+This is subtly wrong if the allocation were to cause the cgroup to exceed
+the min/low protection, but it's even more wrong if the same cgroup tries
+allocating multiple buffers concurrently: In this case, the min/low
+protection may pass for all allocation attempts when the real min/low
+protection covers only some, or potentially none of the allocated
+buffers.
+
+Instead, charge the allocation to the cgroup once and keep the charge
+for as long as we try to allocate a ttm_resource, and only undo the charge
+if allocating the resource is ultimately unsuccessful and we move on to
+a different ttm_place.
+
+Signed-off-by: Natalie Vock <natalie.vock@gmx.de>
+---
+ drivers/gpu/drm/ttm/ttm_bo.c       | 66 ++++++++++++++++++++----------
+ drivers/gpu/drm/ttm/ttm_resource.c | 64 ++++++++++++++++-------------
+ include/drm/ttm/ttm_resource.h     |  6 ++-
+ 3 files changed, 85 insertions(+), 51 deletions(-)
+
+diff --git a/drivers/gpu/drm/ttm/ttm_bo.c b/drivers/gpu/drm/ttm/ttm_bo.c
+index 7abb32064..c0c4f8fcb 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo.c
++++ b/drivers/gpu/drm/ttm/ttm_bo.c
+@@ -489,8 +489,12 @@ int ttm_bo_evict_first(struct ttm_device *bdev, struct ttm_resource_manager *man
+ }
+ 
+ struct ttm_bo_alloc_state {
++	/** @charge_pool: The memory pool the resource is charged to */
++	struct dmem_cgroup_pool_state *charge_pool;
+ 	/** @limit_pool: Which pool limit we should test against */
+ 	struct dmem_cgroup_pool_state *limit_pool;
++	/** @in_evict: Whether we are currently evicting buffers */
++	bool in_evict;
+ };
+ 
+ /**
+@@ -519,28 +523,39 @@ static int ttm_bo_alloc_at_place(struct ttm_buffer_object *bo,
+ 	bool may_evict;
+ 	int ret;
+ 
+-	may_evict = force_space && place->mem_type != TTM_PL_SYSTEM;
+-
+-	ret = ttm_resource_alloc(bo, place, res,
+-				 force_space ? &alloc_state->limit_pool : NULL);
++	may_evict = !alloc_state->in_evict && force_space &&
++		    place->mem_type != TTM_PL_SYSTEM;
++	if (!alloc_state->charge_pool) {
++		ret = ttm_resource_try_charge(bo, place, &alloc_state->charge_pool,
++					      force_space ? &alloc_state->limit_pool
++							  : NULL);
++		if (ret) {
++			/*
++			 * -EAGAIN means the charge failed, which we treat
++			 * like an allocation failure. Therefore, return an
++			 * error code indicating the allocation failed -
++			 * either -EBUSY if the allocation should be
++			 * retried with eviction, or -ENOSPC if there should
++			 * be no second attempt.
++			 */
++			if (ret == -EAGAIN)
++				ret = may_evict ? -EBUSY : -ENOSPC;
++			return ret;
++		}
++	}
+ 
++	ret = ttm_resource_alloc(bo, place, res, alloc_state->charge_pool);
+ 	if (ret) {
+-		/*
+-		 * -EAGAIN means the charge failed, which we treat like an
+-		 * allocation failure. Therefore, return an error code indicating
+-		 * the allocation failed - either -EBUSY if the allocation should
+-		 * be retried with eviction, or -ENOSPC if there should be no second
+-		 * attempt.
+-		 */
+-		if (ret == -EAGAIN)
+-			return may_evict ? -EBUSY : -ENOSPC;
+-
+ 		if (ret == -ENOSPC && may_evict)
+-			return -EBUSY;
+-
++			ret = -EBUSY;
+ 		return ret;
+ 	}
+ 
++	/*
++	 * Ownership of charge_pool has been transferred to the TTM resource,
++	 * don't make the caller think we still hold a reference to it.
++	 */
++	alloc_state->charge_pool = NULL;
+ 	return 0;
+ }
+ 
+@@ -595,8 +610,9 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
+ 
+ 	evict_walk->evicted++;
+ 	if (evict_walk->res)
+-		lret = ttm_resource_alloc(evict_walk->evictor, evict_walk->place,
+-					  evict_walk->res, NULL);
++		lret = ttm_bo_alloc_at_place(evict_walk->evictor, evict_walk->place,
++					     walk->arg.ctx, false, evict_walk->res,
++					     evict_walk->alloc_state);
+ 	if (lret == 0)
+ 		return 1;
+ out:
+@@ -635,6 +651,8 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+ 	};
+ 	s64 lret;
+ 
++	state->in_evict = true;
++
+ 	evict_walk.walk.arg.trylock_only = true;
+ 	lret = ttm_lru_walk_for_evict(&evict_walk.walk, bdev, man, 1);
+ 
+@@ -665,6 +683,7 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+ 		goto retry;
+ 	}
+ out:
++	state->in_evict = false;
+ 	if (lret < 0)
+ 		return lret;
+ 	if (lret == 0)
+@@ -797,6 +816,7 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
+ 				res, &alloc_state);
+ 
+ 		if (ret == -ENOSPC) {
++			dmem_cgroup_uncharge(alloc_state.charge_pool, bo->base.size);
+ 			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
+ 			continue;
+ 		} else if (ret == -EBUSY) {
+@@ -805,11 +825,15 @@ static int ttm_bo_alloc_resource(struct ttm_buffer_object *bo,
+ 
+ 			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
+ 
+-			if (ret == -EBUSY)
+-				continue;
+-			else if (ret)
++			if (ret) {
++				dmem_cgroup_uncharge(alloc_state.charge_pool,
++						bo->base.size);
++				if (ret == -EBUSY)
++					continue;
+ 				return ret;
++			}
+ 		} else if (ret) {
++			dmem_cgroup_uncharge(alloc_state.charge_pool, bo->base.size);
+ 			dmem_cgroup_pool_state_put(alloc_state.limit_pool);
+ 			return ret;
+ 		}
+diff --git a/drivers/gpu/drm/ttm/ttm_resource.c b/drivers/gpu/drm/ttm/ttm_resource.c
+index 154d67392..c1d2ae0a6 100644
+--- a/drivers/gpu/drm/ttm/ttm_resource.c
++++ b/drivers/gpu/drm/ttm/ttm_resource.c
+@@ -292,19 +292,6 @@ void ttm_resource_del_bulk_move(struct ttm_resource *res,
+ 		ttm_lru_bulk_move_del(bo->bulk_move, res);
+ }
+ 
+-/*
+- * Remove a resource from its bulk_move, bypassing the unevictable check.
+- * Use only when the resource is known to still be tracked in the range despite
+- * the BO having just become unevictable; asserts that this is the case.
+- */
+-void ttm_resource_del_bulk_move_unevictable(struct ttm_resource *res,
+-					    struct ttm_buffer_object *bo)
+-{
+-	WARN_ON_ONCE(!ttm_resource_unevictable(res, bo));
+-	if (bo->bulk_move)
+-		ttm_lru_bulk_move_del(bo->bulk_move, res);
+-}
+-
+ /* Move a resource to the LRU or bulk tail */
+ void ttm_resource_move_to_lru_tail(struct ttm_resource *res)
+ {
+@@ -386,33 +373,52 @@ void ttm_resource_fini(struct ttm_resource_manager *man,
+ }
+ EXPORT_SYMBOL(ttm_resource_fini);
+ 
++/**
++ * ttm_resource_try_charge - charge a resource manager's cgroup pool
++ * @bo: buffer for which an allocation should be charged
++ * @place: where the allocation is attempted to be placed
++ * @ret_pool: on charge success, the pool that was charged
++ * @ret_limit_pool: on charge failure, the pool responsible for the failure
++ *
++ * Should be used to charge cgroups before attempting resource allocation.
++ * When charging succeeds, the value of ret_pool should be passed to
++ * ttm_resource_alloc.
++ *
++ * Returns: 0 on charge success, negative errno on failure.
++ */
++int ttm_resource_try_charge(struct ttm_buffer_object *bo,
++			    const struct ttm_place *place,
++			    struct dmem_cgroup_pool_state **ret_pool,
++			    struct dmem_cgroup_pool_state **ret_limit_pool)
++{
++	struct ttm_resource_manager *man =
++		ttm_manager_type(bo->bdev, place->mem_type);
++
++	if (!man->cg) {
++		*ret_pool = NULL;
++		if (ret_limit_pool)
++			*ret_limit_pool = NULL;
++		return 0;
++	}
++
++	return dmem_cgroup_try_charge(man->cg, bo->base.size, ret_pool,
++				      ret_limit_pool);
++}
++
+ int ttm_resource_alloc(struct ttm_buffer_object *bo,
+ 		       const struct ttm_place *place,
+ 		       struct ttm_resource **res_ptr,
+-		       struct dmem_cgroup_pool_state **ret_limit_pool)
++		       struct dmem_cgroup_pool_state *charge_pool)
+ {
+ 	struct ttm_resource_manager *man =
+ 		ttm_manager_type(bo->bdev, place->mem_type);
+-	struct dmem_cgroup_pool_state *pool = NULL;
+ 	int ret;
+ 
+-	if (man->cg) {
+-		ret = dmem_cgroup_try_charge(man->cg, bo->base.size, &pool, ret_limit_pool);
+-		if (ret) {
+-			if (ret == -EAGAIN)
+-				ret = -ENOSPC;
+-			return ret;
+-		}
+-	}
+-
+ 	ret = man->func->alloc(man, bo, place, res_ptr);
+-	if (ret) {
+-		if (pool)
+-			dmem_cgroup_uncharge(pool, bo->base.size);
++	if (ret)
+ 		return ret;
+-	}
+ 
+-	(*res_ptr)->css = pool;
++	(*res_ptr)->css = charge_pool;
+ 
+ 	spin_lock(&bo->bdev->lru_lock);
+ 	ttm_resource_add_bulk_move(*res_ptr, bo);
+diff --git a/include/drm/ttm/ttm_resource.h b/include/drm/ttm/ttm_resource.h
+index a5d386583..e567b7ec8 100644
+--- a/include/drm/ttm/ttm_resource.h
++++ b/include/drm/ttm/ttm_resource.h
+@@ -458,10 +458,14 @@ void ttm_resource_init(struct ttm_buffer_object *bo,
+ void ttm_resource_fini(struct ttm_resource_manager *man,
+ 		       struct ttm_resource *res);
+ 
++int ttm_resource_try_charge(struct ttm_buffer_object *bo,
++			    const struct ttm_place *place,
++			    struct dmem_cgroup_pool_state **ret_pool,
++			    struct dmem_cgroup_pool_state **ret_limit_pool);
+ int ttm_resource_alloc(struct ttm_buffer_object *bo,
+ 		       const struct ttm_place *place,
+ 		       struct ttm_resource **res,
+-		       struct dmem_cgroup_pool_state **ret_limit_pool);
++		       struct dmem_cgroup_pool_state *charge_pool);
+ void ttm_resource_free(struct ttm_buffer_object *bo, struct ttm_resource **res);
+ bool ttm_resource_intersects(struct ttm_device *bdev,
+ 			     struct ttm_resource *res,
+-- 
+2.54.0
+
+
+From 7aa2f8fb6985eaf659127567bd55e6347910ac44 Mon Sep 17 00:00:00 2001
+From: Natalie Vock <natalie.vock@gmx.de>
+Date: Thu, 11 Sep 2025 11:30:59 +0200
+Subject: [PATCH 05/36] drm/ttm: Be more aggressive when allocating below
+ protection limit
+
+When the cgroup's memory usage is below the low/min limit and allocation
+fails, try evicting some unprotected buffers to make space. Otherwise,
+application buffers may be forced to go into GTT even though usage is
+below the corresponding low/min limit, if other applications filled VRAM
+with their allocations first.
+
+Signed-off-by: Natalie Vock <natalie.vock@gmx.de>
+---
+ drivers/gpu/drm/ttm/ttm_bo.c | 51 +++++++++++++++++++++++++++++++++---
+ 1 file changed, 48 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/ttm/ttm_bo.c b/drivers/gpu/drm/ttm/ttm_bo.c
+index c0c4f8fcb..5fcb090bc 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo.c
++++ b/drivers/gpu/drm/ttm/ttm_bo.c
+@@ -495,6 +495,10 @@ struct ttm_bo_alloc_state {
+ 	struct dmem_cgroup_pool_state *limit_pool;
+ 	/** @in_evict: Whether we are currently evicting buffers */
+ 	bool in_evict;
++	/** @may_try_low: If only unprotected BOs, i.e. BOs whose cgroup
++	 *  is exceeding its dmem low/min protection, should be considered for eviction
++	 */
++	bool may_try_low;
+ };
+ 
+ /**
+@@ -544,6 +548,42 @@ static int ttm_bo_alloc_at_place(struct ttm_buffer_object *bo,
+ 		}
+ 	}
+ 
++	/*
++	 * cgroup protection plays a special role in eviction.
++	 * Conceptually, protection of memory via the dmem cgroup controller
++	 * entitles the protected cgroup to use a certain amount of memory.
++	 * There are two types of protection - the 'low' limit is a
++	 * "best-effort" protection, whereas the 'min' limit provides a hard
++	 * guarantee that memory within the cgroup's allowance will not be
++	 * evicted under any circumstance.
++	 *
++	 * To faithfully model this concept in TTM, we also need to take cgroup
++	 * protection into account when allocating. When allocation in one
++	 * place fails, TTM will default to trying other places first before
++	 * evicting.
++	 * If the allocation is covered by dmem cgroup protection, however,
++	 * this prevents the allocation from using the memory it is "entitled"
++	 * to. To make sure unprotected allocations cannot push new protected
++	 * allocations out of places they are "entitled" to use, we should
++	 * evict buffers not covered by any cgroup protection, if this
++	 * allocation is covered by cgroup protection.
++	 *
++	 * Buffers covered by 'min' protection are a special case - the 'min'
++	 * limit is a stronger guarantee than 'low', and thus buffers protected
++	 * by 'low' but not 'min' should also be considered for eviction.
++	 * Buffers protected by 'min' will never be considered for eviction
++	 * anyway, so the regular eviction path should be triggered here.
++	 * Buffers protected by 'low' but not 'min' will take a special
++	 * eviction path that only evicts buffers covered by neither 'low' or
++	 * 'min' protections.
++	 */
++	if (!alloc_state->in_evict) {
++		may_evict |= dmem_cgroup_below_min(NULL, alloc_state->charge_pool);
++		alloc_state->may_try_low = may_evict;
++
++		may_evict |= dmem_cgroup_below_low(NULL, alloc_state->charge_pool);
++	}
++
+ 	ret = ttm_resource_alloc(bo, place, res, alloc_state->charge_pool);
+ 	if (ret) {
+ 		if (ret == -ENOSPC && may_evict)
+@@ -656,8 +696,12 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+ 	evict_walk.walk.arg.trylock_only = true;
+ 	lret = ttm_lru_walk_for_evict(&evict_walk.walk, bdev, man, 1);
+ 
+-	/* One more attempt if we hit low limit? */
+-	if (!lret && evict_walk.hit_low) {
++	/* If we failed to find enough BOs to evict, but we skipped over
++	 * some BOs because they were covered by dmem low protection, retry
++	 * evicting these protected BOs too, except if we're told not to
++	 * consider protected BOs at all.
++	 */
++	if (!lret && evict_walk.hit_low && state->may_try_low) {
+ 		evict_walk.try_low = true;
+ 		lret = ttm_lru_walk_for_evict(&evict_walk.walk, bdev, man, 1);
+ 	}
+@@ -678,7 +722,8 @@ static int ttm_bo_evict_alloc(struct ttm_device *bdev,
+ 	} while (!lret && evict_walk.evicted);
+ 
+ 	/* We hit the low limit? Try once more */
+-	if (!lret && evict_walk.hit_low && !evict_walk.try_low) {
++	if (!lret && evict_walk.hit_low && !evict_walk.try_low &&
++			state->may_try_low) {
+ 		evict_walk.try_low = true;
+ 		goto retry;
+ 	}
+-- 
+2.54.0
+
+
+From ea0b67fc50bf68c8aad3ab7226d6fc8272119a49 Mon Sep 17 00:00:00 2001
+From: Natalie Vock <natalie.vock@gmx.de>
+Date: Sun, 14 Sep 2025 18:45:08 +0200
+Subject: [PATCH 06/36] drm/ttm: Use common ancestor of evictor and evictee as
+ limit pool
+
+When checking whether to skip certain buffers because they're protected
+by dmem.low, we're checking the effective protection of the evictee's
+cgroup, but depending on how the evictor's cgroup relates to the
+evictee's, the semantics of effective protection values change.
+
+When testing against cgroups from different subtrees, page_counter's
+recursive protection propagates memory protection afforded to a parent
+down to the child cgroups, even if the children were not explicitly
+protected. This prevents cgroups whose parents were afforded no
+protection from stealing memory from cgroups whose parents were afforded
+more protection, without users having to explicitly propagate this
+protection.
+
+However, if we always calculate protection from the root cgroup, this
+breaks prioritization of sibling cgroups: If one cgroup was explicitly
+protected and its siblings were not, the protected cgroup should get
+higher priority, i.e. the protected cgroup should be able to steal from
+unprotected siblings. This only works if we restrict the protection
+calculation to the subtree shared by evictor and evictee.
+
+Signed-off-by: Natalie Vock <natalie.vock@gmx.de>
+---
+ drivers/gpu/drm/ttm/ttm_bo.c | 43 +++++++++++++++++++++++++++++++++---
+ 1 file changed, 40 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/ttm/ttm_bo.c b/drivers/gpu/drm/ttm/ttm_bo.c
+index 5fcb090bc..815e9e835 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo.c
++++ b/drivers/gpu/drm/ttm/ttm_bo.c
+@@ -627,11 +627,48 @@ static s64 ttm_bo_evict_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *
+ {
+ 	struct ttm_bo_evict_walk *evict_walk =
+ 		container_of(walk, typeof(*evict_walk), walk);
++	struct dmem_cgroup_pool_state *limit_pool, *ancestor = NULL;
++	bool evict_valuable;
+ 	s64 lret;
+ 
+-	if (!dmem_cgroup_state_evict_valuable(evict_walk->alloc_state->limit_pool,
+-					      bo->resource->css, evict_walk->try_low,
+-					      &evict_walk->hit_low))
++	/*
++	 * If may_try_low is not set, then we're trying to evict unprotected
++	 * buffers in favor of a protected allocation for charge_pool. Explicitly skip
++	 * buffers belonging to the same cgroup here - that cgroup is definitely protected,
++	 * even though dmem_cgroup_state_evict_valuable would allow the eviction because a
++	 * cgroup is always allowed to evict from itself even if it is protected.
++	 */
++	if (!evict_walk->alloc_state->may_try_low &&
++			bo->resource->css == evict_walk->alloc_state->charge_pool)
++		return 0;
++
++	limit_pool = evict_walk->alloc_state->limit_pool;
++	/*
++	 * If there is no explicit limit pool, find the root of the shared subtree between
++	 * evictor and evictee. This is important so that recursive protection rules can
++	 * apply properly: Recursive protection distributes cgroup protection afforded
++	 * to a parent cgroup but not used explicitly by a child cgroup between all child
++	 * cgroups (see docs of effective_protection in mm/page_counter.c). However, when
++	 * direct siblings compete for memory, siblings that were explicitly protected
++	 * should get prioritized over siblings that weren't. This only happens correctly
++	 * when the root of the shared subtree is passed to
++	 * dmem_cgroup_state_evict_valuable. Otherwise, the effective-protection
++	 * calculation cannot distinguish direct siblings from unrelated subtrees and the
++	 * calculated protection ends up wrong.
++	 */
++	if (!limit_pool) {
++		ancestor = dmem_cgroup_get_common_ancestor(bo->resource->css,
++							   evict_walk->alloc_state->charge_pool);
++		limit_pool = ancestor;
++	}
++
++	evict_valuable = dmem_cgroup_state_evict_valuable(limit_pool, bo->resource->css,
++							  evict_walk->try_low,
++							  &evict_walk->hit_low);
++	if (ancestor)
++		dmem_cgroup_pool_state_put(ancestor);
++
++	if (!evict_valuable)
+ 		return 0;
+ 
+ 	if (bo->pin_count || !bo->bdev->funcs->eviction_valuable(bo, evict_walk->place))
+-- 
+2.54.0
+
+
+From 97f94a55d10b56be189453e10bb056490e6447c6 Mon Sep 17 00:00:00 2001
+From: Peter Jung <admin@ptr1337.dev>
+Date: Sat, 23 May 2026 17:27:29 +0200
+Subject: [PATCH 07/36] drm/ttm: Restore
+ ttm_resource_del_bulk_move_unevictable()
+
+The cgroup-vram rebase dropped the implementation while leaving call
+sites in ttm_bo_util.c and the header declaration, causing a modpost
+failure. Also restore the swapout bulk_move fix lost in de1e2dc753c1.
+
+Fixes: f33c397ed6a9 ("drm/ttm: Split cgroup charge and resource allocation")
+Fixes: de1e2dc753c1 ("drm/ttm: Extract code for attempting allocation in a place")
+---
+ drivers/gpu/drm/ttm/ttm_bo.c       | 16 ++++++----------
+ drivers/gpu/drm/ttm/ttm_resource.c | 13 +++++++++++++
+ 2 files changed, 19 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/gpu/drm/ttm/ttm_bo.c b/drivers/gpu/drm/ttm/ttm_bo.c
+index 815e9e835..2aba86174 100644
+--- a/drivers/gpu/drm/ttm/ttm_bo.c
++++ b/drivers/gpu/drm/ttm/ttm_bo.c
+@@ -1340,17 +1340,13 @@ ttm_bo_swapout_cb(struct ttm_lru_walk *walk, struct ttm_buffer_object *bo)
+ 		bdev->funcs->swap_notify(bo);
+ 
+ 	if (ttm_tt_is_populated(tt)) {
+-		spin_lock(&bdev->lru_lock);
+-		ttm_resource_del_bulk_move(bo->resource, bo);
+-		spin_unlock(&bdev->lru_lock);
+-
+ 		ret = ttm_tt_swapout(bdev, tt, swapout_walk->gfp_flags);
+-
+-		spin_lock(&bdev->lru_lock);
+-		if (ret)
+-			ttm_resource_add_bulk_move(bo->resource, bo);
+-		ttm_resource_move_to_lru_tail(bo->resource);
+-		spin_unlock(&bdev->lru_lock);
++		if (!ret) {
++			spin_lock(&bdev->lru_lock);
++			ttm_resource_del_bulk_move_unevictable(bo->resource, bo);
++			ttm_resource_move_to_lru_tail(bo->resource);
++			spin_unlock(&bdev->lru_lock);
++		}
+ 	}
+ 
+ out:
+diff --git a/drivers/gpu/drm/ttm/ttm_resource.c b/drivers/gpu/drm/ttm/ttm_resource.c
+index c1d2ae0a6..02eca679c 100644
+--- a/drivers/gpu/drm/ttm/ttm_resource.c
++++ b/drivers/gpu/drm/ttm/ttm_resource.c
+@@ -292,6 +292,19 @@ void ttm_resource_del_bulk_move(struct ttm_resource *res,
+ 		ttm_lru_bulk_move_del(bo->bulk_move, res);
+ }
+ 
++/*
++ * Remove a resource from its bulk_move, bypassing the unevictable check.
++ * Use only when the resource is known to still be tracked in the range despite
++ * the BO having just become unevictable; asserts that this is the case.
++ */
++void ttm_resource_del_bulk_move_unevictable(struct ttm_resource *res,
++					    struct ttm_buffer_object *bo)
++{
++	WARN_ON_ONCE(!ttm_resource_unevictable(res, bo));
++	if (bo->bulk_move)
++		ttm_lru_bulk_move_del(bo->bulk_move, res);
++}
++
+ /* Move a resource to the LRU or bulk tail */
+ void ttm_resource_move_to_lru_tail(struct ttm_resource *res)
+ {
+-- 
+2.54.0
+
+
+From 747b6f542cdcaa58d612c649bef532c21c1694cb Mon Sep 17 00:00:00 2001
+From: Eric Naim <dnaim@cachyos.org>
+Date: Sat, 6 Jun 2026 10:16:57 +0700
+Subject: [PATCH 08/36] fixup! cgroup,cgroup/dmem: Add
+ (dmem_)cgroup_common_ancestor helper
+
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+---
+ kernel/cgroup/dmem.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/cgroup/dmem.c b/kernel/cgroup/dmem.c
+index 7d22536be..2c7ba6a36 100644
+--- a/kernel/cgroup/dmem.c
++++ b/kernel/cgroup/dmem.c
+@@ -771,6 +771,7 @@ struct dmem_cgroup_pool_state *dmem_cgroup_get_common_ancestor(struct dmem_cgrou
+ {
+ 	struct cgroup *ancestor_cgroup;
+ 	struct cgroup_subsys_state *ancestor_css;
++	struct dmem_cgroup_pool_state *pool = NULL;
+ 
+ 	if (!a || !b)
+ 		return NULL;
+@@ -779,10 +780,15 @@ struct dmem_cgroup_pool_state *dmem_cgroup_get_common_ancestor(struct dmem_cgrou
+ 	if (!ancestor_cgroup)
+ 		return NULL;
+ 
++	rcu_read_lock();
+ 	ancestor_css = cgroup_e_css(ancestor_cgroup, &dmem_cgrp_subsys);
+-	css_get(ancestor_css);
++	if (css_tryget(ancestor_css))
++		pool = get_cg_pool_unlocked(css_to_dmemcs(ancestor_css), a->region);
++	if (!pool)
++		css_put(ancestor_css);
++	rcu_read_unlock();
+ 
+-	return get_cg_pool_unlocked(css_to_dmemcs(ancestor_css), a->region);
++	return pool;
+ }
+ EXPORT_SYMBOL_GPL(dmem_cgroup_get_common_ancestor);
+ 
+-- 
+2.54.0
+
+
+From 592b41cbcd1ac6eb29521306d11cc6b13c4ca7fb Mon Sep 17 00:00:00 2001
+From: Kairui Song <kasong@tencent.com>
+Date: Tue, 28 Apr 2026 02:06:54 +0800
+Subject: [PATCH 09/36] mm/mglru: relocate the LRU scan batch limit to callers
+
+Same as active / inactive LRU, MGLRU isolates and scans folios in batches.
+The batch split is done hidden deep in the helper, which makes the code
+harder to follow.  The helper's arguments are also confusing since callers
+usually request more folios than the batch size, so the helper almost
+never processes the full requested amount.
+
+Move the batch splitting into the top loop to make it cleaner, there
+should be no behavior change.
+
+Reviewed-by: Axel Rasmussen <axelrasmussen@google.com>
+Reviewed-by: Baolin Wang <baolin.wang@linux.alibaba.com>
+Reviewed-by: Barry Song <baohua@kernel.org>
+Reviewed-by: Chen Ridong <chenridong@huaweicloud.com>
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 35c3bb15a..6532158f8 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4979,7 +4979,7 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 			should_age = true;
+ 		}
+ 
+-		nr_batch = min(nr_to_scan, MIN_LRU_BATCH);
++		nr_batch = min(nr_to_scan, MAX_LRU_BATCH);
+ 		delta = evict_folios(nr_batch, lruvec, sc, swappiness);
+ 		if (!delta)
+ 			break;
+-- 
+2.54.0
+
+
+From c000dd93b094d2d1b125e2d77f470de027654c73 Mon Sep 17 00:00:00 2001
+From: Kairui Song <kasong@tencent.com>
+Date: Tue, 28 Apr 2026 02:06:55 +0800
+Subject: [PATCH 10/36] mm/mglru: restructure the reclaim loop
+
+The current loop will calculate the scan number on each iteration.  The
+number of folios to scan is based on the LRU length, with some unclear
+behaviors, e.g, the scan number is only shifted by reclaim priority when
+aging is not needed or when at the default priority, and it couples the
+number calculation with aging and rotation.
+
+Adjust, simplify it, and decouple aging and rotation.  Just calculate the
+scan number for once at the beginning of the reclaim, always respect the
+reclaim priority, and make the aging and rotation more explicit.
+
+This slightly changes how aging and offline memcg reclaim works:
+Previously, aging was skipped at DEF_PRIORITY even when eviction was no
+longer possible, so the reclaimer wasted an iteration until the priority
+escalated.  Now aging runs immediately whenever it is needed to make
+progress; the DEF_PRIORITY skip only applies when eviction is still
+viable.  This may avoid wasted iterations that over-reclaim slab and break
+reclaim balance in multi-cgroup setups.
+
+Similar for offline memcg.  Previously, offline memcg wouldn't be aged
+unless it didn't have any evictable folios.  Now, we might age it if it
+has only 3 generations, which should be fine.  On one hand, offline memcg
+might still hold long-term folios, and in fact, a long-existing offline
+memcg must be pinned by some long-term folios like shmem.  These folios
+might be used by other memcg, so aging them as ordinary memcg seems
+correct.  Besides, aging enables further reclaim of an offlined memcg,
+which will certainly happen if we keep shrinking it.  And offline memcg
+might soon be no longer an issue with reparenting.
+
+Overall, the memcg LRU rotation, as described in mmzone.h, remains the
+same.
+
+Note that because the scan budget is now pinned at loop entry, tiny
+lruvec might skip this reclaim pass, also skipping aging, which could be
+beneficial as aging is not helpful since it will still be un-reclaimable
+after aging. Reclaim will go on as usual once priority escalates.
+
+Reviewed-by: Axel Rasmussen <axelrasmussen@google.com>
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 12 +++---------
+ 1 file changed, 3 insertions(+), 9 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 6532158f8..d419274b6 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4958,7 +4958,7 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
+  */
+ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ {
+-	bool need_rotate = false, should_age = false;
++	bool need_rotate = false;
+ 	long nr_batch, nr_to_scan;
+ 	int swappiness = get_swappiness(lruvec, sc);
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+@@ -4976,7 +4976,8 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		if (should_run_aging(lruvec, max_seq, sc, swappiness)) {
+ 			if (try_to_inc_max_seq(lruvec, max_seq, swappiness, false))
+ 				need_rotate = true;
+-			should_age = true;
++			/* stop scanning as it's low on cold folios */
++			break;
+ 		}
+ 
+ 		nr_batch = min(nr_to_scan, MAX_LRU_BATCH);
+@@ -4987,13 +4988,6 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		if (should_abort_scan(lruvec, sc))
+ 			break;
+ 
+-		/*
+-		 * Root reclaim needs rotation when low on cold folio for better
+-		 * fairness. Cgroup reclaim gets fairness from the iterator.
+-		 */
+-		if (root_reclaim(sc) && should_age)
+-			break;
+-
+ 		nr_to_scan -= delta;
+ 		cond_resched();
+ 	}
+-- 
+2.54.0
+
+
+From 88b6a534a0d5bffb0eca76c8dc7680116577514b Mon Sep 17 00:00:00 2001
+From: Kairui Song <kasong@tencent.com>
+Date: Tue, 28 Apr 2026 02:06:58 +0800
+Subject: [PATCH 11/36] mm/mglru: use a smaller batch for reclaim
+
+With a fixed number to reclaim calculated at the beginning, making each
+following step smaller should reduce the lock contention and avoid
+over-aggressive reclaim of folios, as it will abort earlier when the
+number of folios to be reclaimed is reached.
+
+Reviewed-by: Axel Rasmussen <axelrasmussen@google.com>
+Reviewed-by: Chen Ridong <chenridong@huaweicloud.com>
+Reviewed-by: Baolin Wang <baolin.wang@linux.alibaba.com>
+Reviewed-by: Barry Song <baohua@kernel.org>
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index d419274b6..65910a245 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4980,7 +4980,7 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 			break;
+ 		}
+ 
+-		nr_batch = min(nr_to_scan, MAX_LRU_BATCH);
++		nr_batch = min(nr_to_scan, MIN_LRU_BATCH);
+ 		delta = evict_folios(nr_batch, lruvec, sc, swappiness);
+ 		if (!delta)
+ 			break;
+-- 
+2.54.0
+
+
+From 6bc3f83a7d8cbdf730e87e851d50c74b14492628 Mon Sep 17 00:00:00 2001
+From: Kairui Song <kasong@tencent.com>
+Date: Tue, 28 Apr 2026 02:06:59 +0800
+Subject: [PATCH 12/36] mm/mglru: don't abort scan immediately right after
+ aging
+
+Right now, if eviction triggers aging, the reclaimer will abort.  This is
+not the optimal strategy for several reasons.
+
+Aborting the reclaim early wastes a reclaim cycle when under pressure, and
+for concurrent reclaim, if the LRU is under aging, all concurrent
+reclaimers might fail.  And if the age has just finished, new cold folios
+exposed by the aging are not reclaimed until the next reclaim iteration.
+
+What's more, the current aging trigger is quite lenient, having 3 gens
+with a reclaim priority lower than default will trigger aging, and blocks
+reclaiming from one memcg.  This wastes reclaim retry cycles easily.  And
+in the worst case, if the reclaim is making slower progress and all
+following attempts fail due to being blocked by aging, it triggers
+unexpected early OOM.
+
+And if a lruvec requires aging, it doesn't mean it's hot.  Instead, the
+lruvec could be idle for quite a while, and hence it might contain lots of
+cold folios to be reclaimed.
+
+While it's helpful to rotate memcg LRU after aging for global reclaim, as
+global reclaim fairness is coupled with the rotation in shrink_many, memcg
+fairness is instead handled by cgroup iteration in shrink_node_memcgs.
+So, for memcg level pressure, this abort is not the key part for keeping
+the fairness.  And in most cases, there is no need to age, and fairness
+must be achieved by upper-level reclaim control.
+
+So instead, just keep the scanning going unless one whole batch of folios
+failed to be isolated or enough folios have been scanned, which is
+triggered by evict_folios returning 0.  And only abort for global reclaim
+after one batch, so when there are fewer memcgs, progress is still made,
+and the fairness mechanism described above still works fine.
+
+And in most cases, the one more batch attempt for global reclaim might
+just be enough to satisfy what the reclaimer needs, hence improving global
+reclaim performance by reducing reclaim retry cycles.
+
+Rotation is still there after the reclaim is done, which still follows the
+comment in mmzone.h.  And fairness still looking good.
+
+Reviewed-by: Axel Rasmussen <axelrasmussen@google.com>
+Reviewed-by: Chen Ridong <chenridong@huaweicloud.com>
+Reviewed-by: Barry Song <baohua@kernel.org>
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 65910a245..35c3bb15a 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4958,7 +4958,7 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
+  */
+ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ {
+-	bool need_rotate = false;
++	bool need_rotate = false, should_age = false;
+ 	long nr_batch, nr_to_scan;
+ 	int swappiness = get_swappiness(lruvec, sc);
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+@@ -4976,8 +4976,7 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		if (should_run_aging(lruvec, max_seq, sc, swappiness)) {
+ 			if (try_to_inc_max_seq(lruvec, max_seq, swappiness, false))
+ 				need_rotate = true;
+-			/* stop scanning as it's low on cold folios */
+-			break;
++			should_age = true;
+ 		}
+ 
+ 		nr_batch = min(nr_to_scan, MIN_LRU_BATCH);
+@@ -4988,6 +4987,13 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		if (should_abort_scan(lruvec, sc))
+ 			break;
+ 
++		/*
++		 * Root reclaim needs rotation when low on cold folio for better
++		 * fairness. Cgroup reclaim gets fairness from the iterator.
++		 */
++		if (root_reclaim(sc) && should_age)
++			break;
++
+ 		nr_to_scan -= delta;
+ 		cond_resched();
+ 	}
+-- 
+2.54.0
+
+
+From 1e29584efe140d14e21a68f959de3d526aa5e1b1 Mon Sep 17 00:00:00 2001
+From: Yaroslav Bolyukin <iam@lach.pw>
+Date: Tue, 2 Dec 2025 12:02:12 +0100
+Subject: [PATCH 13/36] drm/edid: rename VESA block parsing functions to more
+ generic name
+
+Those functions would also parse DSC Bits Per Pixel value in the future
+commits.
+
+Signed-off-by: Yaroslav Bolyukin <iam@lach.pw>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+---
+ drivers/gpu/drm/drm_edid.c | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
+index df3c25bac..4342bd52a 100644
+--- a/drivers/gpu/drm/drm_edid.c
++++ b/drivers/gpu/drm/drm_edid.c
+@@ -6598,8 +6598,8 @@ static void drm_get_monitor_range(struct drm_connector *connector,
+ 		    info->monitor_range.min_vfreq, info->monitor_range.max_vfreq);
+ }
+ 
+-static void drm_parse_vesa_mso_data(struct drm_connector *connector,
+-				    const struct displayid_block *block)
++static void drm_parse_vesa_specific_block(struct drm_connector *connector,
++					  const struct displayid_block *block)
+ {
+ 	struct displayid_vesa_vendor_specific_block *vesa =
+ 		(struct displayid_vesa_vendor_specific_block *)block;
+@@ -6658,8 +6658,8 @@ static void drm_parse_vesa_mso_data(struct drm_connector *connector,
+ 		    info->mso_stream_count, info->mso_pixel_overlap);
+ }
+ 
+-static void drm_update_mso(struct drm_connector *connector,
+-			   const struct drm_edid *drm_edid)
++static void drm_update_vesa_specific_block(struct drm_connector *connector,
++					   const struct drm_edid *drm_edid)
+ {
+ 	const struct displayid_block *block;
+ 	struct displayid_iter iter;
+@@ -6667,7 +6667,7 @@ static void drm_update_mso(struct drm_connector *connector,
+ 	displayid_iter_edid_begin(drm_edid, &iter);
+ 	displayid_iter_for_each(block, &iter) {
+ 		if (block->tag == DATA_BLOCK_2_VENDOR_SPECIFIC)
+-			drm_parse_vesa_mso_data(connector, block);
++			drm_parse_vesa_specific_block(connector, block);
+ 	}
+ 	displayid_iter_end(&iter);
+ }
+@@ -6828,7 +6828,7 @@ static void update_display_info(struct drm_connector *connector,
+ 	if (edid->features & DRM_EDID_FEATURE_RGB_YCRCB422)
+ 		info->color_formats |= BIT(DRM_OUTPUT_COLOR_FORMAT_YCBCR422);
+ 
+-	drm_update_mso(connector, drm_edid);
++	drm_update_vesa_specific_block(connector, drm_edid);
+ 
+ out:
+ 	if (drm_edid_has_internal_quirk(connector, EDID_QUIRK_NON_DESKTOP)) {
+-- 
+2.54.0
+
+
+From 51417c3f5c73b981b2467ba447dd3a2ad5860b5f Mon Sep 17 00:00:00 2001
+From: Yaroslav Bolyukin <iam@lach.pw>
+Date: Tue, 2 Dec 2025 12:02:13 +0100
+Subject: [PATCH 14/36] drm/edid: prepare for VESA vendor-specific data block
+ extension
+
+Current VESA vendor-specific block parsing expects real block size to be
+the same as the defined struct size, use real offsets in conditionals
+instead to add struct fields in future commits.
+
+Signed-off-by: Yaroslav Bolyukin <iam@lach.pw>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+---
+ drivers/gpu/drm/drm_edid.c | 30 ++++++++++++++----------------
+ 1 file changed, 14 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
+index 4342bd52a..57c58a86a 100644
+--- a/drivers/gpu/drm/drm_edid.c
++++ b/drivers/gpu/drm/drm_edid.c
+@@ -6615,7 +6615,7 @@ static void drm_parse_vesa_specific_block(struct drm_connector *connector,
+ 	if (oui(vesa->oui[0], vesa->oui[1], vesa->oui[2]) != VESA_IEEE_OUI)
+ 		return;
+ 
+-	if (sizeof(*vesa) != sizeof(*block) + block->num_bytes) {
++	if (block->num_bytes < 5) {
+ 		drm_dbg_kms(connector->dev,
+ 			    "[CONNECTOR:%d:%s] Unexpected VESA vendor block size\n",
+ 			    connector->base.id, connector->name);
+@@ -6638,24 +6638,22 @@ static void drm_parse_vesa_specific_block(struct drm_connector *connector,
+ 		break;
+ 	}
+ 
+-	if (!info->mso_stream_count) {
+-		info->mso_pixel_overlap = 0;
+-		return;
+-	}
+-
+-	info->mso_pixel_overlap = FIELD_GET(DISPLAYID_VESA_MSO_OVERLAP, vesa->mso);
+-	if (info->mso_pixel_overlap > 8) {
++	if (info->mso_stream_count) {
++		info->mso_pixel_overlap = FIELD_GET(DISPLAYID_VESA_MSO_OVERLAP, vesa->mso);
++		if (info->mso_pixel_overlap > 8) {
++			drm_dbg_kms(connector->dev,
++				    "[CONNECTOR:%d:%s] Reserved MSO pixel overlap value %u\n",
++				    connector->base.id, connector->name,
++				    info->mso_pixel_overlap);
++			info->mso_pixel_overlap = 8;
++		}
+ 		drm_dbg_kms(connector->dev,
+-			    "[CONNECTOR:%d:%s] Reserved MSO pixel overlap value %u\n",
++			    "[CONNECTOR:%d:%s] MSO stream count %u, pixel overlap %u\n",
+ 			    connector->base.id, connector->name,
+-			    info->mso_pixel_overlap);
+-		info->mso_pixel_overlap = 8;
++			    info->mso_stream_count, info->mso_pixel_overlap);
++	} else {
++		info->mso_pixel_overlap = 0;
+ 	}
+-
+-	drm_dbg_kms(connector->dev,
+-		    "[CONNECTOR:%d:%s] MSO stream count %u, pixel overlap %u\n",
+-		    connector->base.id, connector->name,
+-		    info->mso_stream_count, info->mso_pixel_overlap);
+ }
+ 
+ static void drm_update_vesa_specific_block(struct drm_connector *connector,
+-- 
+2.54.0
+
+
+From afbf436636e7c93b752867eadbc5f9ba125ed005 Mon Sep 17 00:00:00 2001
+From: Yaroslav Bolyukin <iam@lach.pw>
+Date: Tue, 2 Dec 2025 12:02:14 +0100
+Subject: [PATCH 15/36] drm/edid: MSO should only be used for non-eDP displays
+
+As per DisplayID v2.1a spec:
+If Offset 06h[2:0] is programmed to 001b (External DisplayPort), this
+field shall be cleared to 00b (Not supported).
+
+Link: https://lore.kernel.org/lkml/3abc1087618c822e5676e67a3ec2e64e506dc5ec@intel.com/
+Signed-off-by: Yaroslav Bolyukin <iam@lach.pw>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+---
+ drivers/gpu/drm/drm_displayid_internal.h |  4 +++
+ drivers/gpu/drm/drm_edid.c               | 36 +++++++++++++++---------
+ 2 files changed, 27 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/gpu/drm/drm_displayid_internal.h b/drivers/gpu/drm/drm_displayid_internal.h
+index 4590d6a3d..39c5e9995 100644
+--- a/drivers/gpu/drm/drm_displayid_internal.h
++++ b/drivers/gpu/drm/drm_displayid_internal.h
+@@ -142,9 +142,13 @@ struct displayid_formula_timing_block {
+ 	struct displayid_formula_timings_9 timings[];
+ } __packed;
+ 
++#define DISPLAYID_VESA_DP_TYPE		GENMASK(2, 0)
+ #define DISPLAYID_VESA_MSO_OVERLAP	GENMASK(3, 0)
+ #define DISPLAYID_VESA_MSO_MODE		GENMASK(6, 5)
+ 
++#define DISPLAYID_VESA_DP_TYPE_EDP	0
++#define DISPLAYID_VESA_DP_TYPE_DP	1
++
+ struct displayid_vesa_vendor_specific_block {
+ 	struct displayid_block base;
+ 	u8 oui[3];
+diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
+index 57c58a86a..236eb56b2 100644
+--- a/drivers/gpu/drm/drm_edid.c
++++ b/drivers/gpu/drm/drm_edid.c
+@@ -6604,6 +6604,7 @@ static void drm_parse_vesa_specific_block(struct drm_connector *connector,
+ 	struct displayid_vesa_vendor_specific_block *vesa =
+ 		(struct displayid_vesa_vendor_specific_block *)block;
+ 	struct drm_display_info *info = &connector->display_info;
++	int dp_type;
+ 
+ 	if (block->num_bytes < 3) {
+ 		drm_dbg_kms(connector->dev,
+@@ -6622,20 +6623,29 @@ static void drm_parse_vesa_specific_block(struct drm_connector *connector,
+ 		return;
+ 	}
+ 
+-	switch (FIELD_GET(DISPLAYID_VESA_MSO_MODE, vesa->mso)) {
+-	default:
+-		drm_dbg_kms(connector->dev, "[CONNECTOR:%d:%s] Reserved MSO mode value\n",
++	dp_type = FIELD_GET(DISPLAYID_VESA_DP_TYPE, vesa->data_structure_type);
++	if (dp_type > 1) {
++		drm_dbg_kms(connector->dev, "[CONNECTOR:%d:%s] Reserved dp type value\n",
+ 			    connector->base.id, connector->name);
+-		fallthrough;
+-	case 0:
+-		info->mso_stream_count = 0;
+-		break;
+-	case 1:
+-		info->mso_stream_count = 2; /* 2 or 4 links */
+-		break;
+-	case 2:
+-		info->mso_stream_count = 4; /* 4 links */
+-		break;
++	}
++
++	/* MSO is only supported for eDP */
++	if (dp_type == DISPLAYID_VESA_DP_TYPE_EDP) {
++		switch (FIELD_GET(DISPLAYID_VESA_MSO_MODE, vesa->mso)) {
++		default:
++			drm_dbg_kms(connector->dev, "[CONNECTOR:%d:%s] Reserved MSO mode value\n",
++				    connector->base.id, connector->name);
++			fallthrough;
++		case 0:
++			info->mso_stream_count = 0;
++			break;
++		case 1:
++			info->mso_stream_count = 2; /* 2 or 4 links */
++			break;
++		case 2:
++			info->mso_stream_count = 4; /* 4 links */
++			break;
++		}
+ 	}
+ 
+ 	if (info->mso_stream_count) {
+-- 
+2.54.0
+
+
+From 3b6d8413e3e7ef7e5da8eaa39e00f25518e20c61 Mon Sep 17 00:00:00 2001
+From: Yaroslav Bolyukin <iam@lach.pw>
+Date: Tue, 2 Dec 2025 12:02:15 +0100
+Subject: [PATCH 16/36] drm/edid: parse DSC DPP passthru support flag for mode
+ VII timings
+
+For timings v7 block revision >=1, revision field also contains a bit
+that indicates that the mode timings should only be used with fixed bits
+per pixel value specified in vesa vendor-specific block.
+
+Signed-off-by: Yaroslav Bolyukin <iam@lach.pw>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+---
+ drivers/gpu/drm/drm_displayid_internal.h |  2 ++
+ drivers/gpu/drm/drm_edid.c               | 12 ++++++++----
+ include/drm/drm_modes.h                  | 10 ++++++++++
+ 3 files changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/drm_displayid_internal.h b/drivers/gpu/drm/drm_displayid_internal.h
+index 39c5e9995..09053055c 100644
+--- a/drivers/gpu/drm/drm_displayid_internal.h
++++ b/drivers/gpu/drm/drm_displayid_internal.h
+@@ -97,6 +97,7 @@ struct displayid_header {
+ 	u8 ext_count;
+ } __packed;
+ 
++#define DISPLAYID_BLOCK_REV	GENMASK(2, 0)
+ struct displayid_block {
+ 	u8 tag;
+ 	u8 rev;
+@@ -125,6 +126,7 @@ struct displayid_detailed_timings_1 {
+ 	__le16 vsw;
+ } __packed;
+ 
++#define DISPLAYID_BLOCK_PASSTHROUGH_TIMINGS_SUPPORT	BIT(3)
+ struct displayid_detailed_timing_block {
+ 	struct displayid_block base;
+ 	struct displayid_detailed_timings_1 timings[];
+diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
+index 236eb56b2..957c9d8ca 100644
+--- a/drivers/gpu/drm/drm_edid.c
++++ b/drivers/gpu/drm/drm_edid.c
+@@ -6866,8 +6866,8 @@ static void update_display_info(struct drm_connector *connector,
+ }
+ 
+ static struct drm_display_mode *drm_mode_displayid_detailed(struct drm_device *dev,
+-							    const struct displayid_detailed_timings_1 *timings,
+-							    bool type_7)
++							    const struct displayid_block *block,
++							    const struct displayid_detailed_timings_1 *timings)
+ {
+ 	struct drm_display_mode *mode;
+ 	unsigned int pixel_clock = (timings->pixel_clock[0] |
+@@ -6883,11 +6883,16 @@ static struct drm_display_mode *drm_mode_displayid_detailed(struct drm_device *d
+ 	unsigned int vsync_width = le16_to_cpu(timings->vsw) + 1;
+ 	bool hsync_positive = le16_to_cpu(timings->hsync) & (1 << 15);
+ 	bool vsync_positive = le16_to_cpu(timings->vsync) & (1 << 15);
++	bool type_7 = block->tag == DATA_BLOCK_2_TYPE_7_DETAILED_TIMING;
+ 
+ 	mode = drm_mode_create(dev);
+ 	if (!mode)
+ 		return NULL;
+ 
++	if (type_7 && FIELD_GET(DISPLAYID_BLOCK_REV, block->rev) >= 1)
++		mode->dsc_passthrough_timings_support =
++			block->rev & DISPLAYID_BLOCK_PASSTHROUGH_TIMINGS_SUPPORT;
++
+ 	/* resolution is kHz for type VII, and 10 kHz for type I */
+ 	mode->clock = type_7 ? pixel_clock : pixel_clock * 10;
+ 	mode->hdisplay = hactive;
+@@ -6920,7 +6925,6 @@ static int add_displayid_detailed_1_modes(struct drm_connector *connector,
+ 	int num_timings;
+ 	struct drm_display_mode *newmode;
+ 	int num_modes = 0;
+-	bool type_7 = block->tag == DATA_BLOCK_2_TYPE_7_DETAILED_TIMING;
+ 	/* blocks must be multiple of 20 bytes length */
+ 	if (block->num_bytes % 20)
+ 		return 0;
+@@ -6929,7 +6933,7 @@ static int add_displayid_detailed_1_modes(struct drm_connector *connector,
+ 	for (i = 0; i < num_timings; i++) {
+ 		struct displayid_detailed_timings_1 *timings = &det->timings[i];
+ 
+-		newmode = drm_mode_displayid_detailed(connector->dev, timings, type_7);
++		newmode = drm_mode_displayid_detailed(connector->dev, block, timings);
+ 		if (!newmode)
+ 			continue;
+ 
+diff --git a/include/drm/drm_modes.h b/include/drm/drm_modes.h
+index b9bb92e4b..312e5c03a 100644
+--- a/include/drm/drm_modes.h
++++ b/include/drm/drm_modes.h
+@@ -417,6 +417,16 @@ struct drm_display_mode {
+ 	 */
+ 	enum hdmi_picture_aspect picture_aspect_ratio;
+ 
++	/**
++	 * @dsc_passthrough_timing_support:
++	 *
++	 * Indicates whether this mode timing descriptor is supported
++	 * with specific target DSC bits per pixel only.
++	 *
++	 * VESA vendor-specific data block shall exist with the relevant
++	 * DSC bits per pixel declaration when this flag is set to true.
++	 */
++	bool dsc_passthrough_timings_support;
+ };
+ 
+ /**
+-- 
+2.54.0
+
+
+From b5a1fda167f31edf0dbdbe7955c1d0bde2f8458e Mon Sep 17 00:00:00 2001
+From: Yaroslav Bolyukin <iam@lach.pw>
+Date: Tue, 2 Dec 2025 12:02:16 +0100
+Subject: [PATCH 17/36] drm/edid: for consistency, use mask everywhere for
+ block rev parsing
+
+Other usages of block.rev bitfields were refactored to use FIELD_GET
+instead of bitwise ops.
+
+Signed-off-by: Yaroslav Bolyukin <iam@lach.pw>
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+---
+ drivers/gpu/drm/drm_displayid_internal.h | 1 +
+ drivers/gpu/drm/drm_edid.c               | 3 ++-
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/drm_displayid_internal.h b/drivers/gpu/drm/drm_displayid_internal.h
+index 09053055c..5fc8d81cd 100644
+--- a/drivers/gpu/drm/drm_displayid_internal.h
++++ b/drivers/gpu/drm/drm_displayid_internal.h
+@@ -139,6 +139,7 @@ struct displayid_formula_timings_9 {
+ 	u8 vrefresh;
+ } __packed;
+ 
++#define DISPLAYID_BLOCK_DESCRIPTOR_PAYLOAD_BYTES	GENMASK(6, 4)
+ struct displayid_formula_timing_block {
+ 	struct displayid_block base;
+ 	struct displayid_formula_timings_9 timings[];
+diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
+index 957c9d8ca..f90b46325 100644
+--- a/drivers/gpu/drm/drm_edid.c
++++ b/drivers/gpu/drm/drm_edid.c
+@@ -6980,7 +6980,8 @@ static int add_displayid_formula_modes(struct drm_connector *connector,
+ 	struct drm_display_mode *newmode;
+ 	int num_modes = 0;
+ 	bool type_10 = block->tag == DATA_BLOCK_2_TYPE_10_FORMULA_TIMING;
+-	int timing_size = 6 + ((formula_block->base.rev & 0x70) >> 4);
++	int timing_size = 6 +
++		FIELD_GET(DISPLAYID_BLOCK_DESCRIPTOR_PAYLOAD_BYTES, formula_block->base.rev);
+ 
+ 	/* extended blocks are not supported yet */
+ 	if (timing_size != 6)
+-- 
+2.54.0
+
+
+From c157bf1b24558e521c294310e20694e136049067 Mon Sep 17 00:00:00 2001
+From: Yaroslav Bolyukin <iam@lach.pw>
+Date: Tue, 2 Dec 2025 12:02:17 +0100
+Subject: [PATCH 18/36] drm/edid: parse DRM VESA dsc bpp target
+
+As per DisplayID v2.1a spec "DSC pass-through timing support",
+VESA vendor-specific data block may contain target DSC bits per pixel
+fields, that should be always used for the VII modes that declare they
+only support working with this value (Pass-through Timing Support for
+Target DSC Bits per Pixel).
+
+Signed-off-by: Yaroslav Bolyukin <iam@lach.pw>
+
+fixup parse DRM vesa dsc bpp target
+
+Reviewed-by: Jani Nikula <jani.nikula@intel.com>
+---
+ drivers/gpu/drm/drm_displayid_internal.h |  4 ++++
+ drivers/gpu/drm/drm_edid.c               | 17 +++++++++++++++++
+ include/drm/drm_connector.h              |  6 ++++++
+ 3 files changed, 27 insertions(+)
+
+diff --git a/drivers/gpu/drm/drm_displayid_internal.h b/drivers/gpu/drm/drm_displayid_internal.h
+index 5fc8d81cd..56e48d6af 100644
+--- a/drivers/gpu/drm/drm_displayid_internal.h
++++ b/drivers/gpu/drm/drm_displayid_internal.h
+@@ -148,6 +148,8 @@ struct displayid_formula_timing_block {
+ #define DISPLAYID_VESA_DP_TYPE		GENMASK(2, 0)
+ #define DISPLAYID_VESA_MSO_OVERLAP	GENMASK(3, 0)
+ #define DISPLAYID_VESA_MSO_MODE		GENMASK(6, 5)
++#define DISPLAYID_VESA_DSC_BPP_INT	GENMASK(5, 0)
++#define DISPLAYID_VESA_DSC_BPP_FRACT	GENMASK(3, 0)
+ 
+ #define DISPLAYID_VESA_DP_TYPE_EDP	0
+ #define DISPLAYID_VESA_DP_TYPE_DP	1
+@@ -157,6 +159,8 @@ struct displayid_vesa_vendor_specific_block {
+ 	u8 oui[3];
+ 	u8 data_structure_type;
+ 	u8 mso;
++	u8 dsc_bpp_int;
++	u8 dsc_bpp_fract;
+ } __packed;
+ 
+ /*
+diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
+index f90b46325..cf53ac02b 100644
+--- a/drivers/gpu/drm/drm_edid.c
++++ b/drivers/gpu/drm/drm_edid.c
+@@ -45,6 +45,7 @@
+ #include <drm/drm_edid.h>
+ #include <drm/drm_eld.h>
+ #include <drm/drm_encoder.h>
++#include <drm/drm_fixed.h>
+ #include <drm/drm_print.h>
+ 
+ #include "drm_crtc_internal.h"
+@@ -6664,6 +6665,21 @@ static void drm_parse_vesa_specific_block(struct drm_connector *connector,
+ 	} else {
+ 		info->mso_pixel_overlap = 0;
+ 	}
++
++	if (block->num_bytes < 7) {
++		/* DSC bpp is optional */
++		return;
++	}
++
++	info->dp_dsc_bpp_x16 = FIELD_GET(DISPLAYID_VESA_DSC_BPP_INT, vesa->dsc_bpp_int) << 4 |
++			       FIELD_GET(DISPLAYID_VESA_DSC_BPP_FRACT, vesa->dsc_bpp_fract);
++
++	if (info->dp_dsc_bpp_x16 > 0) {
++		drm_dbg_kms(connector->dev,
++			    "[CONNECTOR:%d:%s] DSC bits per pixel " FXP_Q4_FMT "\n",
++			    connector->base.id, connector->name,
++			    FXP_Q4_ARGS(info->dp_dsc_bpp_x16));
++	}
+ }
+ 
+ static void drm_update_vesa_specific_block(struct drm_connector *connector,
+@@ -6712,6 +6728,7 @@ static void drm_reset_display_info(struct drm_connector *connector)
+ 	info->mso_stream_count = 0;
+ 	info->mso_pixel_overlap = 0;
+ 	info->max_dsc_bpp = 0;
++	info->dp_dsc_bpp_x16 = 0;
+ 
+ 	kfree(info->vics);
+ 	info->vics = NULL;
+diff --git a/include/drm/drm_connector.h b/include/drm/drm_connector.h
+index 5f5ca023c..6bc40504e 100644
+--- a/include/drm/drm_connector.h
++++ b/include/drm/drm_connector.h
+@@ -892,6 +892,12 @@ struct drm_display_info {
+ 	 */
+ 	u32 max_dsc_bpp;
+ 
++	/**
++	 * @dp_dsc_bpp: DP Display-Stream-Compression (DSC) timing's target
++	 * DSC bits per pixel in 6.4 fixed point format. 0 means undefined.
++	 */
++	u16 dp_dsc_bpp_x16;
++
+ 	/**
+ 	 * @vics: Array of vics_len VICs. Internal to EDID parsing.
+ 	 */
+-- 
+2.54.0
+
+
+From ddee3374401fc23d6f200a64ffaa57c4a7b527ee Mon Sep 17 00:00:00 2001
+From: Yaroslav Bolyukin <iam@lach.pw>
+Date: Tue, 2 Dec 2025 12:02:18 +0100
+Subject: [PATCH 19/36] drm/amd: use fixed dsc bits-per-pixel from edid
+
+VESA vendor header from DisplayID spec may contain fixed bit per pixel
+rate, it should be used by drm driver for the modes that declare
+they are only supported with the declared fixed bits per pixel value.
+
+Signed-off-by: Yaroslav Bolyukin <iam@lach.pw>
+Reviewed-by: Wayne Lin <Wayne.Lin@amd.com>
+---
+ .../gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c    | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+index d3a8d6812..e829cc8fa 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -7080,6 +7080,11 @@ static void fill_stream_properties_from_drm_display_mode(
+ 
+ 	stream->output_color_space = get_output_color_space(timing_out, connector_state);
+ 	stream->content_type = get_output_content_type(connector_state);
++
++	/* DisplayID Type VII pass-through timings. */
++	if (mode_in->dsc_passthrough_timings_support && info->dp_dsc_bpp_x16 != 0) {
++		stream->timing.dsc_fixed_bits_per_pixel_x16 = info->dp_dsc_bpp_x16;
++	}
+ }
+ 
+ static void fill_audio_info(struct audio_info *audio_info,
+@@ -7600,6 +7605,7 @@ create_stream_for_sink(struct drm_connector *connector,
+ 	struct drm_display_mode mode;
+ 	struct drm_display_mode saved_mode;
+ 	struct drm_display_mode *freesync_mode = NULL;
++	struct drm_display_mode *dsc_passthru_mode = NULL;
+ 	bool native_mode_found = false;
+ 	bool recalculate_timing = false;
+ 	bool scale = dm_state->scaling != RMX_OFF;
+@@ -7691,6 +7697,16 @@ create_stream_for_sink(struct drm_connector *connector,
+ 		}
+ 	}
+ 
++	list_for_each_entry(dsc_passthru_mode, &connector->modes, head) {
++		if (dsc_passthru_mode->hdisplay == mode.hdisplay &&
++		    dsc_passthru_mode->vdisplay == mode.vdisplay &&
++		    drm_mode_vrefresh(dsc_passthru_mode) == mode_refresh) {
++			mode.dsc_passthrough_timings_support =
++				dsc_passthru_mode->dsc_passthrough_timings_support;
++			break;
++		}
++	}
++
+ 	if (recalculate_timing)
+ 		drm_mode_set_crtcinfo(&saved_mode, 0);
+ 
+-- 
+2.54.0
+
+
+From 012f21db03a0557b3571032893a630bc82bc24eb Mon Sep 17 00:00:00 2001
+From: Eric Naim <dnaim@cachyos.org>
+Date: Tue, 24 Feb 2026 02:15:01 +0800
+Subject: [PATCH 20/36] drm/amdgpu: dsc: Fix max_qp limits to match VESA DSC
+ 1.1 spec
+
+Link: https://github.com/raika-xino/amd-bsb-dsc-fix
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+---
+ drivers/gpu/drm/amd/display/dc/dml/dsc/qp_tables.h   | 5 ++---
+ drivers/gpu/drm/amd/display/dc/dml/dsc/rc_calc_fpu.c | 3 +--
+ 2 files changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/display/dc/dml/dsc/qp_tables.h b/drivers/gpu/drm/amd/display/dc/dml/dsc/qp_tables.h
+index dcff0dd2b..560d8d4af 100644
+--- a/drivers/gpu/drm/amd/display/dc/dml/dsc/qp_tables.h
++++ b/drivers/gpu/drm/amd/display/dc/dml/dsc/qp_tables.h
+@@ -63,7 +63,7 @@ static const qp_table   qp_table_444_8bpc_max = {
+ 	{ 6.5, { 4, 6, 7, 8, 8, 8, 9, 10, 11, 11, 12, 12, 12, 13, 15} },
+ 	{   7, { 4, 5, 7, 7, 8, 8, 8, 9, 10, 11, 11, 12, 12, 13, 14} },
+ 	{ 7.5, { 4, 5, 6, 7, 7, 8, 8, 9, 10, 10, 11, 11, 12, 13, 14} },
+-	{   8, { 4, 4, 5, 6, 7, 7, 7, 8, 9, 10, 10, 11, 11, 12, 13} },
++	{   8, { 4, 4, 5, 6, 7, 7, 7, 8, 9, 10, 11, 12, 13, 13, 15} },
+ 	{ 8.5, { 4, 4, 5, 6, 7, 7, 7, 8, 9, 10, 10, 11, 11, 12, 13} },
+ 	{   9, { 3, 4, 5, 6, 7, 7, 7, 8, 9, 9, 10, 10, 11, 11, 13} },
+ 	{ 9.5, { 3, 4, 5, 6, 7, 7, 7, 8, 9, 9, 10, 10, 11, 11, 13} },
+@@ -211,7 +211,7 @@ static const qp_table   qp_table_444_8bpc_min = {
+ 	{ 6.5, { 0, 1, 2, 3, 4, 4, 5, 5, 5, 5, 6, 6, 6, 9, 14} },
+ 	{   7, { 0, 0, 2, 2, 4, 4, 4, 4, 4, 5, 5, 6, 6, 9, 13} },
+ 	{ 7.5, { 0, 0, 2, 2, 3, 4, 4, 4, 4, 4, 5, 5, 6, 9, 13} },
+-	{   8, { 0, 0, 1, 1, 3, 3, 3, 3, 3, 4, 5, 5, 5, 8, 12} },
++	{   8, { 0, 0, 1, 1, 3, 3, 3, 3, 3, 3, 5, 5, 5, 7, 13} },
+ 	{ 8.5, { 0, 0, 1, 1, 3, 3, 3, 3, 3, 4, 5, 5, 5, 8, 12} },
+ 	{   9, { 0, 0, 1, 1, 3, 3, 3, 3, 3, 3, 5, 5, 5, 7, 12} },
+ 	{ 9.5, { 0, 0, 1, 1, 3, 3, 3, 3, 3, 3, 5, 5, 5, 7, 12} },
+@@ -701,4 +701,3 @@ static const qp_table   qp_table_422_8bpc_max = {
+ 	{15.5, { 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 4} },
+ 	{  16, { 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 4} }
+ };
+-
+diff --git a/drivers/gpu/drm/amd/display/dc/dml/dsc/rc_calc_fpu.c b/drivers/gpu/drm/amd/display/dc/dml/dsc/rc_calc_fpu.c
+index b8fc27a53..9ae3057a2 100644
+--- a/drivers/gpu/drm/amd/display/dc/dml/dsc/rc_calc_fpu.c
++++ b/drivers/gpu/drm/amd/display/dc/dml/dsc/rc_calc_fpu.c
+@@ -123,7 +123,7 @@ static void get_ofs_set(qp_set ofs, enum colour_mode mode, float bpp)
+ 		*p++ = (int)((bpp <= 12) ? (-8) : ((bpp >= 15) ? (-6) : (-8 + dsc_roundf((bpp - 12) * (2 / 3.0)))));
+ 		*p++ = (int)((bpp <= 12) ? (-10) : ((bpp >= 15) ? (-8) : (-10 + dsc_roundf((bpp - 12) * (2 / 3.0)))));
+ 		*p++ = -10;
+-		*p++ = (int)((bpp <=  6) ? (-12) : ((bpp >=  8) ? (-10) : (-12 + dsc_roundf((bpp -  6) * (2 / 2.0)))));
++		*p++ = (int)((bpp <=  6) ? (-12) : ((bpp >=  8) ? (-12) : (-12 + dsc_roundf((bpp -  6) * (2 / 2.0)))));
+ 		*p++ = -12;
+ 		*p++ = -12;
+ 		*p++ = -12;
+@@ -257,4 +257,3 @@ void _do_calc_rc_params(struct rc_params *rc,
+ 	rc->rc_buf_thresh[12] = 8000;
+ 	rc->rc_buf_thresh[13] = 8064;
+ }
+-
+-- 
+2.54.0
+
+
+From 749efce0305f82369c1a7575b3067d73be1f5137 Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:16:57 +0800
+Subject: [PATCH 21/36] smp: Disable preemption explicitly in __csd_lock_wait()
+
+The latter patches will enable preemption before csd_lock_wait(), which
+could break csdlock_debug. Because the slice of other tasks on the CPU may
+be accounted between ktime_get_mono_fast_ns() calls, disable preemption
+explicitly in __csd_lock_wait(). This is a preparation for the next
+patches.
+
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+Acked-by: Muchun Song <muchun.song@linux.dev>
+Reviewed-by: Steven Rostedt (Google) <rostedt@goodmis.org>
+Reviewed-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Tested-by: Paul E. McKenney <paulmck@kernel.org>
+---
+ kernel/smp.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/kernel/smp.c b/kernel/smp.c
+index a0bb56bd8..b58975480 100644
+--- a/kernel/smp.c
++++ b/kernel/smp.c
+@@ -323,6 +323,8 @@ static void __csd_lock_wait(call_single_data_t *csd)
+ 	int bug_id = 0;
+ 	u64 ts0, ts1;
+ 
++	guard(preempt)();
++
+ 	ts1 = ts0 = ktime_get_mono_fast_ns();
+ 	for (;;) {
+ 		if (csd_lock_wait_toolong(csd, ts0, &ts1, &bug_id, &nmessages))
+-- 
+2.54.0
+
+
+From a085779a8331d017cd2786a277a09a7e078f1610 Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:16:58 +0800
+Subject: [PATCH 22/36] smp: Enable preemption early in
+ smp_call_function_single()
+
+Now smp_call_function_single() disables preemption mainly for the following
+reasons:
+
+- To protect the per-cpu csd_data from concurrent modification by other
+tasks on the current CPU in the !wait case. For the wait case,
+synchronization is not a concern as on-stack csd is used.
+
+- To prevent the remote online CPU from being offlined. Specifically, we
+want to ensure that no new IPIs are queued after smpcfd_dying_cpu() has
+finished.
+
+Disabling preemption for the entire execution is unnecessary, especially
+csd_lock_wait() part does not require preemption protection. This patch
+enables preemption before csd_lock_wait() to reduce the preemption-disabled
+critical section.
+
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+Reviewed-by: Muchun Song <muchun.song@linux.dev>
+Reviewed-by: Steven Rostedt (Google) <rostedt@goodmis.org>
+Reviewed-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Tested-by: Paul E. McKenney <paulmck@kernel.org>
+---
+ kernel/smp.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/smp.c b/kernel/smp.c
+index b58975480..292eefadd 100644
+--- a/kernel/smp.c
++++ b/kernel/smp.c
+@@ -700,11 +700,16 @@ int smp_call_function_single(int cpu, smp_call_func_t func, void *info,
+ 
+ 	err = generic_exec_single(cpu, csd);
+ 
++	/*
++	 * @csd is stack-allocated when @wait is true. No concurrent access
++	 * except from the IPI completion path, so we can re-enable preemption
++	 * early to reduce latency.
++	 */
++	put_cpu();
++
+ 	if (wait)
+ 		csd_lock_wait(csd);
+ 
+-	put_cpu();
+-
+ 	return err;
+ }
+ EXPORT_SYMBOL(smp_call_function_single);
+-- 
+2.54.0
+
+
+From 8171167128dba0279d5d768f0542e6014ad260e7 Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:16:59 +0800
+Subject: [PATCH 23/36] smp: Refactor remote CPU selection in
+ smp_call_function_any()
+
+Currently, smp_call_function_any() disables preemption across the entire
+process of picking a target CPU, enqueueing the IPI, and synchronously
+waiting for the remote CPU. Since smp_call_function_single() has already
+been optimized to re-enable preemption before the synchronous
+csd_lock_wait(), callers of smp_call_function_any() should also benefit
+from this optimization to reduce the preemption-disabled critical section.
+
+A naive approach would be to simply remove get_cpu() and put_cpu() from
+smp_call_function_any(), leaving the preemption disablement entirely to
+smp_call_function_single(). However, doing so opens a dangerous
+preemption window between picking the remote CPU (e.g., via
+sched_numa_find_nth_cpu()) and dispatching the IPI inside
+smp_call_function_single(). If the selected remote CPU is fully offlined
+during this window, smp_call_function_single() will fail its
+cpu_online() check and return -ENXIO directly to the caller, violating
+the guarantee to execute on *any* online CPU in the mask.
+
+To safely enable this optimization, this patch refactors the logic of
+smp_call_function_any() and smp_call_function_single(). By moving the
+random remote CPU selection into a common __smp_call_function_single(),
+and keep the entire selection and IPI dispatch process within a single
+preemption-disabled region.
+
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+Reviewed-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Tested-by: Paul E. McKenney <paulmck@kernel.org>
+---
+ kernel/smp.c | 48 ++++++++++++++++++++++++++----------------------
+ 1 file changed, 26 insertions(+), 22 deletions(-)
+
+diff --git a/kernel/smp.c b/kernel/smp.c
+index 292eefadd..9e9dab3b0 100644
+--- a/kernel/smp.c
++++ b/kernel/smp.c
+@@ -641,17 +641,8 @@ void flush_smp_call_function_queue(void)
+ 	local_irq_restore(flags);
+ }
+ 
+-/**
+- * smp_call_function_single - Run a function on a specific CPU
+- * @cpu: Specific target CPU for this function.
+- * @func: The function to run. This must be fast and non-blocking.
+- * @info: An arbitrary pointer to pass to the function.
+- * @wait: If true, wait until function has completed on other CPUs.
+- *
+- * Returns: %0 on success, else a negative status code.
+- */
+-int smp_call_function_single(int cpu, smp_call_func_t func, void *info,
+-			     int wait)
++static int __smp_call_function_single(int cpu, smp_call_func_t func,
++			void *info, const struct cpumask *mask, int wait)
+ {
+ 	call_single_data_t *csd;
+ 	call_single_data_t csd_stack = {
+@@ -668,6 +659,14 @@ int smp_call_function_single(int cpu, smp_call_func_t func, void *info,
+ 	 */
+ 	this_cpu = get_cpu();
+ 
++	if (mask) {
++		/* Try for same CPU (cheapest) */
++		if (!cpumask_test_cpu(this_cpu, mask))
++			cpu = sched_numa_find_nth_cpu(mask, 0, cpu_to_node(this_cpu));
++		else
++			cpu = this_cpu;
++	}
++
+ 	/*
+ 	 * Can deadlock when called with interrupts disabled.
+ 	 * We allow cpu's that are not yet online though, as no one else can
+@@ -712,6 +711,21 @@ int smp_call_function_single(int cpu, smp_call_func_t func, void *info,
+ 
+ 	return err;
+ }
++
++/**
++ * smp_call_function_single - Run a function on a specific CPU
++ * @cpu: Specific target CPU for this function.
++ * @func: The function to run. This must be fast and non-blocking.
++ * @info: An arbitrary pointer to pass to the function.
++ * @wait: If true, wait until function has completed on other CPUs.
++ *
++ * Returns: %0 on success, else a negative status code.
++ */
++int smp_call_function_single(int cpu, smp_call_func_t func, void *info,
++			     int wait)
++{
++	return __smp_call_function_single(cpu, func, info, NULL, wait);
++}
+ EXPORT_SYMBOL(smp_call_function_single);
+ 
+ /**
+@@ -776,17 +790,7 @@ EXPORT_SYMBOL_GPL(smp_call_function_single_async);
+ int smp_call_function_any(const struct cpumask *mask,
+ 			  smp_call_func_t func, void *info, int wait)
+ {
+-	unsigned int cpu;
+-	int ret;
+-
+-	/* Try for same CPU (cheapest) */
+-	cpu = get_cpu();
+-	if (!cpumask_test_cpu(cpu, mask))
+-		cpu = sched_numa_find_nth_cpu(mask, 0, cpu_to_node(cpu));
+-
+-	ret = smp_call_function_single(cpu, func, info, wait);
+-	put_cpu();
+-	return ret;
++	return __smp_call_function_single(-1, func, info, mask, wait);
+ }
+ EXPORT_SYMBOL_GPL(smp_call_function_any);
+ 
+-- 
+2.54.0
+
+
+From d506eab5643ee1f2789d42bc2520996320028ef4 Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:17:00 +0800
+Subject: [PATCH 24/36] smp: Use task-local IPI cpumask in
+ smp_call_function_many_cond()
+
+This patch prepares the task-local IPI cpumask during thread creation, and
+uses the local cpumask to replace the percpu cfd cpumask in
+smp_call_function_many_cond(). We will enable preemption during
+csd_lock_wait() later, and this can prevent concurrent access to the
+cfd->cpumask from other tasks on the current CPU. For cases where
+cpumask_size() is smaller than or equal to the pointer size, it tries to
+stash the cpumask in the pointer itself to avoid extra memory allocations.
+
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+Reviewed-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Tested-by: Paul E. McKenney <paulmck@kernel.org>
+---
+ include/linux/sched.h |  6 ++++
+ include/linux/smp.h   | 11 ++++++++
+ kernel/fork.c         |  9 +++++-
+ kernel/smp.c          | 66 +++++++++++++++++++++++++++++++++++++++----
+ 4 files changed, 85 insertions(+), 7 deletions(-)
+
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 373bcc059..eefef9035 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1359,6 +1359,12 @@ struct task_struct {
+ 	struct list_head		perf_event_list;
+ 	struct perf_ctx_data __rcu	*perf_ctx_data;
+ #endif
++#if defined(CONFIG_SMP) && defined(CONFIG_PREEMPTION)
++	union {
++		cpumask_t                       *ipi_mask_ptr;
++		unsigned long			ipi_mask_val;
++	};
++#endif
+ #ifdef CONFIG_DEBUG_PREEMPT
+ 	unsigned long			preempt_disable_ip;
+ #endif
+diff --git a/include/linux/smp.h b/include/linux/smp.h
+index 6925d15cc..15da88411 100644
+--- a/include/linux/smp.h
++++ b/include/linux/smp.h
+@@ -239,6 +239,17 @@ static inline int get_boot_cpu_id(void)
+ 
+ #endif /* !SMP */
+ 
++#if defined(CONFIG_PREEMPTION) && defined(CONFIG_SMP)
++int smp_task_ipi_mask_alloc(struct task_struct *task);
++void smp_task_ipi_mask_free(struct task_struct *task);
++#else
++static inline int smp_task_ipi_mask_alloc(struct task_struct *task)
++{
++	return 0;
++}
++static inline void smp_task_ipi_mask_free(struct task_struct *task) { }
++#endif
++
+ /*
+  * raw_smp_processor_id() - get the current (unstable) CPU id
+  *
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 13e38e89a..ac3fc49d9 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -537,6 +537,7 @@ void free_task(struct task_struct *tsk)
+ #endif
+ 	release_user_cpus_ptr(tsk);
+ 	scs_release(tsk);
++	smp_task_ipi_mask_free(tsk);
+ 
+ #ifndef CONFIG_THREAD_INFO_IN_TASK
+ 	/*
+@@ -935,10 +936,14 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
+ #endif
+ 	account_kernel_stack(tsk, 1);
+ 
+-	err = scs_prepare(tsk, node);
++	err = smp_task_ipi_mask_alloc(tsk);
+ 	if (err)
+ 		goto free_stack;
+ 
++	err = scs_prepare(tsk, node);
++	if (err)
++		goto free_ipi_mask;
++
+ #ifdef CONFIG_SECCOMP
+ 	/*
+ 	 * We must handle setting up seccomp filters once we're under
+@@ -1011,6 +1016,8 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
+ #endif
+ 	return tsk;
+ 
++free_ipi_mask:
++	smp_task_ipi_mask_free(tsk);
+ free_stack:
+ 	exit_task_stack_account(tsk);
+ 	free_thread_stack(tsk);
+diff --git a/kernel/smp.c b/kernel/smp.c
+index 9e9dab3b0..8f8a9ee2a 100644
+--- a/kernel/smp.c
++++ b/kernel/smp.c
+@@ -16,6 +16,7 @@
+ #include <linux/init.h>
+ #include <linux/interrupt.h>
+ #include <linux/gfp.h>
++#include <linux/slab.h>
+ #include <linux/smp.h>
+ #include <linux/cpu.h>
+ #include <linux/sched.h>
+@@ -794,6 +795,49 @@ int smp_call_function_any(const struct cpumask *mask,
+ }
+ EXPORT_SYMBOL_GPL(smp_call_function_any);
+ 
++static DEFINE_STATIC_KEY_FALSE(ipi_mask_inlined);
++
++#ifdef CONFIG_PREEMPTION
++
++int smp_task_ipi_mask_alloc(struct task_struct *task)
++{
++	if (static_branch_unlikely(&ipi_mask_inlined))
++		return 0;
++
++	task->ipi_mask_ptr = kmalloc(cpumask_size(), GFP_KERNEL);
++	if (!task->ipi_mask_ptr)
++		return -ENOMEM;
++
++	return 0;
++}
++
++void smp_task_ipi_mask_free(struct task_struct *task)
++{
++	if (static_branch_unlikely(&ipi_mask_inlined))
++		return;
++
++	kfree(task->ipi_mask_ptr);
++}
++
++static cpumask_t *smp_task_ipi_mask(struct task_struct *cur)
++{
++	/*
++	 * If cpumask_size() is smaller than or equal to the pointer
++	 * size, it stashes the cpumask in the pointer itself to
++	 * avoid extra memory allocations.
++	 */
++	if (static_branch_unlikely(&ipi_mask_inlined))
++		return (cpumask_t *)&cur->ipi_mask_val;
++
++	return cur->ipi_mask_ptr;
++}
++#else
++static cpumask_t *smp_task_ipi_mask(struct task_struct *cur)
++{
++	return NULL;
++}
++#endif
++
+ /*
+  * Flags to be used as scf_flags argument of smp_call_function_many_cond().
+  *
+@@ -811,11 +855,19 @@ static void smp_call_function_many_cond(const struct cpumask *mask,
+ 	int cpu, last_cpu, this_cpu = smp_processor_id();
+ 	struct call_function_data *cfd;
+ 	bool wait = scf_flags & SCF_WAIT;
++	struct cpumask *cpumask, *task_mask;
+ 	int nr_cpus = 0;
+ 	bool run_remote = false;
+ 
+ 	lockdep_assert_preemption_disabled();
+ 
++	task_mask = smp_task_ipi_mask(current);
++	cfd = this_cpu_ptr(&cfd_data);
++	if (task_mask)
++		cpumask = task_mask;
++	else
++		cpumask = cfd->cpumask;
++
+ 	/*
+ 	 * Can deadlock when called with interrupts disabled.
+ 	 * We allow cpu's that are not yet online though, as no one else can
+@@ -836,16 +888,15 @@ static void smp_call_function_many_cond(const struct cpumask *mask,
+ 
+ 	/* Check if we need remote execution, i.e., any CPU excluding this one. */
+ 	if (cpumask_any_and_but(mask, cpu_online_mask, this_cpu) < nr_cpu_ids) {
+-		cfd = this_cpu_ptr(&cfd_data);
+-		cpumask_and(cfd->cpumask, mask, cpu_online_mask);
+-		__cpumask_clear_cpu(this_cpu, cfd->cpumask);
++		cpumask_and(cpumask, mask, cpu_online_mask);
++		__cpumask_clear_cpu(this_cpu, cpumask);
+ 
+ 		cpumask_clear(cfd->cpumask_ipi);
+-		for_each_cpu(cpu, cfd->cpumask) {
++		for_each_cpu(cpu, cpumask) {
+ 			call_single_data_t *csd = per_cpu_ptr(cfd->csd, cpu);
+ 
+ 			if (cond_func && !cond_func(cpu, info)) {
+-				__cpumask_clear_cpu(cpu, cfd->cpumask);
++				__cpumask_clear_cpu(cpu, cpumask);
+ 				continue;
+ 			}
+ 
+@@ -896,7 +947,7 @@ static void smp_call_function_many_cond(const struct cpumask *mask,
+ 	}
+ 
+ 	if (run_remote && wait) {
+-		for_each_cpu(cpu, cfd->cpumask) {
++		for_each_cpu(cpu, cpumask) {
+ 			call_single_data_t *csd;
+ 
+ 			csd = per_cpu_ptr(cfd->csd, cpu);
+@@ -1010,6 +1061,9 @@ EXPORT_SYMBOL(nr_cpu_ids);
+ void __init setup_nr_cpu_ids(void)
+ {
+ 	set_nr_cpu_ids(find_last_bit(cpumask_bits(cpu_possible_mask), NR_CPUS) + 1);
++
++	if (IS_ENABLED(CONFIG_PREEMPTION) && cpumask_size() <= sizeof(unsigned long))
++		static_branch_enable(&ipi_mask_inlined);
+ }
+ 
+ /* Called by boot processor to activate the rest. */
+-- 
+2.54.0
+
+
+From 45fd70dcb98e1e7977d5c1944be325c04443b02e Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:17:01 +0800
+Subject: [PATCH 25/36] smp: Alloc percpu csd data in smpcfd_prepare_cpu() only
+ once
+
+Later patch would enable preemption during csd_lock_wait() in
+smp_call_function_many_cond(), which may cause access cfd->csd data that
+has already been freed in smpcfd_dead_cpu().
+
+One way to fix the above issue is to use the RCU mechanism to protect the
+csd data and wait for all read critical sections to exit before freeing
+the memory in smpcfd_dead_cpu(), but this could delay CPU shutdown. This
+patch chooses a simpler approach: allocate the percpu csd on the UP side
+only once and skip freeing the csd memory in smpcfd_dead_cpu().
+
+Suggested-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+Acked-by: Muchun Song <muchun.song@linux.dev>
+Reviewed-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Tested-by: Paul E. McKenney <paulmck@kernel.org>
+---
+ kernel/smp.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/smp.c b/kernel/smp.c
+index 8f8a9ee2a..9ef136bac 100644
+--- a/kernel/smp.c
++++ b/kernel/smp.c
+@@ -64,7 +64,15 @@ int smpcfd_prepare_cpu(unsigned int cpu)
+ 		free_cpumask_var(cfd->cpumask);
+ 		return -ENOMEM;
+ 	}
+-	cfd->csd = alloc_percpu(call_single_data_t);
++
++	/*
++	 * The percpu csd is allocated only once and never freed.
++	 * This ensures that smp_call_function_many_cond() can safely
++	 * access the csd of an offlined CPU if it gets preempted
++	 * during csd_lock_wait().
++	 */
++	if (!cfd->csd)
++		cfd->csd = alloc_percpu(call_single_data_t);
+ 	if (!cfd->csd) {
+ 		free_cpumask_var(cfd->cpumask);
+ 		free_cpumask_var(cfd->cpumask_ipi);
+@@ -80,7 +88,6 @@ int smpcfd_dead_cpu(unsigned int cpu)
+ 
+ 	free_cpumask_var(cfd->cpumask);
+ 	free_cpumask_var(cfd->cpumask_ipi);
+-	free_percpu(cfd->csd);
+ 	return 0;
+ }
+ 
+-- 
+2.54.0
+
+
+From 36336052bcda59e44310bd90f6c525dbe558b1fc Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:17:02 +0800
+Subject: [PATCH 26/36] smp: Enable preemption early in
+ smp_call_function_many_cond()
+
+Disabling preemption entirely during smp_call_function_many_cond() was
+primarily for the following reasons:
+
+- To prevent the remote online CPU from going offline. Specifically, we
+want to ensure that no new csds are queued after smpcfd_dying_cpu() has
+finished. Therefore, preemption must be disabled until all necessary IPIs
+are sent.
+
+- To prevent current CPU from going offline. Being migrated to another CPU
+and calling csd_lock_wait() may cause UAF due to smpcfd_dead_cpu() during
+the current CPU offline process.
+
+- To protect the per-cpu cfd_data from concurrent modification by other
+tasks on the current CPU. cfd_data contains cpumasks and per-cpu csds.
+Before enqueueing a csd, we block on the csd_lock() to ensure the
+previous async csd->func() has completed, and then initialize csd->func and
+csd->info. After sending the IPI, we spin-wait for the remote CPU to call
+csd_unlock(). Actually the csd_lock mechanism already guarantees csd
+serialization. If preemption occurs during csd_lock_wait, other concurrent
+smp_call_function_many_cond calls will simply block until the previous
+csd->func() completes:
+
+task A                    task B
+
+sd->func = fun_a
+send ipis
+
+                preempted by B
+               --------------->
+                        csd_lock(csd); // block until last
+                                       // fun_a finished
+
+                        csd->func = func_b;
+                        csd->info = info;
+                            ...
+                        send ipis
+
+                switch back to A
+                <---------------
+
+csd_lock_wait(csd); // block until remote finish func_*
+
+Previous patches replaced the per-cpu cfd->cpumask with task-local cpumask,
+and the percpu csd is allocated only once and is never freed to ensure
+we can safely access csd. Now we can enable preemption before
+csd_lock_wait() which makes the potentially unpredictable csd_lock_wait()
+preemptible and migratable.
+
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+Reviewed-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Tested-by: Paul E. McKenney <paulmck@kernel.org>
+---
+ kernel/smp.c | 22 +++++++++++++++++-----
+ 1 file changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/kernel/smp.c b/kernel/smp.c
+index 9ef136bac..390e65265 100644
+--- a/kernel/smp.c
++++ b/kernel/smp.c
+@@ -859,15 +859,14 @@ static void smp_call_function_many_cond(const struct cpumask *mask,
+ 					unsigned int scf_flags,
+ 					smp_cond_func_t cond_func)
+ {
+-	int cpu, last_cpu, this_cpu = smp_processor_id();
++	int cpu, last_cpu, this_cpu;
+ 	struct call_function_data *cfd;
+ 	bool wait = scf_flags & SCF_WAIT;
+ 	struct cpumask *cpumask, *task_mask;
+ 	int nr_cpus = 0;
+ 	bool run_remote = false;
+ 
+-	lockdep_assert_preemption_disabled();
+-
++	this_cpu = get_cpu();
+ 	task_mask = smp_task_ipi_mask(current);
+ 	cfd = this_cpu_ptr(&cfd_data);
+ 	if (task_mask)
+@@ -953,6 +952,17 @@ static void smp_call_function_many_cond(const struct cpumask *mask,
+ 		local_irq_restore(flags);
+ 	}
+ 
++	/*
++	 * Waiting for completion can take time, especially with many CPUs.
++	 * On a PREEMPT kernel a per-task cpumask is used to track CPUs with
++	 * pending IPI requests. This allows preemption to be enabled before
++	 * waiting. On a !PREEMPT kernel the cpumask is shared and the call
++	 * must block until completion to avoid modifications by another caller
++	 * on this CPU.
++	 */
++	if (task_mask)
++		put_cpu();
++
+ 	if (run_remote && wait) {
+ 		for_each_cpu(cpu, cpumask) {
+ 			call_single_data_t *csd;
+@@ -961,6 +971,9 @@ static void smp_call_function_many_cond(const struct cpumask *mask,
+ 			csd_lock_wait(csd);
+ 		}
+ 	}
++
++	if (!task_mask)
++		put_cpu();
+ }
+ 
+ /**
+@@ -972,8 +985,7 @@ static void smp_call_function_many_cond(const struct cpumask *mask,
+  *        on other CPUs.
+  *
+  * You must not call this function with disabled interrupts or from a
+- * hardware interrupt handler or from a bottom half handler. Preemption
+- * must be disabled when calling this function.
++ * hardware interrupt handler or from a bottom half handler.
+  *
+  * @func is not called on the local CPU even if @mask contains it.  Consider
+  * using on_each_cpu_cond_mask() instead if this is not desirable.
+-- 
+2.54.0
+
+
+From 21e43225d85981ed1ade64556cd34929647216fa Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:17:03 +0800
+Subject: [PATCH 27/36] smp: Remove preempt_disable() from smp_call_function()
+
+Now smp_call_function_many_cond() internally handles the preemption logic,
+so smp_call_function() does not need to explicitly disable preemption.
+Remove preempt_{enable, disable} from smp_call_function().
+
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+Reviewed-by: Muchun Song <muchun.song@linux.dev>
+Reviewed-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Tested-by: Paul E. McKenney <paulmck@kernel.org>
+---
+ kernel/smp.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/kernel/smp.c b/kernel/smp.c
+index 390e65265..096d857dc 100644
+--- a/kernel/smp.c
++++ b/kernel/smp.c
+@@ -1012,9 +1012,8 @@ EXPORT_SYMBOL(smp_call_function_many);
+  */
+ void smp_call_function(smp_call_func_t func, void *info, int wait)
+ {
+-	preempt_disable();
+-	smp_call_function_many(cpu_online_mask, func, info, wait);
+-	preempt_enable();
++	smp_call_function_many_cond(cpu_online_mask, func, info,
++			wait ? SCF_WAIT : 0, NULL);
+ }
+ EXPORT_SYMBOL(smp_call_function);
+ 
+-- 
+2.54.0
+
+
+From 4cd1014628a7dfdbe56a4a1e1762783207f27861 Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:17:04 +0800
+Subject: [PATCH 28/36] smp: Remove preempt_disable() from
+ on_each_cpu_cond_mask()
+
+Now smp_call_function_many_cond() internally handles the preemption logic,
+so on_each_cpu_cond_mask does not need to explicitly disable preemption.
+Remove preempt_{enable, disable} from on_each_cpu_cond_mask().
+
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+Reviewed-by: Muchun Song <muchun.song@linux.dev>
+Reviewed-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Tested-by: Paul E. McKenney <paulmck@kernel.org>
+---
+ kernel/smp.c | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/kernel/smp.c b/kernel/smp.c
+index 096d857dc..0595e0043 100644
+--- a/kernel/smp.c
++++ b/kernel/smp.c
+@@ -1136,9 +1136,7 @@ void on_each_cpu_cond_mask(smp_cond_func_t cond_func, smp_call_func_t func,
+ 	if (wait)
+ 		scf_flags |= SCF_WAIT;
+ 
+-	preempt_disable();
+ 	smp_call_function_many_cond(mask, func, info, scf_flags, cond_func);
+-	preempt_enable();
+ }
+ EXPORT_SYMBOL(on_each_cpu_cond_mask);
+ 
+-- 
+2.54.0
+
+
+From 336a94830df5ba0ce05d271e70970ee7f7472e28 Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:17:05 +0800
+Subject: [PATCH 29/36] scftorture: Remove preempt_disable() in
+ scftorture_invoke_one()
+
+Previous patches make smp_call*() functions handle preemption logic
+internally. Thus, the explicit preempt_disable() surrounding these calls
+becomes unnecessary. Furthermore, keeping the external preempt_disable()
+would prevent scftorture from exercising the newly narrowed internal
+preemption-disabled regions during IPI dispatch. This patch removes
+the preempt_{enable, disable} pairs in scftorture_invoke_one().
+
+Removing this preemption protection could expose a race condition with
+CPU hotplug when use_cpus_read_lock is false. Specifically, for
+multi-cast operations (SCF_PRIM_MANY or SCF_PRIM_ALL), if only 1 CPU is
+online, smp_call_function_many() correctly skips sending IPIs and leaves
+scfc_out as false. Without preemption disabled, a CPU hotplug thread
+could preempt the test thread, bring a second CPU online, and increment
+num_online_cpus(). When the test thread resumes, the validation check
+would see num_online_cpus() > 1 and falsely trigger the memory-ordering
+warning, leaking the scfcp structure.
+
+To avoid this potential false positive, restrict the num_online_cpus() > 1
+condition to only apply when use_cpus_read_lock is true, ensuring the CPU
+count remains stable during evaluation.
+
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+Reviewed-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Tested-by: Paul E. McKenney <paulmck@kernel.org>
+---
+ kernel/scftorture.c | 13 ++++---------
+ 1 file changed, 4 insertions(+), 9 deletions(-)
+
+diff --git a/kernel/scftorture.c b/kernel/scftorture.c
+index 327c315f4..2082f9b44 100644
+--- a/kernel/scftorture.c
++++ b/kernel/scftorture.c
+@@ -348,6 +348,8 @@ static void scftorture_invoke_one(struct scf_statistics *scfp, struct torture_ra
+ 	int ret = 0;
+ 	struct scf_check *scfcp = NULL;
+ 	struct scf_selector *scfsp = scf_sel_rand(trsp);
++	bool is_single = (scfsp->scfs_prim == SCF_PRIM_SINGLE ||
++			  scfsp->scfs_prim == SCF_PRIM_SINGLE_RPC);
+ 
+ 	if (scfsp->scfs_prim == SCF_PRIM_SINGLE || scfsp->scfs_wait) {
+ 		scfcp = kmalloc_obj(*scfcp, GFP_ATOMIC);
+@@ -364,8 +366,6 @@ static void scftorture_invoke_one(struct scf_statistics *scfp, struct torture_ra
+ 	}
+ 	if (use_cpus_read_lock)
+ 		cpus_read_lock();
+-	else
+-		preempt_disable();
+ 	switch (scfsp->scfs_prim) {
+ 	case SCF_PRIM_RESCHED:
+ 		if (IS_BUILTIN(CONFIG_SCF_TORTURE_TEST)) {
+@@ -411,13 +411,10 @@ static void scftorture_invoke_one(struct scf_statistics *scfp, struct torture_ra
+ 		if (!ret) {
+ 			if (use_cpus_read_lock)
+ 				cpus_read_unlock();
+-			else
+-				preempt_enable();
++
+ 			wait_for_completion(&scfcp->scfc_completion);
+ 			if (use_cpus_read_lock)
+ 				cpus_read_lock();
+-			else
+-				preempt_disable();
+ 		} else {
+ 			scfp->n_single_rpc_ofl++;
+ 			scf_add_to_free_list(scfcp);
+@@ -452,7 +449,7 @@ static void scftorture_invoke_one(struct scf_statistics *scfp, struct torture_ra
+ 			scfcp->scfc_out = true;
+ 	}
+ 	if (scfcp && scfsp->scfs_wait) {
+-		if (WARN_ON_ONCE((num_online_cpus() > 1 || scfsp->scfs_prim == SCF_PRIM_SINGLE) &&
++		if (WARN_ON_ONCE(((use_cpus_read_lock && num_online_cpus() > 1) || is_single) &&
+ 				 !scfcp->scfc_out)) {
+ 			pr_warn("%s: Memory-ordering failure, scfs_prim: %d.\n", __func__, scfsp->scfs_prim);
+ 			atomic_inc(&n_mb_out_errs); // Leak rather than trash!
+@@ -463,8 +460,6 @@ static void scftorture_invoke_one(struct scf_statistics *scfp, struct torture_ra
+ 	}
+ 	if (use_cpus_read_lock)
+ 		cpus_read_unlock();
+-	else
+-		preempt_enable();
+ 	if (allocfail)
+ 		schedule_timeout_idle((1 + longwait) * HZ);  // Let no-wait handlers complete.
+ 	else if (!(torture_random(trsp) & 0xfff))
+-- 
+2.54.0
+
+
+From 9ec6599e8cc8cf85c25bc9227a6a85ec750e8cec Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:17:06 +0800
+Subject: [PATCH 30/36] x86/mm: Factor out flush_tlb_info initialization
+
+get_flush_tlb_info() currently does two things: it reserves the per-CPU
+flush_tlb_info storage and initializes the fields that describe the
+flush.
+
+Split the field setup into init_flush_tlb_info(). The per-CPU storage,
+DEBUG_VM reentrancy check and put_flush_tlb_info() lifetime rules are
+unchanged.
+
+This is a preparatory cleanup for allowing callers to provide their own
+flush_tlb_info storage.
+
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+---
+ arch/x86/mm/tlb.c | 40 +++++++++++++++++++++++++---------------
+ 1 file changed, 25 insertions(+), 15 deletions(-)
+
+diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
+index 1023acadd..f74206106 100644
+--- a/arch/x86/mm/tlb.c
++++ b/arch/x86/mm/tlb.c
+@@ -1379,22 +1379,12 @@ static DEFINE_PER_CPU_SHARED_ALIGNED(struct flush_tlb_info, flush_tlb_info);
+ static DEFINE_PER_CPU(unsigned int, flush_tlb_info_idx);
+ #endif
+ 
+-static struct flush_tlb_info *get_flush_tlb_info(struct mm_struct *mm,
+-			unsigned long start, unsigned long end,
+-			unsigned int stride_shift, bool freed_tables,
+-			u64 new_tlb_gen)
++static void init_flush_tlb_info(struct flush_tlb_info *info,
++				struct mm_struct *mm,
++				unsigned long start, unsigned long end,
++				unsigned int stride_shift, bool freed_tables,
++				u64 new_tlb_gen)
+ {
+-	struct flush_tlb_info *info = this_cpu_ptr(&flush_tlb_info);
+-
+-#ifdef CONFIG_DEBUG_VM
+-	/*
+-	 * Ensure that the following code is non-reentrant and flush_tlb_info
+-	 * is not overwritten. This means no TLB flushing is initiated by
+-	 * interrupt handlers and machine-check exception handlers.
+-	 */
+-	BUG_ON(this_cpu_inc_return(flush_tlb_info_idx) != 1);
+-#endif
+-
+ 	/*
+ 	 * If the number of flushes is so large that a full flush
+ 	 * would be faster, do a full flush.
+@@ -1412,6 +1402,26 @@ static struct flush_tlb_info *get_flush_tlb_info(struct mm_struct *mm,
+ 	info->new_tlb_gen	= new_tlb_gen;
+ 	info->initiating_cpu	= smp_processor_id();
+ 	info->trim_cpumask	= 0;
++}
++
++static struct flush_tlb_info *get_flush_tlb_info(struct mm_struct *mm,
++			unsigned long start, unsigned long end,
++			unsigned int stride_shift, bool freed_tables,
++			u64 new_tlb_gen)
++{
++	struct flush_tlb_info *info = this_cpu_ptr(&flush_tlb_info);
++
++#ifdef CONFIG_DEBUG_VM
++	/*
++	 * Ensure that the following code is non-reentrant and flush_tlb_info
++	 * is not overwritten. This means no TLB flushing is initiated by
++	 * interrupt handlers and machine-check exception handlers.
++	 */
++	BUG_ON(this_cpu_inc_return(flush_tlb_info_idx) != 1);
++#endif
++
++	init_flush_tlb_info(info, mm, start, end, stride_shift, freed_tables,
++			    new_tlb_gen);
+ 
+ 	return info;
+ }
+-- 
+2.54.0
+
+
+From 3a95ca11e2f14668f21c29700f7857f9282df48d Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:17:07 +0800
+Subject: [PATCH 31/36] x86/mm: Cap flush_tlb_info alignment at 64 bytes
+
+A stack allocated flush_tlb_info should keep cacheline alignment to
+avoid the regression that motivated the per-CPU storage, but using
+SMP_CACHE_BYTES directly can make the stack frame grow excessively on
+configurations with large cache lines[1].
+
+Add FLUSH_TLB_INFO_ALIGN and cap the type alignment at 64 bytes. The
+existing per-CPU flush_tlb_info instance remains
+DEFINE_PER_CPU_SHARED_ALIGNED(), so its per-CPU shared-cacheline
+alignment is unchanged.
+
+The capped type alignment matters once flush_tlb_info is moved back to the
+stack by the next patch.
+
+link[1]: https://lore.kernel.org/all/tip-780e0106d468a2962b16b52fdf42898f2639e0a0@git.kernel.org/
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+---
+ arch/x86/include/asm/tlbflush.h | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
+index 0545fe75c..f4e4505d4 100644
+--- a/arch/x86/include/asm/tlbflush.h
++++ b/arch/x86/include/asm/tlbflush.h
+@@ -211,6 +211,12 @@ extern u16 invlpgb_count_max;
+ 
+ extern void initialize_tlbstate_and_flush(void);
+ 
++#if SMP_CACHE_BYTES > 64
++#define FLUSH_TLB_INFO_ALIGN 64
++#else
++#define FLUSH_TLB_INFO_ALIGN SMP_CACHE_BYTES
++#endif
++
+ /*
+  * TLB flushing:
+  *
+@@ -249,7 +255,7 @@ struct flush_tlb_info {
+ 	u8			stride_shift;
+ 	u8			freed_tables;
+ 	u8			trim_cpumask;
+-};
++} __aligned(FLUSH_TLB_INFO_ALIGN);
+ 
+ void flush_tlb_local(void);
+ void flush_tlb_one_user(unsigned long addr);
+-- 
+2.54.0
+
+
+From 1664cc479d6b2f7557dc802e53e573721b3617c8 Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:17:08 +0800
+Subject: [PATCH 32/36] x86/mm: Move flush_tlb_info back to the stack
+
+flush_tlb_info benefits from cacheline alignment, but using
+cacheline-aligned stack storage directly can grow stack usage too much on
+configurations with large SMP_CACHE_BYTES values[1]. That problem caused
+commit 515ab7c41306 ("x86/mm: Align TLB invalidation info") to be
+reverted. Commit 3db6d5a5ecaf ("x86/mm/tlb: Remove 'struct flush_tlb_info'
+from the stack") moved flush_tlb_info to per-CPU storage, which avoided the
+stack growth problem while preserving cacheline alignment. That was a good
+fit while the callers kept preemption disabled for the whole flush
+operation.
+
+However, a single per-CPU flush_tlb_info also requires all flush_tlb*
+operations to keep preemption disabled while the object is in use, so
+that it cannot be overwritten by another flush on the same CPU.
+flush_tlb* may send IPIs to remote CPUs and synchronously wait for all
+remote CPUs to complete their local TLB flushes. That wait can take tens
+of milliseconds when interrupts are disabled on a remote CPU or when a
+large number of remote CPUs are involved.
+
+The following changes need to shorten the CPU-pinned/preemption-disabled
+section around those remote TLB flush waits. Move flush_tlb_info back to
+caller-private stack storage so the caller does not have to stay on the
+same CPU until the remote flush completes.
+
+The previous patch capped the type alignment at 64 bytes. This keeps the
+alignment benefit for stack objects without reintroducing the old
+large-cacheline stack usage problem.
+
+To evaluate the performance impact of this patch, use the following
+script to reproduce the microbenchmark mentioned in commit 3db6d5a5ecaf
+("x86/mm/tlb: Remove 'struct flush_tlb_info' from the stack"). The test
+environment is an Ice Lake system (Intel(R) Xeon(R) Platinum 8336C) with
+128 CPUs and 2 NUMA nodes. During the test, the threads were bound to
+specific CPUs, and both pti and mitigations were disabled:
+
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <pthread.h>
+    #include <sys/mman.h>
+    #include <sys/time.h>
+    #include <unistd.h>
+
+    #define NUM_OPS 1000000
+    #define NUM_THREADS 3
+    #define NUM_RUNS 5
+    #define PAGE_SIZE 4096
+
+    volatile int stop_threads = 0;
+
+    void *busy_wait_thread(void *arg) {
+        while (!stop_threads) {
+            __asm__ volatile ("nop");
+        }
+        return NULL;
+    }
+
+    long long get_usec() {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        return tv.tv_sec * 1000000LL + tv.tv_usec;
+    }
+
+    int main() {
+        pthread_t threads[NUM_THREADS];
+        char *addr;
+        int i, r;
+        addr = mmap(NULL, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE
+                | MAP_ANONYMOUS, -1, 0);
+
+        if (addr == MAP_FAILED) {
+            perror("mmap");
+            exit(1);
+        }
+
+        for (i = 0; i < NUM_THREADS; i++) {
+            if (pthread_create(&threads[i], NULL, busy_wait_thread, NULL))
+                exit(1);
+        }
+
+        printf("Running benchmark: %d runs, %d ops each, %d background\n"
+               "threads\n", NUM_RUNS, NUM_OPS, NUM_THREADS);
+
+        for (r = 0; r < NUM_RUNS; r++) {
+            long long start, end;
+            start = get_usec();
+            for (i = 0; i < NUM_OPS; i++) {
+                addr[0] = 1;
+                if (madvise(addr, PAGE_SIZE, MADV_DONTNEED)) {
+                    perror("madvise");
+                    exit(1);
+                }
+            }
+            end = get_usec();
+            double duration = (double)(end - start);
+            double avg_lat = duration / NUM_OPS;
+            printf("Run %d: Total time %.2f us, Avg latency %.4f us/op\n",
+                   r + 1, duration, avg_lat);
+        }
+        stop_threads = 1;
+        for (i = 0; i < NUM_THREADS; i++)
+            pthread_join(threads[i], NULL);
+        munmap(addr, PAGE_SIZE);
+        return 0;
+    }
+
+                   base   on-stack-aligned  on-stack-not-aligned
+                   ----       ---------      -----------
+avg (usec/op)     2.5278       2.5261         2.5508
+stddev            0.0007       0.0027         0.0023
+
+The benchmark results show that the average latency difference between
+the baseline (base) and the properly aligned stack variable
+(on-stack-aligned) is within the standard deviation (stddev). This
+indicates that the variations are caused by testing noise, and reverting
+to a stack variable with proper alignment causes no performance
+regression compared to the per-CPU implementation. The unaligned version
+(on-stack-not-aligned) shows a minor performance drop. This demonstrates
+that we can shorten the CPU-pinned/preemption-disabled section without
+sacrificing performance.
+
+With caller-private storage there is no shared per-CPU object to protect,
+so remove the DEBUG_VM reentrancy counter as well.
+
+Link[1]: https://lore.kernel.org/all/tip-780e0106d468a2962b16b52fdf42898f2639e0a0@git.kernel.org/
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+Acked-by: Nadav Amit <nadav.amit@gmail.com>
+Reviewed-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Tested-by: Paul E. McKenney <paulmck@kernel.org>
+---
+ arch/x86/mm/tlb.c | 71 ++++++++++-------------------------------------
+ 1 file changed, 15 insertions(+), 56 deletions(-)
+
+diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
+index f74206106..a83a3f9e7 100644
+--- a/arch/x86/mm/tlb.c
++++ b/arch/x86/mm/tlb.c
+@@ -1373,12 +1373,6 @@ void flush_tlb_multi(const struct cpumask *cpumask,
+  */
+ unsigned long tlb_single_page_flush_ceiling __read_mostly = 33;
+ 
+-static DEFINE_PER_CPU_SHARED_ALIGNED(struct flush_tlb_info, flush_tlb_info);
+-
+-#ifdef CONFIG_DEBUG_VM
+-static DEFINE_PER_CPU(unsigned int, flush_tlb_info_idx);
+-#endif
+-
+ static void init_flush_tlb_info(struct flush_tlb_info *info,
+ 				struct mm_struct *mm,
+ 				unsigned long start, unsigned long end,
+@@ -1404,50 +1398,20 @@ static void init_flush_tlb_info(struct flush_tlb_info *info,
+ 	info->trim_cpumask	= 0;
+ }
+ 
+-static struct flush_tlb_info *get_flush_tlb_info(struct mm_struct *mm,
+-			unsigned long start, unsigned long end,
+-			unsigned int stride_shift, bool freed_tables,
+-			u64 new_tlb_gen)
+-{
+-	struct flush_tlb_info *info = this_cpu_ptr(&flush_tlb_info);
+-
+-#ifdef CONFIG_DEBUG_VM
+-	/*
+-	 * Ensure that the following code is non-reentrant and flush_tlb_info
+-	 * is not overwritten. This means no TLB flushing is initiated by
+-	 * interrupt handlers and machine-check exception handlers.
+-	 */
+-	BUG_ON(this_cpu_inc_return(flush_tlb_info_idx) != 1);
+-#endif
+-
+-	init_flush_tlb_info(info, mm, start, end, stride_shift, freed_tables,
+-			    new_tlb_gen);
+-
+-	return info;
+-}
+-
+-static void put_flush_tlb_info(void)
+-{
+-#ifdef CONFIG_DEBUG_VM
+-	/* Complete reentrancy prevention checks */
+-	barrier();
+-	this_cpu_dec(flush_tlb_info_idx);
+-#endif
+-}
+-
+ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
+ 				unsigned long end, unsigned int stride_shift,
+ 				bool freed_tables)
+ {
+-	struct flush_tlb_info *info;
++	struct flush_tlb_info _info;
++	struct flush_tlb_info *info = &_info;
+ 	int cpu = get_cpu();
+ 	u64 new_tlb_gen;
+ 
+ 	/* This is also a barrier that synchronizes with switch_mm(). */
+ 	new_tlb_gen = inc_mm_tlb_gen(mm);
+ 
+-	info = get_flush_tlb_info(mm, start, end, stride_shift, freed_tables,
+-				  new_tlb_gen);
++	init_flush_tlb_info(&_info, mm, start, end, stride_shift, freed_tables,
++			    new_tlb_gen);
+ 
+ 	/*
+ 	 * flush_tlb_multi() is not optimized for the common case in which only
+@@ -1467,7 +1431,6 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
+ 		local_irq_enable();
+ 	}
+ 
+-	put_flush_tlb_info();
+ 	put_cpu();
+ 	mmu_notifier_arch_invalidate_secondary_tlbs(mm, start, end);
+ }
+@@ -1537,19 +1500,16 @@ static void kernel_tlb_flush_range(struct flush_tlb_info *info)
+ 
+ void flush_tlb_kernel_range(unsigned long start, unsigned long end)
+ {
+-	struct flush_tlb_info *info;
++	struct flush_tlb_info info;
+ 
+ 	guard(preempt)();
++	init_flush_tlb_info(&info, NULL, start, end, PAGE_SHIFT, false,
++			    TLB_GENERATION_INVALID);
+ 
+-	info = get_flush_tlb_info(NULL, start, end, PAGE_SHIFT, false,
+-				  TLB_GENERATION_INVALID);
+-
+-	if (info->end == TLB_FLUSH_ALL)
+-		kernel_tlb_flush_all(info);
++	if (info.end == TLB_FLUSH_ALL)
++		kernel_tlb_flush_all(&info);
+ 	else
+-		kernel_tlb_flush_range(info);
+-
+-	put_flush_tlb_info();
++		kernel_tlb_flush_range(&info);
+ }
+ 
+ /*
+@@ -1717,12 +1677,12 @@ EXPORT_SYMBOL_FOR_KVM(__flush_tlb_all);
+ 
+ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
+ {
+-	struct flush_tlb_info *info;
++	struct flush_tlb_info info;
+ 
+ 	int cpu = get_cpu();
+ 
+-	info = get_flush_tlb_info(NULL, 0, TLB_FLUSH_ALL, 0, false,
+-				  TLB_GENERATION_INVALID);
++	init_flush_tlb_info(&info, NULL, 0, TLB_FLUSH_ALL, 0, false,
++			    TLB_GENERATION_INVALID);
+ 	/*
+ 	 * flush_tlb_multi() is not optimized for the common case in which only
+ 	 * a local TLB flush is needed. Optimize this use-case by calling
+@@ -1732,17 +1692,16 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
+ 		invlpgb_flush_all_nonglobals();
+ 		batch->unmapped_pages = false;
+ 	} else if (cpumask_any_but(&batch->cpumask, cpu) < nr_cpu_ids) {
+-		flush_tlb_multi(&batch->cpumask, info);
++		flush_tlb_multi(&batch->cpumask, &info);
+ 	} else if (cpumask_test_cpu(cpu, &batch->cpumask)) {
+ 		lockdep_assert_irqs_enabled();
+ 		local_irq_disable();
+-		flush_tlb_func(info);
++		flush_tlb_func(&info);
+ 		local_irq_enable();
+ 	}
+ 
+ 	cpumask_clear(&batch->cpumask);
+ 
+-	put_flush_tlb_info();
+ 	put_cpu();
+ }
+ 
+-- 
+2.54.0
+
+
+From 75f9d6c5ae433e0a11de34143ee3caf537129b30 Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:17:09 +0800
+Subject: [PATCH 33/36] x86/kvm: Disable preemption in kvm_flush_tlb_multi()
+
+kvm_flush_tlb_multi() is installed as an x86 PV TLB flush backend, so
+flush_tlb_multi() can reach it through pv_ops when running as a KVM
+guest.
+
+kvm_flush_tlb_multi() uses the per-CPU scratch cpumask __pv_cpu_mask.
+That buffer must remain tied to the current CPU until the mask has been
+copied, filtered, and consumed by native_flush_tlb_multi().  Today the
+x86/mm callers enter flush_tlb_multi() while pinned to a CPU, but a
+subsequent x86/mm change will drop that caller-side CPU pinning before
+issuing the remote TLB flush so the caller can be preempted while waiting
+for remote CPUs.
+
+Make the KVM backend protect its own per-CPU scratch cpumask by disabling
+preemption locally.  This is harmless with the current callers, where the
+preemption disable is nested, and makes the KVM pv_ops dependency explicit
+before changing the x86/mm call sites.
+
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+---
+ arch/x86/kernel/kvm.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/kernel/kvm.c b/arch/x86/kernel/kvm.c
+index dcef84da3..5b554e480 100644
+--- a/arch/x86/kernel/kvm.c
++++ b/arch/x86/kernel/kvm.c
+@@ -663,8 +663,10 @@ static void kvm_flush_tlb_multi(const struct cpumask *cpumask,
+ 	u8 state;
+ 	int cpu;
+ 	struct kvm_steal_time *src;
+-	struct cpumask *flushmask = this_cpu_cpumask_var_ptr(__pv_cpu_mask);
++	struct cpumask *flushmask;
+ 
++	guard(preempt)();
++	flushmask = this_cpu_cpumask_var_ptr(__pv_cpu_mask);
+ 	cpumask_copy(flushmask, cpumask);
+ 	/*
+ 	 * We have to call flush only on online vCPUs. And
+-- 
+2.54.0
+
+
+From 64e57237eb34b494643c562dcac9a9d2e82aecf1 Mon Sep 17 00:00:00 2001
+From: Chuyi Zhou <zhouchuyi@bytedance.com>
+Date: Tue, 9 Jun 2026 17:17:10 +0800
+Subject: [PATCH 34/36] x86/mm: Re-enable preemption before flush_tlb_multi()
+
+flush_tlb_mm_range() and arch_tlbbatch_flush() pin the current CPU while
+they decide whether the flush can be handled locally or must be sent to
+remote CPUs. The CPU pinning is needed for the current CPU number and for
+the local TLB flush path, which reads per-CPU TLB state.
+
+It is not needed while waiting for a remote TLB flush to complete. After
+the remote-flush path has been selected, flush_tlb_info is caller-private
+stack storage, so the caller no longer has to stay on the same CPU to
+protect a shared per-CPU flush_tlb_info object.
+
+flush_tlb_multi() may also route through x86 PV backends. Those backends
+must protect their own CPU-local scratch state instead of relying on the
+caller to stay pinned. Hyper-V already does this by disabling interrupts
+while using hyperv_pcpu_input_arg, and Xen's multicall path brackets its
+per-CPU multicall buffer with xen_mc_batch()/xen_mc_issue(). The previous
+patch makes the KVM backend do the same for __pv_cpu_mask.
+
+Remote TLB flushes may synchronously wait for many CPUs, and the wait can
+take tens of milliseconds when remote CPUs have interrupts disabled or
+when many CPUs are involved. Keeping preemption disabled for that whole
+wait unnecessarily increases scheduling latency on the initiating CPU.
+
+Drop the CPU pinning before calling flush_tlb_multi() in the remote paths
+of flush_tlb_mm_range() and arch_tlbbatch_flush(). Keep the local paths
+inside the pinned section because they still access this CPU's TLB state.
+
+Signed-off-by: Chuyi Zhou <zhouchuyi@bytedance.com>
+Reviewed-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Tested-by: Paul E. McKenney <paulmck@kernel.org>
+---
+ arch/x86/mm/tlb.c | 23 ++++++++++++++++-------
+ 1 file changed, 16 insertions(+), 7 deletions(-)
+
+diff --git a/arch/x86/mm/tlb.c b/arch/x86/mm/tlb.c
+index a83a3f9e7..cb478e17c 100644
+--- a/arch/x86/mm/tlb.c
++++ b/arch/x86/mm/tlb.c
+@@ -1404,6 +1404,7 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
+ {
+ 	struct flush_tlb_info _info;
+ 	struct flush_tlb_info *info = &_info;
++	bool remote_flush = false;
+ 	int cpu = get_cpu();
+ 	u64 new_tlb_gen;
+ 
+@@ -1421,9 +1422,7 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
+ 	if (mm_global_asid(mm)) {
+ 		broadcast_tlb_flush(info);
+ 	} else if (cpumask_any_but(mm_cpumask(mm), cpu) < nr_cpu_ids) {
+-		info->trim_cpumask = should_trim_cpumask(mm);
+-		flush_tlb_multi(mm_cpumask(mm), info);
+-		consider_global_asid(mm);
++		remote_flush = true;
+ 	} else if (mm == this_cpu_read(cpu_tlbstate.loaded_mm)) {
+ 		lockdep_assert_irqs_enabled();
+ 		local_irq_disable();
+@@ -1432,6 +1431,13 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
+ 	}
+ 
+ 	put_cpu();
++
++	if (remote_flush) {
++		info->trim_cpumask = should_trim_cpumask(mm);
++		flush_tlb_multi(mm_cpumask(mm), info);
++		consider_global_asid(mm);
++	}
++
+ 	mmu_notifier_arch_invalidate_secondary_tlbs(mm, start, end);
+ }
+ 
+@@ -1678,7 +1684,7 @@ EXPORT_SYMBOL_FOR_KVM(__flush_tlb_all);
+ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
+ {
+ 	struct flush_tlb_info info;
+-
++	bool remote_flush = false;
+ 	int cpu = get_cpu();
+ 
+ 	init_flush_tlb_info(&info, NULL, 0, TLB_FLUSH_ALL, 0, false,
+@@ -1692,7 +1698,7 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
+ 		invlpgb_flush_all_nonglobals();
+ 		batch->unmapped_pages = false;
+ 	} else if (cpumask_any_but(&batch->cpumask, cpu) < nr_cpu_ids) {
+-		flush_tlb_multi(&batch->cpumask, &info);
++		remote_flush = true;
+ 	} else if (cpumask_test_cpu(cpu, &batch->cpumask)) {
+ 		lockdep_assert_irqs_enabled();
+ 		local_irq_disable();
+@@ -1700,9 +1706,12 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
+ 		local_irq_enable();
+ 	}
+ 
+-	cpumask_clear(&batch->cpumask);
+-
+ 	put_cpu();
++
++	if (remote_flush)
++		flush_tlb_multi(&batch->cpumask, &info);
++
++	cpumask_clear(&batch->cpumask);
+ }
+ 
+ /*
+-- 
+2.54.0
+
+
+From 8e7ff1dcc699aaa7d7c005e45a06d67af9d178ae Mon Sep 17 00:00:00 2001
+From: Eric Naim <dnaim@cachyos.org>
+Date: Mon, 23 Feb 2026 12:22:31 +0800
+Subject: [PATCH 35/36] dkms-clang
+
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+---
+ scripts/Makefile.clang | 2 --
+ scripts/Makefile.warn  | 4 ----
+ 2 files changed, 6 deletions(-)
+
+diff --git a/scripts/Makefile.clang b/scripts/Makefile.clang
+index b67636b28..062ee0211 100644
+--- a/scripts/Makefile.clang
++++ b/scripts/Makefile.clang
+@@ -34,9 +34,7 @@ endif
+ # certain optimization flags it knows it has not implemented.
+ # Make it behave more like gcc by erroring when these flags are encountered
+ # so they can be implemented or wrapped in cc-option.
+-CLANG_FLAGS	+= -Werror=unknown-warning-option
+ CLANG_FLAGS	+= -Werror=ignored-optimization-argument
+ CLANG_FLAGS	+= -Werror=option-ignored
+-CLANG_FLAGS	+= -Werror=unused-command-line-argument
+ KBUILD_CPPFLAGS	+= $(CLANG_FLAGS)
+ export CLANG_FLAGS
+diff --git a/scripts/Makefile.warn b/scripts/Makefile.warn
+index 35af7d6c6..6a23860d7 100644
+--- a/scripts/Makefile.warn
++++ b/scripts/Makefile.warn
+@@ -13,7 +13,6 @@ KBUILD_CFLAGS += -Wundef
+ KBUILD_CFLAGS += -Werror=implicit-function-declaration
+ KBUILD_CFLAGS += -Werror=implicit-int
+ KBUILD_CFLAGS += -Werror=return-type
+-KBUILD_CFLAGS += -Werror=strict-prototypes
+ KBUILD_CFLAGS += -Wno-format-security
+ KBUILD_CFLAGS += -Wno-trigraphs
+ KBUILD_CFLAGS += -Wno-frame-address
+@@ -96,9 +95,6 @@ KBUILD_CFLAGS += $(KBUILD_CFLAGS-y) $(CONFIG_CC_IMPLICIT_FALLTHROUGH)
+ # Prohibit date/time macros, which would make the build non-deterministic
+ KBUILD_CFLAGS += -Werror=date-time
+ 
+-# enforce correct pointer usage
+-KBUILD_CFLAGS += -Werror=incompatible-pointer-types
+-
+ # Require designated initializers for all marked structures
+ KBUILD_CFLAGS += $(call cc-option,-Werror=designated-init)
+ 
+-- 
+2.54.0
+
+
+From 13b1caf8b5dabc3c5a62ed9deace98b03a380770 Mon Sep 17 00:00:00 2001
+From: Natalie Vock <natalie.vock@gmx.de>
+Date: Fri, 10 Apr 2026 10:13:22 +0200
+Subject: [PATCH 36/36] drm/nouveau: Wire up dmem cgroups
+
+Userspace can now make use of memory protection via dmem cgroups. Let
+nouveau benefit from this as well by registering the vram region with
+the dmem cgroup controller.
+
+This patch adapts the approach amdgpu and Xe have taken for enabling
+dmem cgroups.
+
+Signed-off-by: Natalie Vock <natalie.vock@gmx.de>
+---
+ drivers/gpu/drm/nouveau/nouveau_ttm.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/gpu/drm/nouveau/nouveau_ttm.c b/drivers/gpu/drm/nouveau/nouveau_ttm.c
+index ad01f922a..860bca7e3 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_ttm.c
++++ b/drivers/gpu/drm/nouveau/nouveau_ttm.c
+@@ -188,6 +188,11 @@ nouveau_ttm_init_vram(struct nouveau_drm *drm)
+ 
+ 		man->func = &nouveau_vram_manager;
+ 
++		man->cg = drmm_cgroup_register_region(drm->dev, "vram",
++						      drm->gem.vram_available);
++		if (IS_ERR(man->cg))
++			return PTR_ERR(man->cg);
++
+ 		ttm_resource_manager_init(man, &drm->ttm.bdev,
+ 					  drm->gem.vram_available >> PAGE_SHIFT);
+ 		ttm_set_driver_manager(&drm->ttm.bdev, TTM_PL_VRAM, man);
+-- 
+2.54.0
+

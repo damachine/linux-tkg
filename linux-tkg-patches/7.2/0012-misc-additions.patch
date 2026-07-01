@@ -1,4 +1,4 @@
-From d58f8a37572e4002a8910d5681543846d70d660f Mon Sep 17 00:00:00 2001
+From be2842d567ec9663628df4c4c98900a90943a36e Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Felix=20H=C3=A4dicke?= <felixhaedicke@web.de>
 Date: Thu, 19 Nov 2020 09:22:32 +0100
 Subject: [PATCH 1/5] HID: quirks: Add Apple Magic Trackpad 2 to
@@ -35,7 +35,7 @@ index 57d8efdd9..e97bed467 100644
 2.54.0
 
 
-From d3be3af62518cb64660beeeb3795ac2af872c527 Mon Sep 17 00:00:00 2001
+From 5d320323c881d7a06f90505f56548b4e71b7d6ee Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
 Date: Wed, 3 Feb 2021 11:20:12 +0200
 Subject: [PATCH 2/5] Revert "cpufreq: Avoid configuring old governors as
@@ -72,7 +72,7 @@ index db83f3365..a9135d76d 100644
 2.54.0
 
 
-From be63421964cf678bedbd43ae6601203d0b1849e9 Mon Sep 17 00:00:00 2001
+From b87b894598bc942db489ad8a22d9eb57a1238231 Mon Sep 17 00:00:00 2001
 From: "Jan Alexander Steffens (heftig)" <heftig@archlinux.org>
 Date: Sat, 13 Jan 2024 15:29:25 +0100
 Subject: [PATCH 3/5] arch/Kconfig: Default to maximum amount of ASLR bits
@@ -109,7 +109,7 @@ index fa7507ac8..bf9b5af39 100644
 2.54.0
 
 
-From cf07f40ee2e3b0741bd63fc3cb376d6b69b4192e Mon Sep 17 00:00:00 2001
+From f0c752d6dee83e79aef7022a1b0907d64844df8c Mon Sep 17 00:00:00 2001
 From: Peter Jung <admin@ptr1337.dev>
 Date: Thu, 21 Mar 2024 19:00:50 +0100
 Subject: [PATCH 4/5] cachy: move AMD_PRIVATE_COLOR to Kconfig
@@ -125,12 +125,12 @@ Signed-off-by: Peter Jung <admin@ptr1337.dev>
  5 files changed, 14 insertions(+), 10 deletions(-)
 
 diff --git a/drivers/gpu/drm/amd/display/Kconfig b/drivers/gpu/drm/amd/display/Kconfig
-index 1727d2564..35320a297 100644
+index 1727d2564..986481dde 100644
 --- a/drivers/gpu/drm/amd/display/Kconfig
 +++ b/drivers/gpu/drm/amd/display/Kconfig
-@@ -56,6 +56,12 @@ config DRM_AMD_SECURE_DISPLAY
- 	  This option enables the calculation of crc of specific region via
- 	  debugfs. Cooperate with specific DMCU FW.
+@@ -68,4 +68,10 @@ config DRM_AMD_DC_KUNIT_TEST
+ 	  For more information on KUnit and unit tests in general, please
+ 	  refer to the KUnit documentation in Documentation/dev-tools/kunit/.
  
 +config AMD_PRIVATE_COLOR
 +	bool "Enable KMS color management by AMD for AMD"
@@ -138,9 +138,7 @@ index 1727d2564..35320a297 100644
 +	help
 +	  This option extends the KMS color management API with AMD driver-specific properties to enhance the color management support on AMD Steam Deck.
 +
- config DRM_AMD_DC_KUNIT_TEST
- 	tristate "KUnit tests for the AMD DC display driver" if !KUNIT_ALL_TESTS
- 	depends on DRM_AMD_DC && KUNIT && DEBUG_FS && DRM_KUNIT_TEST_HELPERS
+ endmenu
 diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
 index d3a8d6812..b2de2ead6 100644
 --- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
@@ -243,7 +241,7 @@ index c7f8e08fe..66341a161 100644
 2.54.0
 
 
-From dff8b7fcf6b0b18ae5697757b88c58fea6dc54b9 Mon Sep 17 00:00:00 2001
+From 217bf0a3be31513f406f8d6024b9b59ef1d7cd9d Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Fri, 15 Mar 2024 12:36:51 -0500
 Subject: [PATCH 5/5] ZEN: drm/amdgpu/pm: Allow override of min_power_limit

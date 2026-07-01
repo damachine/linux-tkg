@@ -47,7 +47,10 @@ if which script &> /dev/null && [[ "$_logging_use_script" =~ ^(Y|y|Yes|yes)$ && 
   exit
 fi
 
-source linux-tkg-config/prepare && aggregate_user_config
+source linux-tkg-config/prepare
+_frog_banner
+source linux-tkg-config/staging # This will source the staging files for the 'knobs' configs
+aggregate_user_config
 source "$_where/BIG_UGLY_FROGMINER"
 
 ####################################################################
@@ -55,8 +58,26 @@ source "$_where/BIG_UGLY_FROGMINER"
 _distro_prompt() {
   echo "Which linux distribution are you running ?"
   echo "if it's not on the list, chose the closest one to it: Fedora/Suse for RPM, Ubuntu/Debian for DEB"
-  _prompt_from_array "Debian" "Fedora" "Suse" "Ubuntu" "Gentoo" "Generic"
+  _prompt_from_array "Arch" "Debian" "Fedora" "Suse" "Ubuntu" "Gentoo" "Generic"
   _distro="${_selected_value}"
+}
+
+_arch_makepkg() {
+  local _action="$1"
+
+  if (( EUID == 0 )); then
+    _die "Arch packages must be built as a regular user. Re-run ./install.sh ${_action} without sudo; makepkg will ask for privileges when needed."
+  fi
+
+  msg2 "Using the Arch PKGBUILD through makepkg"
+
+  if [ "${_action}" = "config" ]; then
+    msg2 "Preparing Arch package sources"
+    makepkg --syncdeps --needed --nobuild
+  elif [ "${_action}" = "install" ]; then
+    msg2 "Building and installing Arch packages"
+    makepkg --syncdeps --needed --install
+  fi
 }
 
 _install_dependencies() {
@@ -79,16 +100,22 @@ if [ "$1" != "install" ] && [ "$1" != "config" ] && [ "$1" != "uninstall-help" ]
         - install : does the config step, proceeds to compile, then prompts to install
                     - 'DEB' distros: it creates .deb packages that will be installed then stored in the DEBS folder.
                     - 'RPM' distros: it creates .rpm packages that will be installed then stored in the RPMS folder.
+                    - 'Arch' distro: it delegates to the PKGBUILD through makepkg.
                     - 'Generic' distro: it uses 'make modules_install' and 'make install', uses 'dracut' to create an initramfs, then updates grub's boot entry.
-        - uninstall-help : [RPM and DEB based distros only], lists the installed kernels in this system, then gives hints on how to uninstall them manually."
+        - uninstall-help : lists the installed kernels in this system, then gives hints on how to uninstall them manually."
   exit 0
 fi
 
 if [ "$1" = "install" ] || [ "$1" = "config" ]; then
 
-  if [[ -z "$_distro" || ! "$_distro" =~ ^(Ubuntu|Debian|Fedora|Suse|Gentoo|Generic)$ ]]; then
-    msg2 "Variable \"_distro\" in \"customization.cfg\" has been set to an unkown value. Prompting..."
+  if [[ -z "$_distro" || ! "$_distro" =~ ^(Arch|Ubuntu|Debian|Fedora|Suse|Gentoo|Generic)$ ]]; then
+    msg2 "Variable \"_distro\" in \"customization.cfg\" has been set to an unknown value. Prompting..."
     _distro_prompt
+  fi
+
+  if [ "$_distro" = "Arch" ]; then
+    _arch_makepkg "$1"
+    exit 0
   fi
 
   # Run init script that is also run in PKGBUILD, it will define some env vars that we will use
@@ -106,6 +133,10 @@ if [ "$1" = "install" ] || [ "$1" = "config" ]; then
   fi
 
   _tkg_srcprep
+
+  if [[ "$_distro" =~ ^(Generic|Gentoo)$ ]]; then
+    _run_staging_knob _prepare_after_link
+  fi
 
   _build_dir="$_kernel_work_folder_abs/.."
 
@@ -153,14 +184,16 @@ if [ "$1" = "install" ]; then
     msg2 'Enabled ccache'
   fi
 
+  _vanilla_tag=""
+  _vanilla_mode && _vanilla_tag="vanilla-"
   if [ -z "$_kernel_localversion" ]; then
     if [ "$_preempt_rt" = "1" ]; then
-      _kernel_flavor="tkg-${_cpusched}-rt${_compiler_name}"
+      _kernel_flavor="tkg-${_vanilla_tag}${_cpusched}-rt${_compiler_name}"
     else
-      _kernel_flavor="tkg-${_cpusched}${_compiler_name}"
+      _kernel_flavor="tkg-${_vanilla_tag}${_cpusched}${_compiler_name}"
     fi
   else
-    _kernel_flavor="tkg-${_kernel_localversion}"
+    _kernel_flavor="tkg-${_vanilla_tag}${_kernel_localversion}"
   fi
 
   # Setup kernel_subver variable
@@ -183,11 +216,12 @@ if [ "$1" = "install" ]; then
   export KCPPFLAGS
   export KCFLAGS
   export KRUSTFLAGS
+  _make_extra_flags="$(_run_staging_knob _build_make_flags)"
 
   if [[ "$_distro" =~ ^(Ubuntu|Debian)$ ]]; then
 
     msg2 "Building kernel DEB packages"
-    make ${llvm_opt} -j ${_thread_num} bindeb-pkg LOCALVERSION=-${_kernel_flavor}
+    make ${llvm_opt} ${_make_extra_flags} -j ${_thread_num} bindeb-pkg LOCALVERSION=-${_kernel_flavor}
     msg2 "Building successfully finished!"
 
     # Create DEBS folder if it doesn't exist
@@ -237,7 +271,7 @@ if [ "$1" = "install" ]; then
     _fedora_work_dir="$_kernel_work_folder_abs/rpmbuild"
 
     msg2 "Building kernel RPM packages"
-    RPMOPTS="--define '_topdir ${_fedora_work_dir}'" make ${llvm_opt} -j ${_thread_num} binrpm-pkg EXTRAVERSION="${_extra_ver_str}"
+    RPMOPTS="--define '_topdir ${_fedora_work_dir}'" make ${llvm_opt} ${_make_extra_flags} -j ${_thread_num} binrpm-pkg EXTRAVERSION="${_extra_ver_str}"
     msg2 "Building successfully finished!"
 
     # Create RPMS folder if it doesn't exist
@@ -311,7 +345,7 @@ if [ "$1" = "install" ]; then
     fi
 
     msg2 "Building kernel"
-    make ${llvm_opt} -j ${_thread_num}
+    make ${llvm_opt} ${_make_extra_flags} -j ${_thread_num}
     msg2 "Build successful"
 
     if [ "$_STRIP" = "true" ]; then
@@ -378,6 +412,11 @@ if [ "$1" = "install" ]; then
 
     sudo make modules_install $_STRIP_MODS
 
+    if [ -n "${_module_resolved:-}" ]; then
+      _module_build
+      _module_install
+    fi
+
     msg2 "Removing modules from source folder in /usr/src/${_kernel_src_gentoo}"
     sudo find . -type f -name '*.ko' -delete
     sudo find . -type f -name '*.ko.cmd' -delete
@@ -404,13 +443,19 @@ fi
 
 if [ "$1" = "uninstall-help" ]; then
 
-  if [ -z $_distro ]; then
+  if [ -z "$_distro" ]; then
     _distro_prompt
   fi
 
   cd "$_where"
 
-  if [[ "$_distro" =~ ^(Ubuntu|Debian)$ ]]; then
+  if [ "$_distro" = "Arch" ]; then
+    msg2 "List of installed custom tkg kernels: "
+    pacman -Qs "linux.*tkg" || true
+    msg2 "To uninstall a version, remove the kernel package and its headers with: "
+    msg2 "      sudo pacman -Rns PACKAGE PACKAGE-headers"
+    msg2 "       where PACKAGE is the installed linux-tkg package name shown above."
+  elif [[ "$_distro" =~ ^(Ubuntu|Debian)$ ]]; then
     msg2 "List of installed custom tkg kernels: "
     dpkg -l "*tkg*" | grep "linux.*tkg"
     dpkg -l "*linux-libc-dev*" | grep "linux.*tkg"

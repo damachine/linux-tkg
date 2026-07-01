@@ -1,0 +1,72 @@
+# Optional extra patch feature.
+#
+# Public options:
+#   _glitched_staging=""
+#   _misc_staging=""
+#   _adios=""
+#   _tcp_bbr3=""
+
+[[ -v _glitched_staging ]] || _glitched_staging=""
+[[ -v _misc_staging ]] || _misc_staging=""
+[[ -v _adios ]] || _adios=""
+[[ -v _adios_autoload ]] || _adios_autoload=""
+[[ -v _tcp_bbr3 ]] || _tcp_bbr3=""
+
+_staging_patches() {
+  tkgpatch="$srcdir/0015-glitched-staging.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_glitched_staging" ]; then
+      plain ""
+      plain "Apply optional Glitched staging patchset?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_glitched_staging;
+    fi
+    if [[ "${CONDITION_glitched_staging:-}" =~ [yY] ]] || [ "$_glitched_staging" = "true" ]; then
+      _msg="Applying Glitched staging patchset" && _tkg_patcher
+    fi
+  fi
+
+  tkgpatch="$srcdir/0016-misc-staging.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_misc_staging" ]; then
+      plain ""
+      plain "Apply optional staging misc additions patch?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_misc_staging;
+    fi
+    if [[ "${CONDITION_misc_staging:-}" =~ [yY] ]] || [ "$_misc_staging" = "true" ]; then
+      _msg="Applying staging misc additions" && _tkg_patcher
+    fi
+  fi
+
+  tkgpatch="$srcdir/0017-adios.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_adios" ]; then
+      plain ""
+      plain "Apply optional ADIOS patch?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_adios;
+    fi
+    if [[ "${CONDITION_adios:-}" =~ [yY] ]] || [ "$_adios" = "true" ]; then
+      _msg="Applying ADIOS patch" && _tkg_patcher
+      _adios_autoload="true"
+      echo "_adios_autoload='true'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+    fi
+  fi
+
+  tkgpatch="$srcdir/0018-bbr3.patch"
+  if [ -e "$tkgpatch" ]; then
+    if ! [[ "$_tcp_bbr3" =~ ^(true|yes|1)$ ]]; then
+      plain ""
+      plain "Apply optional BBRv3 patch?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_bbr3;
+    fi
+    if [[ "${CONDITION_bbr3:-}" =~ [yY] ]] || [[ "$_tcp_bbr3" =~ ^(true|yes|1)$ ]]; then
+      _msg="Applying BBRv3 patch" && _tkg_patcher
+    fi
+  fi
+}
+
+_pkgbase_after_modules_install_adios_autoload() {
+  [ "${_adios_autoload:-}" = "true" ] || return 0
+
+  msg2 "Set the ADIOS module to be loaded at boot through /usr/lib/modules-load.d"
+  printf '%s\n' 'adios' | install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modules-load.d/adios-${pkgbase}.conf"
+}

@@ -1,4 +1,4 @@
-From 9e6a62b4c654fbcd34b7f9c551992b26311e0ec2 Mon Sep 17 00:00:00 2001
+From 5eb1547b8c47a4420cc81d28e7534d569cfc2919 Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
 Date: Wed, 4 Jul 2018 04:30:08 +0200
 Subject: [PATCH 01/16] glitched
@@ -24,7 +24,7 @@ index d6f75d890..9fa3e5890 100644
 2.54.0
 
 
-From aa04524475d01bf3cb21d7e01551ad7258e49f73 Mon Sep 17 00:00:00 2001
+From 890f4777115bec390c346e2134c5e129690b1f61 Mon Sep 17 00:00:00 2001
 From: Alexandre Frade <admfrade@gmail.com>
 Date: Mon, 29 Jan 2018 16:59:22 +0000
 Subject: [PATCH 02/16] dcache: cache_pressure = 50 decreases the rate at which
@@ -69,7 +69,7 @@ index e474c31d8..0e4aedd9a 100644
 2.54.0
 
 
-From 8d1297ab432629142a9e734809de7ddf2e526e9c Mon Sep 17 00:00:00 2001
+From 928e32021cbaa162af723cfe1363589b2b5d0564 Mon Sep 17 00:00:00 2001
 From: Alexandre Frade <admfrade@gmail.com>
 Date: Mon, 29 Jan 2018 17:41:29 +0000
 Subject: [PATCH 03/16] scripts: disable the localversion "+" tag of a git repo
@@ -96,7 +96,7 @@ index 28169d7e1..5cb02894a 100755
 2.54.0
 
 
-From b4435fca34daf0c7c1f53fb80880e0bb244c19f7 Mon Sep 17 00:00:00 2001
+From 61a722a4b8d1f1b18af5cdf2b1f108ffb5b3d4ae Mon Sep 17 00:00:00 2001
 From: "Jan Alexander Steffens (heftig)" <jan.steffens@gmail.com>
 Date: Fri, 26 Oct 2018 11:22:33 +0100
 Subject: [PATCH 04/16] infiniband: Fix __read_overflow2 error with -O3
@@ -122,7 +122,7 @@ index e9fb7ad4c..70289ff19 100644
 2.54.0
 
 
-From 041ddd565e48dad749f06c98dd9f383aca2f5d77 Mon Sep 17 00:00:00 2001
+From c62c976cf58efa2c38bdcc32005ef40e521a929d Mon Sep 17 00:00:00 2001
 From: Etienne Juvigny <Ti3noU@gmail.com>
 Date: Mon, 3 Sep 2018 17:36:25 +0200
 Subject: [PATCH 05/16] Add Zenify option
@@ -132,12 +132,12 @@ Subject: [PATCH 05/16] Add Zenify option
  1 file changed, 32 insertions(+)
 
 diff --git a/init/Kconfig b/init/Kconfig
-index 5230d4879..ed980f50c 100644
+index 5230d4879..e99f2b632 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
-@@ -215,6 +215,38 @@ config THREAD_INFO_IN_TASK
- 
- menu "General setup"
+@@ -213,6 +213,38 @@ config THREAD_INFO_IN_TASK
+ 	  One subtle change that will be needed is to use try_get_task_stack()
+ 	  and put_task_stack() in save_thread_stack_tsk() and get_wchan().
  
 +config ZENIFY
 +	bool "A selection of patches from Zen/Liquorix kernel and additional tweaks for a better gaming experience"
@@ -171,14 +171,14 @@ index 5230d4879..ed980f50c 100644
 +	    Ondemand coarse upscaling limit:  80 %  ->  45 %
 +	    Ondemand fine upscaling limit..:  95 %  ->  45 %
 +
+ menu "General setup"
+ 
  config BROKEN
- 	bool
- 	help
 -- 
 2.54.0
 
 
-From 38ac5d7deb55a57494beb3a0826cc99949d160b6 Mon Sep 17 00:00:00 2001
+From aa09df74110d45b9c24cfbcd94f8504df330cc16 Mon Sep 17 00:00:00 2001
 From: Steven Barrett <damentz@liquorix.net>
 Date: Sun, 16 Jan 2011 18:57:32 -0600
 Subject: [PATCH 06/16] ZEN: Allow TCP YeAH as default congestion control
@@ -218,7 +218,7 @@ index 301b47660..3a7101d9b 100644
 2.54.0
 
 
-From a3beba9f8f44d97e9fe33e22c141a97264896d4b Mon Sep 17 00:00:00 2001
+From beba96beef13c8f48f94e08ceb8731301132a86c Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Wed, 28 Nov 2018 19:01:27 -0600
 Subject: [PATCH 07/16] zen: Use [defer+madvise] as default khugepaged defrag
@@ -268,7 +268,7 @@ index 2bccb0a53..adf0301b6 100644
 2.54.0
 
 
-From a187a61a5092811c510c58133e8c7a8c47d76ab8 Mon Sep 17 00:00:00 2001
+From 33ee8824942461eaa0c89e93e65d88edab9988fe Mon Sep 17 00:00:00 2001
 From: Alexandre Frade <admfrade@gmail.com>
 Date: Wed, 24 Oct 2018 16:58:52 -0300
 Subject: [PATCH 08/16] net/sched: allow configuring cake qdisc as default
@@ -304,7 +304,7 @@ index 6ddff028b..2c0fe1858 100644
 2.54.0
 
 
-From 8ab2bcd66c18383804b5312b32347b43b185f9ff Mon Sep 17 00:00:00 2001
+From dc3d47eb15c76cf44188ebb2031642e1894ef148 Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
 Date: Fri, 19 Apr 2019 12:33:38 +0200
 Subject: [PATCH 09/16] Set vm.max_map_count to 262144 by default
@@ -336,7 +336,7 @@ index 485df9c2d..9d87743fb 100644
 2.54.0
 
 
-From 3a88037c9265a456cca7eb0f52b32ae005561223 Mon Sep 17 00:00:00 2001
+From dba6a4ad47da47908e4a08e2555ce4c41461c79c Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
 Date: Mon, 27 Jul 2020 00:19:18 +0200
 Subject: [PATCH 10/16] mm: bump DEFAULT_MAX_MAP_COUNT
@@ -364,7 +364,7 @@ index 9d87743fb..0bddf655d 100644
 2.54.0
 
 
-From a6c101b750e8fccf932a1397e14acccc539c72e5 Mon Sep 17 00:00:00 2001
+From 1d58f0b3a1b14a4d1880991f2e08543636a634d7 Mon Sep 17 00:00:00 2001
 From: Alexandre Frade <admfrade@gmail.com>
 Date: Mon, 25 Nov 2019 15:13:06 -0300
 Subject: [PATCH 11/16] elevator: set default scheduler to bfq for blk-mq
@@ -402,7 +402,7 @@ index 3bcd37c2a..0beeb5b59 100644
 2.54.0
 
 
-From f7727cf9f5accd2211aa504191076d8943704340 Mon Sep 17 00:00:00 2001
+From 2e0eaede9722286c669de9ebad9ddcfa8a03fef0 Mon Sep 17 00:00:00 2001
 From: Alexandre Frade <kernel@xanmod.org>
 Date: Mon, 3 Aug 2020 17:05:04 +0000
 Subject: [PATCH 12/16] mm: set 2 megabytes for address_space-level file
@@ -430,7 +430,7 @@ index 2c3718d59..170c0fc15 100644
 2.54.0
 
 
-From 5e30930be00972b3f06d41286908f6fe0763b3db Mon Sep 17 00:00:00 2001
+From 9799bc95a30bf3d30f34ed6760c30b7160c39c60 Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Wed, 15 Jan 2020 20:43:56 -0600
 Subject: [PATCH 13/16] ZEN: intel-pstate: Implement "enable" parameter
@@ -491,7 +491,7 @@ index 5a0eeb84d..58ea30938 100644
 2.54.0
 
 
-From b2c52963fa2ed3a3666371eb96c3113cb41e387c Mon Sep 17 00:00:00 2001
+From 81ac8a6cdf164bd6440af1ccdb0eda890660c377 Mon Sep 17 00:00:00 2001
 From: Kenny Levinsen <kl@kl.wtf>
 Date: Sun, 27 Dec 2020 14:43:13 +0000
 Subject: [PATCH 14/16] ZEN: Input: evdev - use call_rcu when detaching client
@@ -602,7 +602,7 @@ index c7325226c..4f18a50ea 100644
 2.54.0
 
 
-From a2a0e1e0b7c9a072543351e1b69f1d4075e94056 Mon Sep 17 00:00:00 2001
+From e3514d2d7c89d0d97cb20ad0a997e15a424d2bed Mon Sep 17 00:00:00 2001
 From: Etienne JUVIGNY <ti3nou@gmail.com>
 Date: Mon, 6 Mar 2023 13:54:09 +0100
 Subject: [PATCH 15/16] Don't add -dirty versioning on unclean trees
@@ -638,7 +638,7 @@ index 5cb02894a..6fe69fcc9 100755
 2.54.0
 
 
-From 1690ee1a3bc40f27023237448561c33ee15cb334 Mon Sep 17 00:00:00 2001
+From 853af81948531b2d18fa5cbe37cd7ab04397d301 Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Sat, 21 May 2022 15:15:09 -0500
 Subject: [PATCH 16/16] ZEN: INTERACTIVE: dm-crypt: Disable workqueues for
