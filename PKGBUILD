@@ -9,20 +9,10 @@ _where="$PWD" # track basedir as different Arch based distros are moving srcdir 
 
 source "$_where"/linux-tkg-config/prepare
 _frog_banner
+source "$_where"/linux-tkg-config/staging # This will source the staging files for the 'knobs' configs
 
 # Create BIG_UGLY_FROGMINER only on first run and save in it all settings
-if [ ! -e "$_where"/BIG_UGLY_FROGMINER ]; then
-
-  aggregate_user_config
-
-  echo -e "_ispkgbuild=\"true\"\n_distro=\"Arch\"\n_where=\"$PWD\"" >> "$_where"/BIG_UGLY_FROGMINER
-
-  source "$_where"/BIG_UGLY_FROGMINER
-
-  _tkg_initscript
-fi
-
-source "$_where"/BIG_UGLY_FROGMINER
+_frogminer_bootstrap "${_where}/BIG_UGLY_FROGMINER" "${_where}/BIG_UGLY_FROGMINER.pending"
 
 _vanilla_tag=""
 _vanilla_mode && _vanilla_tag="vanilla-"
@@ -32,8 +22,12 @@ else
   pkgbase="linux${_basever}-tkg-${_vanilla_tag}${_cpusched}${_compiler_name}"
 fi
 pkgname=("${pkgbase}" "${pkgbase}-headers")
+while IFS= read -r _pkgname_extra; do
+  [ -n "$_pkgname_extra" ] && pkgname+=("$_pkgname_extra")
+done < <(_run_staging_knob _pkgname_extra)
+unset _pkgname_extra
 pkgver="${_basekernel}"."${_sub}"
-pkgrel=273
+pkgrel=8086
 pkgdesc='Linux-tkg'
 arch=('x86_64') # no i686 in here
 url="https://www.kernel.org/"
@@ -62,8 +56,19 @@ makedepends=(
 if [ "$_compiler_name" = "-llvm" ]; then
   makedepends+=('clang' 'llvm' 'lld')
 fi
+while IFS= read -r _makedep_extra; do
+  [ -n "$_makedep_extra" ] && makedepends+=("$_makedep_extra")
+done < <(_run_staging_knob _makedepends_extra)
+unset _makedep_extra
 optdepends=('schedtool')
 options=('!strip' 'docs')
+
+while IFS= read -r _source_extra; do
+  [ -n "$_source_extra" ] || continue
+  source+=("$_source_extra")
+  sha256sums+=("SKIP")
+done < <(_run_staging_knob _source_extra)
+unset _source_extra
 
 for f in "$_where"/linux-tkg-config/"$_basekernel"/* "$_where"/linux-tkg-patches/"$_basekernel"/*.patch; do
   source+=( "$f" )
@@ -81,6 +86,8 @@ prepare() {
   rm -rf $pkgdir # Nuke the entire pkg folder so it'll get regenerated clean on next build
 
   ln -sf "${_kernel_work_folder_abs}" "${srcdir}"
+
+  _run_staging_knob _prepare_after_link
 
   _tkg_srcprep
 }
@@ -135,9 +142,12 @@ build() {
     export KCFLAGS
     export KRUSTFLAGS
 
-    time ( make ${_force_all_threads} ${llvm_opt} LOCALVERSION= bzImage modules 2>&1 ) 3>&1 1>&2 2>&3
+    _make_extra_flags="$(_run_staging_knob _build_make_flags)"
+    time ( make ${_force_all_threads} ${llvm_opt} ${_make_extra_flags} LOCALVERSION= bzImage modules 2>&1 ) 3>&1 1>&2 2>&3
     return 0
   )
+
+  _run_staging_knob _build_after_kernel
 }
 
 hackbase() {
@@ -145,10 +155,13 @@ hackbase() {
 
   pkgdesc="The $pkgdesc kernel and modules - https://github.com/Frogging-Family/linux-tkg"
   depends=('coreutils' 'kmod' 'initramfs')
+  local _docs_optdepend
+  _docs_optdepend="$(_run_staging_knob _docs_optdepend)"
+  [ -n "$_docs_optdepend" ] || _docs_optdepend='linux-docs: Kernel hackers manual - HTML documentation that comes with the Linux kernel.'
   optdepends=(
     "$pkgname-headers: headers and scripts for building modules"
     'linux-firmware: firmware images needed for some devices'
-    'linux-docs: Kernel hackers manual - HTML documentation that comes with the Linux kernel.'
+    "$_docs_optdepend"
     'nvidia-tkg: NVIDIA drivers for all installed kernels - non-dkms version.'
     'nvidia-dkms-tkg: NVIDIA drivers for all installed kernels - dkms version.'
     'modprobed-db: Keeps track of EVERY kernel module that has ever been probed. Useful for make localmodconfig.'
@@ -182,8 +195,10 @@ hackbase() {
   local _STRIP_MODS=""
   [[ "$_STRIP" == "true" ]] && _STRIP_MODS="INSTALL_MOD_STRIP=1"
 
-  ZSTD_CLEVEL=19 make INSTALL_MOD_PATH="$pkgdir/usr" $_STRIP_MODS \
+  ZSTD_CLEVEL=19 make ${llvm_opt} INSTALL_MOD_PATH="$pkgdir/usr" $_STRIP_MODS \
     DEPMOD=/doesnt/exist modules_install  # Suppress depmod
+
+  _run_staging_knob _pkgbase_after_modules_install "${modulesdir}"
 
   # remove build and source links
   rm -f "$modulesdir"/{source,build}
@@ -221,7 +236,7 @@ hackheaders() {
   source "$_where"/BIG_UGLY_FROGMINER
 
   pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel - https://github.com/Frogging-Family/linux-tkg"
-  provides=("linux-headers=${pkgver}" "${pkgbase}-headers=${pkgver}")
+  provides=("linux-headers=${pkgver}" "${pkgbase}-headers=${pkgver}" LINUX-HEADERS)
   depends=(
     binutils
     glibc
@@ -283,8 +298,12 @@ hackheaders() {
     rm -r "$arch"
   done
 
-  msg2 "Removing documentation..."
-  rm -r "$builddir/Documentation"
+  if declare -F _headers_keep_docs >/dev/null && _headers_keep_docs; then
+    :
+  else
+    msg2 "Removing documentation..."
+    rm -r "$builddir/Documentation"
+  fi
 
   msg2 "Removing broken symlinks..."
   find -L "$builddir" -type l -printf 'Removing %P\n' -delete
@@ -311,12 +330,14 @@ hackheaders() {
   mkdir -p "$pkgdir/usr/src"
   ln -sr "$builddir" "$pkgdir/usr/src/$pkgbase"
 
+  _run_staging_knob _headers_after_install "${builddir}"
+
   if [ "$_STRIP" = "true" ]; then
     echo "Stripping vmlinux..."
     strip -v $STRIP_STATIC "$builddir/vmlinux"
   fi
 
-  if [ "$_NUKR" = "true" ]; then
+  if [ "$_NUKR" = "true" ] && _run_staging_knob _headers_should_cleanup_srcdir; then
     rm -rf "$srcdir" # Nuke the entire src folder so it'll get regenerated clean on next build
   fi
 }
@@ -329,4 +350,6 @@ hackbase
 package_${pkgbase}-headers() {
 hackheaders
 }
+
+$(_run_staging_knob _package_functions)
 EOF

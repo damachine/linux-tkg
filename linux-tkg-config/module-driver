@@ -1,0 +1,411 @@
+# Third-party out-of-tree module build feature.
+#
+# Public options:
+#   _module_pkg=""
+#   _module_extpkg="internal"
+#   _module_sign=""
+
+[[ -v _module_pkg ]] || _module_pkg=""
+[[ -v _module_extpkg ]] || _module_extpkg="internal"
+[[ -v _module_sign ]] || _module_sign=""
+
+_module_drv_list_has() {
+  local _list="$1"
+  local _item="$2"
+  [[ " ${_list} " == *" ${_item} "* ]]
+}
+
+_module_drv_append_unique() {
+  local _list="$1"
+  local _item="$2"
+
+  if [ -z "${_item}" ] || _module_drv_list_has "${_list}" "${_item}"; then
+    printf '%s\n' "${_list}"
+  else
+    printf '%s\n' "${_list:+${_list} }${_item}"
+  fi
+}
+
+_module_drv_validate_id() {
+  case "$1" in
+    v4l2loopback|nct6687|it87)
+      return 0
+    ;;
+  esac
+
+  return 1
+}
+
+_module_drv_get_display_name() {
+  printf '%s\n' "$1"
+}
+
+_module_drv_get_git_url() {
+  case "$1" in
+    v4l2loopback)
+      printf '%s\n' 'https://github.com/v4l2loopback/v4l2loopback.git'
+    ;;
+    nct6687)
+      printf '%s\n' 'https://github.com/Fred78290/nct6687d.git'
+    ;;
+    it87)
+      printf '%s\n' 'https://github.com/frankcrawford/it87.git'
+    ;;
+  esac
+}
+
+_module_drv_get_source_dir() {
+  printf '%s\n' "$1"
+}
+
+_module_drv_get_module_name() {
+  printf '%s\n' "$1"
+}
+
+_module_drv_get_module_filename() {
+  printf '%s.ko\n' "$(_module_drv_get_module_name "$1")"
+}
+
+_module_drv_get_license_file() {
+  case "$1" in
+    nct6687)
+      printf '%s\n' 'LICENSE'
+    ;;
+    it87)
+      printf '%s\n' 'COPYING'
+    ;;
+    *)
+      return 1
+    ;;
+  esac
+}
+
+_module_drv_should_sign() {
+  local _module_id="$1"
+  _module_drv_list_has "${_module_sign_resolved}" "${_module_id}"
+}
+
+_module_split_enabled() {
+  [ -n "${_module_pkg:-}" ] && [ "${_module_extpkg:-}" = "external" ]
+}
+
+_pkgname_extra_mod() {
+  _module_split_enabled || return 0
+  local _module_id
+  for _module_id in $_module_pkg; do
+    [ -n "$_module_id" ] && printf '%s\n' "${pkgbase}-${_module_id}"
+  done
+}
+
+_source_extra_mod() {
+  local _module_id
+  for _module_id in $_module_pkg; do
+    [ -z "$_module_id" ] && continue
+    printf '%s::git+%s\n' "$(_module_drv_get_source_dir "${_module_id}")" "$(_module_drv_get_git_url "${_module_id}")"
+  done
+}
+
+_module_clone() {
+  local _module_id
+
+  if [ "${_ispkgbuild:-false}" = "true" ]; then
+    return
+  fi
+
+  for _module_id in ${_module_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+
+    msg2 "Cloning $(_module_drv_get_display_name "${_module_id}") source..."
+    rm -rf "${_module_src}"
+    git clone --depth=1 "$(_module_drv_get_git_url "${_module_id}")" "${_module_src}"
+  done
+}
+
+_module_build() {
+  local _module_id
+  local _module_make_jobs=()
+
+  if [ -n "${_thread_num:-}" ]; then
+    _module_make_jobs=(-j "${_thread_num}")
+  elif [ -n "${_force_all_threads:-}" ] && [ "${_force_all_threads}" != "true" ] && [ "${_force_all_threads}" != "false" ]; then
+    _module_make_jobs=(${_force_all_threads})
+  fi
+
+  for _module_id in ${_module_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    msg2 "Building $(_module_drv_get_display_name "${_module_id}") kernel module..."
+    make "${_module_make_jobs[@]}" ${llvm_opt} -C "${_kernel_work_folder_abs}" M="${_module_src}" modules
+  done
+}
+
+_module_sign() {
+  local _module_id="$1"
+  local _module_path="$2"
+  local _sign_as_root="${3:-false}"
+  local _sign_cmd=()
+
+  if ! declare -F _signing_resolve >/dev/null || ! _signing_resolve; then
+    warning "$(_module_drv_get_display_name "${_module_id}") signing was requested but signing is not available - skipping."
+    return 0
+  fi
+
+  msg2 "Signing $(_module_drv_get_display_name "${_module_id}") kernel module..."
+  [ "${_sign_as_root}" = "true" ] && _sign_cmd=(sudo)
+  "${_sign_cmd[@]}" "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" "${_module_path}"
+}
+
+_module_install() {
+  if [ "$#" -eq 0 ]; then
+    _module_install_as_kmod
+  else
+    _module_install_as_pkg "$@"
+  fi
+}
+
+_module_install_as_pkg() {
+  local _requested_module_id="${1:-}"
+  local _kernver="${2:-$(<version)}"
+  local _target_pkgdir="${3:-$pkgdir}"
+  local _module_id
+  local modulesdir="${_target_pkgdir}/usr/lib/modules/${_kernver}"
+  local _module_extramodules="${modulesdir}/extramodules"
+  local strip_bin="strip"
+
+  [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
+
+  for _module_id in ${_requested_module_id:-${_module_resolved}}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    local _module_name="$(_module_drv_get_module_name "${_module_id}")"
+    local _module_filename="$(_module_drv_get_module_filename "${_module_id}")"
+    local _module_path="${_module_extramodules}/${_module_filename}"
+    local _license_file="$(_module_drv_get_license_file "${_module_id}")"
+
+    msg2 "Installing $(_module_drv_get_display_name "${_module_id}") kernel module..."
+    install -dm755 "${_module_extramodules}"
+    install -m644 "${_module_src}/${_module_filename}" "${_module_extramodules}/"
+
+    "${strip_bin}" --strip-debug "${_module_path}"
+
+    if _module_drv_should_sign "${_module_id}"; then
+      _module_sign "${_module_id}" "${_module_path}"
+    fi
+
+    zstd --force --rm -19 -T0 "${_module_path}"
+
+    if [ -n "${_license_file}" ] && [ -f "${_module_src}/${_license_file}" ]; then
+      install -Dm644 "${_module_src}/${_license_file}" "${_target_pkgdir}/usr/share/licenses/${pkgbase}/${_module_id}/${_license_file}"
+    fi
+
+    rm -rf "${_module_src}"
+  done
+}
+
+_module_install_as_kmod() {
+  local _module_id
+  local _extramodules="/lib/modules/${_kernelname}/extramodules"
+  local strip_bin="strip"
+
+  [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
+
+  for _module_id in ${_module_resolved}; do
+    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    local _module_name="$(_module_drv_get_module_name "${_module_id}")"
+    local _module_filename="$(_module_drv_get_module_filename "${_module_id}")"
+    local _module_path="${_extramodules}/${_module_filename}"
+
+    msg2 "Installing $(_module_drv_get_display_name "${_module_id}") kernel module..."
+    sudo install -dm755 "${_extramodules}"
+    sudo install -m644 "${_module_src}/${_module_filename}" "${_extramodules}/"
+
+    sudo "${strip_bin}" --strip-debug "${_module_path}"
+
+    if _module_drv_should_sign "${_module_id}"; then
+      _module_sign "${_module_id}" "${_module_path}" true
+    fi
+
+    sudo zstd --force --rm -19 -T0 "${_module_path}"
+  done
+
+  sudo depmod -a "${_kernelname}"
+}
+
+_set_module_drv() {
+  local _module_id
+  local _resolved=""
+  local _sign=""
+
+  if [ "$_module_pkg" = "false" ]; then
+    _module_pkg=""
+    _module_extpkg=""
+    echo -e "_module_pkg=''\n_module_extpkg=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+    return
+  fi
+
+  if [ -z "$_module_pkg" ]; then
+    local _module_ids=("it87" "nct6687" "v4l2loopback")
+    msg2 "Which out-of-tree kernel modules do you want to build alongside the kernel?"
+    msg2 "Enter space-separated numbers (e.g. '0 2'), or press Enter to skip."
+    plain "    0) it87"
+    plain "    1) nct6687"
+    plain "    2) v4l2loopback"
+    plain "  > skip to not build any out-of-tree modules"
+    read -rp "[0-2]: " _module_input
+    if [ -n "$_module_input" ]; then
+      for _idx in $_module_input; do
+        if [[ "$_idx" =~ ^[0-2]$ ]]; then
+          _module_pkg="$(_module_drv_append_unique "${_module_pkg}" "${_module_ids[$_idx]}")"
+        else
+          warning "Ignoring invalid selection '$_idx'"
+        fi
+      done
+    fi
+    if [ -n "$_module_pkg" ]; then
+      plain "Selected modules: ${_module_pkg}"
+    else
+      plain "No out-of-tree modules selected."
+    fi
+    echo -e "_module_pkg='${_module_pkg}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+  fi
+
+  for _module_id in ${_module_pkg}; do
+    if ! _module_drv_validate_id "${_module_id}"; then
+      _die "Unknown third-party module '${_module_id}' in _module_pkg. Supported values: v4l2loopback nct6687 it87"
+    fi
+    _resolved="$(_module_drv_append_unique "${_resolved}" "${_module_id}")"
+  done
+
+  if [ "${_module_sign}" = "true" ]; then
+    _sign="${_resolved}"
+  elif [ -n "${_module_sign}" ] && [ "${_module_sign}" != "false" ]; then
+    for _module_id in ${_module_sign}; do
+      if ! _module_drv_validate_id "${_module_id}"; then
+        _die "Unknown third-party module '${_module_id}' in _module_sign. Supported values: true, false, v4l2loopback, nct6687, it87"
+      fi
+      _sign="$(_module_drv_append_unique "${_sign}" "${_module_id}")"
+    done
+  fi
+
+  local _resolved_sign=""
+  if [ -n "${_resolved}" ]; then
+    for _module_id in ${_sign}; do
+      if ! _module_drv_list_has "${_resolved}" "${_module_id}"; then
+        _die "_module_sign contains '${_module_id}', but that module is not enabled in _module_pkg"
+      fi
+      _resolved_sign="$(_module_drv_append_unique "${_resolved_sign}" "${_module_id}")"
+    done
+  fi
+
+  _module_resolved="${_resolved}"
+  _module_sign_resolved="${_resolved_sign}"
+
+  if [ -n "${_module_resolved}" ]; then
+    if [ -z "${_module_extpkg:-}" ]; then
+      _module_extpkg="internal"
+    fi
+    if ! [[ "${_module_extpkg}" =~ ^(internal|external)$ ]]; then
+      _die "Invalid _module_extpkg value '${_module_extpkg}'. Supported values: internal, external"
+    fi
+  else
+    _module_extpkg=""
+  fi
+
+  echo -e "_module_resolved='${_module_resolved}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+  echo -e "_module_sign_resolved='${_module_sign_resolved}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+  echo -e "_module_extpkg='${_module_extpkg}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+
+  if [ -n "${_module_resolved}" ] && [ "$_ispkgbuild" != "true" ] && \
+     ! [[ "$_distro" =~ ^(Generic|Gentoo)$ ]]; then
+    warning "_module_pkg is currently only implemented for Arch (PKGBUILD) and Generic/Gentoo (install.sh). Other distros will ignore it."
+  fi
+}
+
+_prepare_after_link() {
+  _module_clone
+}
+
+_build_after_kmod() {
+  _module_build
+}
+
+_pkgbase_after_modules_install_mod() {
+  if [ -n "$_module_pkg" ] && ! _module_split_enabled; then
+    local _module_id
+    msg2 "Installing out-of-tree modules into the main kernel package..."
+    _module_install "" "$(<version)" "${pkgdir}"
+
+    for _module_id in $_module_pkg; do
+      case "${_module_id}" in
+        nct6687)
+          conflicts+=("nct6687-dkms")
+          provides+=("NCT6687-MODULE")
+        ;;
+        v4l2loopback)
+          conflicts+=("v4l2loopback-dkms")
+          provides+=("V4L2LOOPBACK-MODULE")
+        ;;
+        it87)
+          conflicts+=("it87-dkms")
+          provides+=("IT87-MODULE")
+        ;;
+        *)
+          conflicts+=("${_module_id}-dkms")
+          provides+=("${_module_id}")
+        ;;
+      esac
+    done
+  fi
+}
+
+_package_module() {
+  local _module_id="$1"
+  local _last_module_id=""
+  local _tmp_m
+  source "$_where"/BIG_UGLY_FROGMINER
+  source "$_where"/linux-tkg-config/prepare
+
+  local _module_display_name
+  _module_display_name="$(_module_drv_get_display_name "${_module_id}")"
+
+  pkgdesc="${_module_display_name} kernel module for the ${pkgbase} kernel"
+  depends=("${pkgbase}=${pkgver}")
+
+  case "${_module_id}" in
+    nct6687)
+      conflicts=("nct6687-dkms")
+      provides=("NCT6687-MODULE")
+    ;;
+    v4l2loopback)
+      conflicts=("v4l2loopback-dkms")
+      provides=("V4L2LOOPBACK-MODULE")
+    ;;
+    it87)
+      conflicts=("it87-dkms")
+      provides=("IT87-MODULE")
+    ;;
+    *)
+      conflicts=("${_module_id}-dkms")
+      provides=("${_module_id}")
+    ;;
+  esac
+
+  cd "$_kernel_work_folder_abs"
+  local _kernver="$(<version)"
+  _module_install "$_module_id" "${_kernver}" "${pkgdir}"
+
+  for _tmp_m in $_module_pkg; do
+    [ -n "$_tmp_m" ] && _last_module_id="$_tmp_m"
+  done
+
+  if [ "$_NUKR" = "true" ] && [ -n "$_last_module_id" ] && [ "$_module_id" = "$_last_module_id" ]; then
+    rm -rf "$srcdir"
+  fi
+}
+
+_package_functions_mod() {
+  _module_split_enabled || return 0
+  local _m
+  for _m in $_module_pkg; do
+    [ -z "$_m" ] && continue
+    printf 'package_%s-%s() {\n  _package_module "%s"\n}\n\n' "${pkgbase}" "$_m" "$_m"
+  done
+}

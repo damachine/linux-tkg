@@ -1,0 +1,179 @@
+# Optional extra patch feature.
+#
+# Public options:
+#   _staging=""
+#   _staging_tkg="true"
+#   _adios=""
+#   _bbr3=""
+#   _cgroup=""
+#   _mglru2=""
+#   _network=""
+#   _valve=""
+#   _vhba=""
+#   _vmalloc=""
+#   _vmscape=""
+#   _zstd=""
+
+[[ -v _staging ]] || _staging=""
+[[ -v _staging_tkg ]] || _staging_tkg="true"
+[[ -v _adios ]] || _adios=""
+[[ -v _bbr3 ]] || _bbr3=""
+[[ -v _cgroup ]] || _cgroup=""
+[[ -v _mglru2 ]] || _mglru2=""
+[[ -v _network ]] || _network=""
+[[ -v _valve ]] || _valve=""
+[[ -v _vhba ]] || _vhba=""
+[[ -v _vmalloc ]] || _vmalloc=""
+[[ -v _vmscape ]] || _vmscape=""
+[[ -v _zstd ]] || _zstd=""
+
+_staging_patches() {
+  tkgpatch="$srcdir/0015-staging.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_staging" ]; then
+      plain ""
+      plain "Apply optional Glitched staging patchset?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_staging;
+    fi
+    if [[ "${CONDITION_staging:-}" =~ [yY] ]] || [ "$_staging" = "true" ]; then
+      _msg="Applying Glitched staging patchset" && _tkg_patcher
+      if grep -q '^config TKG$' init/Kconfig; then
+        case "$_staging_tkg" in
+          true|yes|1)
+            _enable "TKG"
+            ;;
+          false|no|0)
+            _disable "TKG"
+            ;;
+          *)
+            _die "_staging_tkg must be true or false"
+            ;;
+        esac
+      fi
+    fi
+  fi
+
+  tkgpatch="$srcdir/0016-adios.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_adios" ]; then
+      plain ""
+      plain "Apply optional ADIOS scheduler patch?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_adios;
+    fi
+    if [[ "${CONDITION_adios:-}" =~ [yY] ]] || [ "$_adios" = "true" ]; then
+      _msg="Applying ADIOS scheduler patch" && _tkg_patcher
+    fi
+  fi
+
+  tkgpatch="$srcdir/0016-bbr3.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_bbr3" ]; then
+      plain ""
+      plain "Apply optional BBRv3 network patch?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_bbr3;
+    fi
+    if [[ "${CONDITION_bbr3:-}" =~ [yY] ]] || [[ "$_bbr3" =~ ^(true|yes|1)$ ]]; then
+      _msg="Applying BBRv3 network patch" && _tkg_patcher
+    fi
+  fi
+
+  tkgpatch="$srcdir/0016-cgroup.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_cgroup" ]; then
+      plain ""
+      plain "Apply optional cgroup drm patchset?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_cgroup;
+    fi
+    if [[ "${CONDITION_cgroup:-}" =~ [yY] ]] || [[ "$_cgroup" =~ ^(true|yes|1)$ ]]; then
+      _msg="Applying cgroup drm patchset" && _tkg_patcher
+    fi
+  fi
+
+  tkgpatch="$srcdir/0016-mglru.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_mglru2" ]; then
+      plain ""
+      plain "Apply optional mglru2 patchset?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_mglru2;
+    fi
+    if [[ "${CONDITION_mglru2:-}" =~ [yY] ]] || [[ "$_mglru2" =~ ^(true|yes|1)$ ]]; then
+      _msg="Applying mglru2 patchset" && _tkg_patcher
+      _enable "LRU_GEN" "LRU_GEN_ENABLED"
+      _disable "LRU_GEN_STATS"
+    fi
+  fi
+
+  tkgpatch="$srcdir/0016-network.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_network" ]; then
+      plain ""
+      plain "Apply optional Network optimization patchset?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_network;
+    fi
+    if [[ "${CONDITION_network:-}" =~ [yY] ]] || [[ "$_network" =~ ^(true|yes|1)$ ]]; then
+      _msg="Applying Network optimization patchset" && _tkg_patcher
+    fi
+  fi
+
+  tkgpatch="$srcdir/0016-valve.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_valve" ]; then
+      plain ""
+      plain "Apply optional Valve Steam Deck patchset?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_valve;
+    fi
+    if [[ "${CONDITION_valve:-}" =~ [yY] ]] || [[ "$_valve" =~ ^(true|yes|1)$ ]]; then
+      _msg="Applying Valve Steam Deck patchset" && _tkg_patcher
+      _module "MFD_STEAMDECK" "EXTCON_STEAMDECK" "SENSORS_STEAMDECK" "LEDS_STEAMDECK"
+    fi
+  fi
+
+  tkgpatch="$srcdir/0016-vhba.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_vhba" ]; then
+      plain ""
+      plain "Apply optional VHBA device patch?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_vhba;
+    fi
+    if [[ "${CONDITION_vhba:-}" =~ [yY] ]] || [[ "$_vhba" =~ ^(true|yes|1)$ ]]; then
+      _msg="Applying VHBA device patch" && _tkg_patcher
+      _module "VHBA"
+    fi
+  fi
+
+  tkgpatch="$srcdir/0016-vmalloc.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_vmalloc" ]; then
+      plain ""
+      plain "Apply optional vmalloc optimization patchset?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_vmalloc;
+    fi
+    if [[ "${CONDITION_vmalloc:-}" =~ [yY] ]] || [[ "$_vmalloc" =~ ^(true|yes|1)$ ]]; then
+      _msg="Applying vmalloc optimization patchset" && _tkg_patcher
+    fi
+  fi
+
+  tkgpatch="$srcdir/0016-vmscape.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_vmscape" ]; then
+      plain ""
+      plain "Apply optional vmscape mitigation patchset?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_vmscape;
+    fi
+    if [[ "${CONDITION_vmscape:-}" =~ [yY] ]] || [[ "$_vmscape" =~ ^(true|yes|1)$ ]]; then
+      _msg="Applying vmscape mitigation patchset" && _tkg_patcher
+    fi
+  fi
+
+  tkgpatch="$srcdir/0016-zstd.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_zstd" ]; then
+      plain ""
+      plain "Apply optional zstd dev patchset?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_zstd;
+    fi
+    if [[ "${CONDITION_zstd:-}" =~ [yY] ]] || [[ "$_zstd" =~ ^(true|yes|1)$ ]]; then
+      _msg="Applying zstd dev patchset" && _tkg_patcher
+    fi
+  fi
+}

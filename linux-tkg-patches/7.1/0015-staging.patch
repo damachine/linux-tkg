@@ -1,0 +1,256 @@
+From fb9ebf1144b2dab6cce12db79b1d1ac627cab6d7 Mon Sep 17 00:00:00 2001
+From: Eric Naim <dnaim@cachyos.org>
+Date: Wed, 25 Mar 2026 03:38:24 +0800
+Subject: [PATCH 1/7] Kconfig: Add CONFIG_TKG
+
+This will be used later on for the tweaks made to kernel.
+
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+---
+ init/Kconfig | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/init/Kconfig b/init/Kconfig
+index a7d637791..da7db5d8e 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -215,6 +215,10 @@ config THREAD_INFO_IN_TASK
+ 
+ menu "General setup"
+ 
++config TKG
++	bool "Enable TkG kernel tweaks"
++	default y
++
+ config ZENIFY
+ 	bool "A selection of patches from Zen/Liquorix kernel and additional tweaks for a better gaming experience"
+ 	default y
+-- 
+2.55.0
+
+
+From a2679db99da8fc34a1947ec6e153774fc3582ab3 Mon Sep 17 00:00:00 2001
+From: Eric Naim <dnaim@cachyos.org>
+Date: Wed, 25 Mar 2026 03:50:27 +0800
+Subject: [PATCH 2/7] Kconfig.hz: Add additional timer frequency options
+
+Add 500, 600 and 750 to CONFIG_HZ so users can opt to use these timer
+frequencies and potentially save more power compared to 1000Hz.
+
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+---
+ kernel/Kconfig.hz | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/kernel/Kconfig.hz b/kernel/Kconfig.hz
+index 61960ee12..1f5908c0a 100644
+--- a/kernel/Kconfig.hz
++++ b/kernel/Kconfig.hz
+@@ -54,6 +54,13 @@ choice
+ 	 interactivity with great smoothness without sacrificing too
+ 	 much throughput.
+ 
++	config HZ_600
++		bool "600 HZ"
++	help
++	 600 Hz is a balanced timer frequency. Provides fast interactivity
++	 on desktops with good smoothness without increasing CPU power
++	 consumption and sacrificing the battery life on laptops.
++
+ 	config HZ_1000
+ 		bool "1000 HZ"
+ 	help
+@@ -68,6 +75,7 @@ config HZ
+ 	default 250 if HZ_250
+ 	default 300 if HZ_300
+ 	default 500 if HZ_500
++	default 600 if HZ_600
+ 	default 750 if HZ_750
+ 	default 1000 if HZ_1000
+ 
+-- 
+2.55.0
+
+
+From 049ce85ad365c1902bbaed82f51447eb02752bee Mon Sep 17 00:00:00 2001
+From: Eric Naim <dnaim@cachyos.org>
+Date: Wed, 25 Mar 2026 04:00:53 +0800
+Subject: [PATCH 3/7] CACHY: mm/vmscan: Increase vm_swappiness to 100
+
+vm.swappiness is simply a ratio of how costly reclaiming and refaulting
+anonymous memory is compared to file memory for your hardware and workload.
+
+For SSDs, swapping or dropping filesystem caches basically have the same cost,
+so a middle value like 100 may work well. Keep the default value 60 for
+!CONFIG_TKG as HDDs are still prevalent in servers for storage.
+
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+---
+ mm/vmscan.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index fb20776fc..18834ff38 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -198,7 +198,11 @@ struct scan_control {
+ /*
+  * From 0 .. MAX_SWAPPINESS.  Higher means more swappy.
+  */
++#ifdef CONFIG_TKG
++int vm_swappiness = 100;
++#else
+ int vm_swappiness = 30;
++#endif
+ 
+ #ifdef CONFIG_MEMCG
+ 
+-- 
+2.55.0
+
+
+From e85974d9f0910ce2ab855a6f0e28dccdc737d4bc Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Sat, 24 Oct 2020 22:17:49 -0700
+Subject: [PATCH 4/7] CACHY: Disable proactive compaction by default
+
+On-demand compaction works fine assuming that you don't have a need to
+spam the page allocator nonstop for large order page allocations.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+---
+ mm/compaction.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/mm/compaction.c b/mm/compaction.c
+index 3648ce22c..ea404f787 100644
+--- a/mm/compaction.c
++++ b/mm/compaction.c
+@@ -1904,7 +1904,11 @@ static int sysctl_compact_unevictable_allowed __read_mostly = CONFIG_COMPACT_UNE
+  * aggressively the kernel should compact memory in the
+  * background. It takes values in the range [0, 100].
+  */
++#ifdef CONFIG_TKG
++static unsigned int __read_mostly sysctl_compaction_proactiveness;
++#else
+ static unsigned int __read_mostly sysctl_compaction_proactiveness = 20;
++#endif
+ static int sysctl_extfrag_threshold = 500;
+ static int __read_mostly sysctl_compact_memory;
+ 
+-- 
+2.55.0
+
+
+From 2d160a4cc203a0e941421485b3adef7afb37fca6 Mon Sep 17 00:00:00 2001
+From: Eric Naim <dnaim@cachyos.org>
+Date: Mon, 23 Feb 2026 12:22:31 +0800
+Subject: [PATCH 5/7] dkms-clang
+
+Signed-off-by: Eric Naim <dnaim@cachyos.org>
+---
+ scripts/Makefile.clang | 2 --
+ scripts/Makefile.warn  | 4 ----
+ 2 files changed, 6 deletions(-)
+
+diff --git a/scripts/Makefile.clang b/scripts/Makefile.clang
+index b67636b28..062ee0211 100644
+--- a/scripts/Makefile.clang
++++ b/scripts/Makefile.clang
+@@ -34,9 +34,7 @@ endif
+ # certain optimization flags it knows it has not implemented.
+ # Make it behave more like gcc by erroring when these flags are encountered
+ # so they can be implemented or wrapped in cc-option.
+-CLANG_FLAGS	+= -Werror=unknown-warning-option
+ CLANG_FLAGS	+= -Werror=ignored-optimization-argument
+ CLANG_FLAGS	+= -Werror=option-ignored
+-CLANG_FLAGS	+= -Werror=unused-command-line-argument
+ KBUILD_CPPFLAGS	+= $(CLANG_FLAGS)
+ export CLANG_FLAGS
+diff --git a/scripts/Makefile.warn b/scripts/Makefile.warn
+index e77ca875a..8c41e3768 100644
+--- a/scripts/Makefile.warn
++++ b/scripts/Makefile.warn
+@@ -13,7 +13,6 @@ KBUILD_CFLAGS += -Wundef
+ KBUILD_CFLAGS += -Werror=implicit-function-declaration
+ KBUILD_CFLAGS += -Werror=implicit-int
+ KBUILD_CFLAGS += -Werror=return-type
+-KBUILD_CFLAGS += -Werror=strict-prototypes
+ KBUILD_CFLAGS += -Wno-format-security
+ KBUILD_CFLAGS += -Wno-trigraphs
+ KBUILD_CFLAGS += -Wno-frame-address
+@@ -96,9 +95,6 @@ KBUILD_CFLAGS += $(KBUILD_CFLAGS-y) $(CONFIG_CC_IMPLICIT_FALLTHROUGH)
+ # Prohibit date/time macros, which would make the build non-deterministic
+ KBUILD_CFLAGS += -Werror=date-time
+ 
+-# enforce correct pointer usage
+-KBUILD_CFLAGS += -Werror=incompatible-pointer-types
+-
+ # Require designated initializers for all marked structures
+ KBUILD_CFLAGS += $(call cc-option,-Werror=designated-init)
+ 
+-- 
+2.55.0
+
+
+From 6f07b7f08923bb6bc44d33ac2f89dfd2cdf9553b Mon Sep 17 00:00:00 2001
+From: Cole Leavitt <cole@unwrap.rs>
+Date: Mon, 20 Apr 2026 10:44:06 -0700
+Subject: [PATCH 7/7] wifi: iwlwifi: mld: skip TX when firmware is dead
+
+When firmware encounters an error, STATUS_FW_ERROR is set but the
+mac80211 TX path continues pulling frames from TXQs. Each frame
+fails at iwl_trans_tx() which checks STATUS_FW_ERROR and returns
+-EIO, but iwl_mld_tx_from_txq() keeps looping over every queued
+frame. This burns CPU in a tight loop on dead firmware and can
+cause soft lockups during firmware error recovery.
+
+Add a STATUS_FW_ERROR check at the top of iwl_mld_tx_from_txq()
+to stop pulling frames from mac80211 TXQs when firmware is dead.
+Also guard iwl_mld_mac80211_tx() which bypasses the TXQ path
+entirely and would otherwise continue feeding frames to dead
+firmware.
+
+Once STATUS_FW_ERROR is cleared during firmware restart, TX
+resumes naturally with no explicit wake needed.
+
+Fixes: d1e879ec600f ("wifi: iwlwifi: add iwlmld sub-driver")
+Signed-off-by: Cole Leavitt <cole@unwrap.rs>
+---
+ drivers/net/wireless/intel/iwlwifi/mld/mac80211.c | 4 ++++
+ drivers/net/wireless/intel/iwlwifi/mld/tx.c       | 3 +++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/drivers/net/wireless/intel/iwlwifi/mld/mac80211.c b/drivers/net/wireless/intel/iwlwifi/mld/mac80211.c
+index 3c8daddc0..4222b98a6 100644
+--- a/drivers/net/wireless/intel/iwlwifi/mld/mac80211.c
++++ b/drivers/net/wireless/intel/iwlwifi/mld/mac80211.c
+@@ -519,6 +519,10 @@ iwl_mld_mac80211_tx(struct ieee80211_hw *hw,
+ 	u32 link_id = u32_get_bits(info->control.flags,
+ 				   IEEE80211_TX_CTRL_MLO_LINK);
+ 
++	if (unlikely(test_bit(STATUS_FW_ERROR, &mld->trans->status))) {
++		ieee80211_free_txskb(hw, skb);
++		return;
++	}
+ 	/* In AP mode, mgmt frames are sent on the bcast station,
+ 	 * so the FW can't translate the MLD addr to the link addr. Do it here
+ 	 */
+diff --git a/drivers/net/wireless/intel/iwlwifi/mld/tx.c b/drivers/net/wireless/intel/iwlwifi/mld/tx.c
+index 0bcb1ae69..7876b80b8 100644
+--- a/drivers/net/wireless/intel/iwlwifi/mld/tx.c
++++ b/drivers/net/wireless/intel/iwlwifi/mld/tx.c
+@@ -973,6 +973,9 @@ void iwl_mld_tx_from_txq(struct iwl_mld *mld, struct ieee80211_txq *txq)
+ 	struct sk_buff *skb = NULL;
+ 	u8 zero_addr[ETH_ALEN] = {};
+ 
++	if (unlikely(test_bit(STATUS_FW_ERROR, &mld->trans->status)))
++		return;
++
+ 	/*
+ 	 * Don't transmit during firmware restart. The firmware is dead,
+ 	 * so iwl_trans_tx() would return -EIO for each frame. Avoid the
+-- 
+2.55.0
+

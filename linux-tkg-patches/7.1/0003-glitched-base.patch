@@ -1,7 +1,7 @@
 From bc11a34a1a07178adc9d3df7a6c0889b88e0d5ae Mon Sep 17 00:00:00 2001
 From: Tk-Glitch <ti3nou@gmail.com>
 Date: Wed, 4 Jul 2018 04:30:08 +0200
-Subject: [PATCH 01/21] glitched
+Subject: [PATCH 01/22] glitched
 
 ---
  init/Makefile | 2 +-
@@ -24,10 +24,63 @@ index d6f75d890..9fa3e5890 100644
 2.55.0
 
 
+From b189cb0264b49f364156cdf8e3692f07aaf05148 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Christian=20K=C3=BChn?= <damachin3@proton.me>
+Date: Thu, 16 Jul 2026 00:00:00 +0200
+Subject: [PATCH 02/22] drm/panic: KISS with a sad frog
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Signed-off-by: Christian Kühn <damachin3@proton.me>
+---
+ drivers/gpu/drm/drm_panic.c | 25 ++++++++++++++++++-------
+ 1 file changed, 18 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/drm_panic.c b/drivers/gpu/drm/drm_panic.c
+index d6d3b8d85..ce8a81512 100644
+--- a/drivers/gpu/drm/drm_panic.c
++++ b/drivers/gpu/drm/drm_panic.c
+@@ -88,13 +88,24 @@ static struct drm_panic_line panic_msg[] = {
+ static const size_t panic_msg_lines = ARRAY_SIZE(panic_msg);
+ 
+ static const struct drm_panic_line logo_ascii[] = {
+-	PANIC_LINE("     .--.        _"),
+-	PANIC_LINE("    |o_o |      | |"),
+-	PANIC_LINE("    |:_/ |      | |"),
+-	PANIC_LINE("   //   \\ \\     |_|"),
+-	PANIC_LINE("  (|     | )     _"),
+-	PANIC_LINE(" /'\\_   _/`\\    (_)"),
+-	PANIC_LINE(" \\___)=(___/"),
++	PANIC_LINE("       .---.`               `.---."),
++	PANIC_LINE("    `/syhhhyso-           -osyhhhys/`"),
++	PANIC_LINE("   .syNMdhNNhss/``.---.``/sshNNhdMNys."),
++	PANIC_LINE("   +sdMh.`+MNsssssssssssssssNM+`.hMds+"),
++	PANIC_LINE("   :syNNdhNNhssssssssssssssshNNhdNNys:"),
++	PANIC_LINE("    /ssyhhhysssssssssssssssssyhhhyss/"),
++	PANIC_LINE("    .ossssssssssssssssssssssssssssso."),
++	PANIC_LINE("   :sssssssssssssssssssssssssssssssss:"),
++	PANIC_LINE("  /sssssssssssssssssssssssssssssssssss/"),
++	PANIC_LINE(" :ssssssssssss   sssssss   ssssssssssss:"),
++	PANIC_LINE(" ossssssssssss . sssssss . sssssssssssso"),
++	PANIC_LINE(" osssssssssssyyyyhhhhhhhyyyyssssssssssso"),
++	PANIC_LINE(" /yyyyyyhhdmmmmNNNNNNNNNNNmmmmdhhyyyyyy/"),
++	PANIC_LINE("  smmmNNNNNNNNNNNNNNNNNNNNNNNNNNNNNmmms"),
++	PANIC_LINE("   /dNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNd/"),
++	PANIC_LINE("    `:sdNNNNNNNNNNNNNNNNNNNNNNNNNds:`"),
++	PANIC_LINE("       `-+shdNNNNNNNNNNNNNNNdhs+-`"),
++	PANIC_LINE("             `.-://===//:-.`"),
+ };
+ 
+ static const size_t logo_ascii_lines = ARRAY_SIZE(logo_ascii);
+-- 
+2.55.0
+
+
 From 6c215b31de789f44a5871f1fd77070509cece3bb Mon Sep 17 00:00:00 2001
 From: Alexandre Frade <admfrade@gmail.com>
 Date: Mon, 29 Jan 2018 16:59:22 +0000
-Subject: [PATCH 02/21] dcache: cache_pressure = 50 decreases the rate at which
+Subject: [PATCH 03/22] dcache: cache_pressure = 50 decreases the rate at which
  VFS caches are reclaimed
 
 Signed-off-by: Alexandre Frade <admfrade@gmail.com>
@@ -72,7 +125,7 @@ index 4ee8faf01..5368571cd 100644
 From cd78e17b384f675a7bf3c3750ed1a4396aa5835b Mon Sep 17 00:00:00 2001
 From: Alexandre Frade <admfrade@gmail.com>
 Date: Mon, 29 Jan 2018 17:41:29 +0000
-Subject: [PATCH 03/21] scripts: disable the localversion "+" tag of a git repo
+Subject: [PATCH 04/22] scripts: disable the localversion "+" tag of a git repo
 
 Signed-off-by: Alexandre Frade <admfrade@gmail.com>
 ---
@@ -99,7 +152,7 @@ index 28169d7e1..5cb02894a 100755
 From 75a53a35ccfed50bb027de41d5440d4adad2179b Mon Sep 17 00:00:00 2001
 From: "Jan Alexander Steffens (heftig)" <jan.steffens@gmail.com>
 Date: Fri, 26 Oct 2018 11:22:33 +0100
-Subject: [PATCH 04/21] infiniband: Fix __read_overflow2 error with -O3
+Subject: [PATCH 05/22] infiniband: Fix __read_overflow2 error with -O3
  inlining
 
 ---
@@ -125,7 +178,7 @@ index 27992c38a..25b598bc6 100644
 From 663f71ac387453c71776e335d0199279161f63aa Mon Sep 17 00:00:00 2001
 From: Etienne Juvigny <Ti3noU@gmail.com>
 Date: Mon, 3 Sep 2018 17:36:25 +0200
-Subject: [PATCH 05/21] Add Zenify option
+Subject: [PATCH 06/22] Add Zenify option
 
 ---
  init/Kconfig | 39 +++++++++++++++++++++++++++++++++++++++
@@ -188,7 +241,7 @@ index 2937c4d30..f0329f93c 100644
 From 2526bd754b481afe0d68c257335bd1eceea1fd05 Mon Sep 17 00:00:00 2001
 From: Steven Barrett <damentz@liquorix.net>
 Date: Sun, 16 Jan 2011 18:57:32 -0600
-Subject: [PATCH 06/21] ZEN: Allow TCP YeAH as default congestion control
+Subject: [PATCH 07/22] ZEN: Allow TCP YeAH as default congestion control
 
 4.4: In my tests YeAH dramatically slowed down transfers over a WLAN,
      reducing throughput from ~65Mbps (CUBIC) to ~7MBps (YeAH) over 10
@@ -228,7 +281,7 @@ index 21e5164e3..633e68703 100644
 From 586694922b294179f45006b95d1d5171560f8ddc Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Wed, 28 Nov 2018 19:01:27 -0600
-Subject: [PATCH 07/21] zen: Use [defer+madvise] as default khugepaged defrag
+Subject: [PATCH 08/22] zen: Use [defer+madvise] as default khugepaged defrag
  strategy
 
 For some reason, the default strategy to respond to THP fault fallbacks
@@ -278,7 +331,7 @@ index b118bcd39..8c3dd0f67 100644
 From 125f1967f4898ca405bfadc93b723a3dde325e7d Mon Sep 17 00:00:00 2001
 From: Alexandre Frade <admfrade@gmail.com>
 Date: Wed, 24 Oct 2018 16:58:52 -0300
-Subject: [PATCH 08/21] net/sched: allow configuring cake qdisc as default
+Subject: [PATCH 09/22] net/sched: allow configuring cake qdisc as default
 
 Signed-off-by: Alexandre Frade <admfrade@gmail.com>
 ---
@@ -314,7 +367,7 @@ index 6ddff028b..2c0fe1858 100644
 From 5862ecc17fb7dcc7489136ff5afbf1284f8d11ae Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Thu, 27 Apr 2023 14:43:57 -0500
-Subject: [PATCH 09/21] ZEN: Set default max map count to (INT_MAX - 5)
+Subject: [PATCH 10/22] ZEN: Set default max map count to (INT_MAX - 5)
 
 Per [Fedora][1], they intend to change the default max map count for
 their distribution to improve OOTB compatibility with games played
@@ -349,7 +402,7 @@ index 80fce2515..05bbf4690 100644
 From 765b79bb143d646f87d2407b656f99eb891f5c24 Mon Sep 17 00:00:00 2001
 From: Sultan Alsawaf <sultan@kerneltoast.com>
 Date: Sun, 19 Apr 2020 19:59:18 -0700
-Subject: [PATCH 10/21] ZEN: mm: Stop kswapd early when nothing's waiting for
+Subject: [PATCH 11/22] ZEN: mm: Stop kswapd early when nothing's waiting for
  it to free pages
 
 Contains:
@@ -526,7 +579,7 @@ index bd1b1aa12..34e0e1a21 100644
 From 633e680706a6db99723e604654599984622e2a3f Mon Sep 17 00:00:00 2001
 From: Sultan Alsawaf <sultan@kerneltoast.com>
 Date: Sat, 28 Mar 2020 13:06:28 -0700
-Subject: [PATCH 11/21] ZEN: INTERACTIVE: mm: Disable watermark boosting by
+Subject: [PATCH 12/22] ZEN: INTERACTIVE: mm: Disable watermark boosting by
  default
 
 What watermark boosting does is preemptively fire up kswapd to free
@@ -581,7 +634,7 @@ index 649af6571..ff40118f2 100644
 From 8037bc6b878dad8f5c4b9f7cfaaf175df6f91a65 Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Mon, 5 Sep 2022 11:35:20 -0500
-Subject: [PATCH 12/21] ZEN: INTERACTIVE: mm/swap: Disable swap-in readahead
+Subject: [PATCH 13/22] ZEN: INTERACTIVE: mm/swap: Disable swap-in readahead
 
 Per an [issue][1] on the chromium project, swap-in readahead causes more
 jank than not.  This might be caused by poor optimization on the
@@ -629,7 +682,7 @@ index 5cc44f0de..b46e7ad2d 100644
 From 495c78ff5b4573cdba918652b54a312769291b87 Mon Sep 17 00:00:00 2001
 From: Alexandre Frade <admfrade@gmail.com>
 Date: Mon, 25 Nov 2019 15:13:06 -0300
-Subject: [PATCH 13/21] elevator: set interactive default schedulers for blk-mq
+Subject: [PATCH 14/22] elevator: set interactive default schedulers for blk-mq
 
 Signed-off-by: Alexandre Frade <admfrade@gmail.com>
 ---
@@ -689,7 +742,7 @@ index 3bcd37c2a..c22bcaa5e 100644
 From 306d1796dea79152f05b686bc8ef9418992d0816 Mon Sep 17 00:00:00 2001
 From: Alexandre Frade <kernel@xanmod.org>
 Date: Mon, 3 Aug 2020 17:05:04 +0000
-Subject: [PATCH 14/21] mm: set 2 megabytes for address_space-level file
+Subject: [PATCH 15/22] mm: set 2 megabytes for address_space-level file
  read-ahead pages size
 
 Signed-off-by: Alexandre Frade <kernel@xanmod.org>
@@ -717,7 +770,7 @@ index 31a848485..76476bf98 100644
 From 2847ff80d4ee037b3e3ef46ed87d72d057106519 Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Mon, 11 Jul 2022 19:10:30 -0500
-Subject: [PATCH 15/21] ZEN: cpufreq: Remove schedutil dependency on Intel/AMD
+Subject: [PATCH 16/22] ZEN: cpufreq: Remove schedutil dependency on Intel/AMD
  P-State drivers
 
 Although both P-State drivers depend on schedutil in Kconfig, both code
@@ -754,7 +807,7 @@ index a9093cd5e..3a8d5b46b 100644
 From 924d4ac07e98e7d0f9d4186cd77c71a9b84b378d Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Wed, 15 Jan 2020 20:43:56 -0600
-Subject: [PATCH 16/21] ZEN: intel-pstate: Implement "enable" parameter
+Subject: [PATCH 17/22] ZEN: intel-pstate: Implement "enable" parameter
 
 If intel-pstate is compiled into the kernel, it will preempt the loading
 of acpi-cpufreq so you can take advantage of hardware p-states without
@@ -815,7 +868,7 @@ index 1f093e346..e744495c8 100644
 From 301bb785507531ad2f1a8346396f9465853d626a Mon Sep 17 00:00:00 2001
 From: Kenny Levinsen <kl@kl.wtf>
 Date: Sun, 27 Dec 2020 14:43:13 +0000
-Subject: [PATCH 17/21] ZEN: Input: evdev - use call_rcu when detaching client
+Subject: [PATCH 18/22] ZEN: Input: evdev - use call_rcu when detaching client
 
 Significant time was spent on synchronize_rcu in evdev_detach_client
 when applications closed evdev devices. Switching VT away from a
@@ -926,7 +979,7 @@ index c7325226c..4f18a50ea 100644
 From 3acb258fdca71e226db3b0533e59ed0d62c03ffa Mon Sep 17 00:00:00 2001
 From: Etienne JUVIGNY <ti3nou@gmail.com>
 Date: Mon, 6 Mar 2023 13:54:09 +0100
-Subject: [PATCH 18/21] Don't add -dirty versioning on unclean trees
+Subject: [PATCH 19/22] Don't add -dirty versioning on unclean trees
 
 ---
  scripts/setlocalversion | 12 ++++++------
@@ -962,7 +1015,7 @@ index 5cb02894a..6fe69fcc9 100755
 From d77e7c09819454800c192b030580176d4536fde1 Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Sat, 21 May 2022 15:15:09 -0500
-Subject: [PATCH 19/21] ZEN: INTERACTIVE: dm-crypt: Disable workqueues for
+Subject: [PATCH 20/22] ZEN: INTERACTIVE: dm-crypt: Disable workqueues for
  crypto ops
 
 Queueing in dm-crypt for crypto operations reduces performance on modern
@@ -1004,7 +1057,7 @@ index 608b617fb..7f9a6adb6 100644
 From d744d18082e1a2595299435448192c70f88a0e4c Mon Sep 17 00:00:00 2001
 From: Steven Barrett <steven@liquorix.net>
 Date: Sat, 14 Feb 2026 08:59:02 -0600
-Subject: [PATCH 20/21] ZEN: INTERACTIVE: Disable split lock mitigation by
+Subject: [PATCH 21/22] ZEN: INTERACTIVE: Disable split lock mitigation by
  default
 
 Split lock detection and mitigation is useful on multi tenant systems
@@ -1047,7 +1100,7 @@ index bba28607a..60c76d0d9 100644
 From 11e1aaaef5781d833141203edb3f10b201b2eb4c Mon Sep 17 00:00:00 2001
 From: Xie Yuanbin <qq570070308@gmail.com>
 Date: Sun, 23 Nov 2025 20:18:27 +0800
-Subject: [PATCH 21/21] ZEN: sched/core: Make finish_task_switch() and its
+Subject: [PATCH 22/22] ZEN: sched/core: Make finish_task_switch() and its
  subfunctions always inline
 
 finish_task_switch() is a hot code path in context switching.

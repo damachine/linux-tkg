@@ -1,0 +1,16 @@
+# Source staging files for 'knobs' configs
+
+_staging_knobs=(
+	autofdo
+	propeller
+	docs-pkg
+	patches-staging
+	module-driver
+	module-signing
+	nvidia-open
+)
+
+for _knob in "${_staging_knobs[@]}"; do
+	[ -r "${_where}/linux-tkg-config/${_knob}" ] && source "${_where}/linux-tkg-config/${_knob}"
+done
+unset _knob

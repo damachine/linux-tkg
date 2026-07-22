@@ -1,0 +1,54 @@
+# Split kernel documentation package feature.
+#
+# Public option:
+#   _docs_pkg="false"
+
+[[ -v _docs_pkg ]] || _docs_pkg="false"
+
+_pkgname_extra__10_docs_pkg() {
+  [[ "${_docs_pkg:-false}" == "true" ]] && printf '%s\n' "${pkgbase}-docs"
+}
+
+_makedepends_extra__10_docs_pkg() {
+  [[ "${_docs_pkg:-false}" == "true" ]] || return 0
+  printf '%s\n' graphviz imagemagick python-sphinx python-yaml texlive-latexextra
+}
+
+_docs_optdepend() {
+  if [[ "${_docs_pkg:-false}" == "true" ]]; then
+    printf '%s\n' "${pkgbase}-docs: Kernel source documentation for this build"
+  else
+    printf '%s\n' 'linux-docs: Kernel hackers manual - HTML documentation that comes with the Linux kernel.'
+  fi
+}
+
+_headers_keep_docs() {
+  [[ "${_docs_pkg:-false}" == "true" ]]
+}
+
+_package_docs() {
+  source "$_where"/BIG_UGLY_FROGMINER
+
+  pkgdesc="Documentation for the $pkgdesc kernel - https://github.com/Frogging-Family/linux-tkg"
+
+  cd "$_kernel_work_folder_abs"
+
+  local builddir="${pkgdir}/usr/lib/modules/$(<version)/build"
+  local src dst
+
+  msg2 "Installing documentation..."
+  while read -rd '' src; do
+    dst="${src#Documentation/}"
+    dst="${builddir}/Documentation/${dst#output/}"
+    install -Dm644 "$src" "$dst"
+  done < <(find Documentation -name '.*' -prune -o ! -type d -print0)
+
+  msg2 "Adding documentation symlink..."
+  mkdir -p "${pkgdir}/usr/share/doc"
+  ln -sr "${builddir}/Documentation" "${pkgdir}/usr/share/doc/${pkgbase}"
+}
+
+_package_functions__10_docs_pkg() {
+  [[ "${_docs_pkg:-false}" == "true" ]] || return 0
+  printf 'package_%s-docs() {\n  _package_docs\n}\n\n' "${pkgbase}"
+}

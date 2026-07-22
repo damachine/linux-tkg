@@ -49,6 +49,7 @@ fi
 
 source linux-tkg-config/prepare
 _frog_banner
+source linux-tkg-config/staging # This will source the staging files for the 'knobs' configs
 aggregate_user_config
 source "$_where/BIG_UGLY_FROGMINER"
 
@@ -57,8 +58,26 @@ source "$_where/BIG_UGLY_FROGMINER"
 _distro_prompt() {
   echo "Which linux distribution are you running ?"
   echo "if it's not on the list, chose the closest one to it: Fedora/Suse for RPM, Ubuntu/Debian for DEB"
-  _prompt_from_array "Debian" "Fedora" "Suse" "Ubuntu" "Gentoo" "Generic"
+  _prompt_from_array "Arch" "Debian" "Fedora" "Suse" "Ubuntu" "Gentoo" "Generic"
   _distro="${_selected_value}"
+}
+
+_arch_makepkg() {
+  local _action="$1"
+
+  if (( EUID == 0 )); then
+    _die "Arch packages must be built as a regular user. Re-run ./install.sh ${_action} without sudo; makepkg will ask for privileges when needed."
+  fi
+
+  msg2 "Using the Arch PKGBUILD through makepkg"
+
+  if [ "${_action}" = "config" ]; then
+    msg2 "Preparing Arch package sources"
+    makepkg --syncdeps --needed --nobuild
+  elif [ "${_action}" = "install" ]; then
+    msg2 "Building and installing Arch packages"
+    makepkg --syncdeps --needed --install
+  fi
 }
 
 _install_dependencies() {
@@ -74,31 +93,38 @@ _install_dependencies() {
   fi
 }
 
-if [ "$1" != "install" ] && [ "$1" != "config" ] && [ "$1" != "uninstall-help" ]; then
+if [ "$1" != "install" ] && [ "$1" != "config" ] && [ "$1" != "uninstall" ] && [ "$1" != "uninstall-help" ]; then
   msg2 "Argument not recognised, options are:
         - config : interactive script that shallow clones the linux kernel git tree into the folder \$_kernel_work_folder, then applies extra patches and prepares the .config file
                    by copying the one from the currently running linux system and updates it.
         - install : does the config step, proceeds to compile, then prompts to install
                     - 'DEB' distros: it creates .deb packages that will be installed then stored in the DEBS folder.
                     - 'RPM' distros: it creates .rpm packages that will be installed then stored in the RPMS folder.
+                    - 'Arch' distro: it delegates to the PKGBUILD through makepkg.
                     - 'Generic' distro: it uses 'make modules_install' and 'make install', uses 'dracut' to create an initramfs, then updates grub's boot entry.
-        - uninstall-help : [RPM and DEB based distros only], lists the installed kernels in this system, then gives hints on how to uninstall them manually."
+        - uninstall : interactively removes a selected tkg kernel (Generic/Gentoo).
+        - uninstall-help : lists the installed kernels in this system, then gives hints on how to uninstall them manually."
   exit 0
 fi
 
 if [ "$1" = "install" ] || [ "$1" = "config" ]; then
 
-  if [[ -z "$_distro" || ! "$_distro" =~ ^(Ubuntu|Debian|Fedora|Suse|Gentoo|Generic)$ ]]; then
-    msg2 "Variable \"_distro\" in \"customization.cfg\" has been set to an unkown value. Prompting..."
+  if [[ -z "$_distro" || ! "$_distro" =~ ^(Arch|Ubuntu|Debian|Fedora|Suse|Gentoo|Generic)$ ]]; then
+    msg2 "Variable \"_distro\" in \"customization.cfg\" has been set to an unknown value. Prompting..."
     _distro_prompt
+  fi
+
+  if [ "$_distro" = "Arch" ]; then
+    _arch_makepkg "$1"
+    exit 0
   fi
 
   # Run init script that is also run in PKGBUILD, it will define some env vars that we will use
   _tkg_initscript
 
+  # Use LLVM libunwind for Kbuild host tools when requested.
   if [[ "${_compiler}" = "llvm" && "${_distro}" =~ ^(Generic|Gentoo)$ && "${_libunwind_replace}" = "true" ]]; then
-      export LDFLAGS_MODULE="-unwindlib=libunwind"
-      export HOSTLDFLAGS="-unwindlib=libunwind"
+    export HOSTLDFLAGS="-rtlib=compiler-rt -unwindlib=libunwind"
   fi
 
   # Install the needed dependencies if the user wants to install the kernel
@@ -108,6 +134,10 @@ if [ "$1" = "install" ] || [ "$1" = "config" ]; then
   fi
 
   _tkg_srcprep
+
+  if [[ "$_distro" =~ ^(Generic|Gentoo)$ ]]; then
+    _run_staging_knob _prepare_after_link
+  fi
 
   _build_dir="$_kernel_work_folder_abs/.."
 
@@ -192,11 +222,12 @@ if [ "$1" = "install" ]; then
   export KCPPFLAGS
   export KCFLAGS
   export KRUSTFLAGS
+  _make_extra_flags="$(_run_staging_knob _build_make_flags)"
 
   if [[ "$_distro" =~ ^(Ubuntu|Debian)$ ]]; then
 
     msg2 "Building kernel DEB packages"
-    make ${llvm_opt} -j ${_thread_num} bindeb-pkg LOCALVERSION=-${_kernel_flavor}
+    make ${llvm_opt} ${_make_extra_flags} -j ${_thread_num} bindeb-pkg LOCALVERSION=-${_kernel_flavor}
     msg2 "Building successfully finished!"
 
     # Create DEBS folder if it doesn't exist
@@ -214,7 +245,7 @@ if [ "$1" = "install" ]; then
     fi
 
     if [[ "$_install_after_building" = "prompt" ]]; then
-      read -p "Do you want to install the new Kernel ? Y/[n]: " _install
+      read -p "Do you want to install the new Kernel ? [N]/y: " _install
     fi
 
     if [[ "$_install_after_building" =~ ^(Y|y|Yes|yes)$ || "$_install" =~ ^(Y|y|Yes|yes)$ ]]; then
@@ -265,7 +296,7 @@ if [ "$1" = "install" ]; then
     fi
 
     if [[ "$_install_after_building" = "prompt" ]]; then
-      read -p "Do you want to install the new Kernel ? Y/[n]: " _install
+      read -p "Do you want to install the new Kernel ? [N]/y: " _install
     fi
 
     if [[ "$_install_after_building" =~ ^(Y|y|Yes|yes)$ || "$_install" =~ ^(Y|y|Yes|yes)$ ]]; then
@@ -294,7 +325,7 @@ if [ "$1" = "install" ]; then
         warning "By default, system kernel updates will overwrite your custom kernel."
         warning "Adding a lock will prevent this but skip system kernel updates."
         msg2 "You can remove the lock if needed with 'sudo zypper removelock kernel-default-devel kernel-default kernel-devel kernel-syms'"
-        read -p "Would you like to lock system kernel packages ? Y/[n]: " _lock
+        read -p "Would you like to lock system kernel packages ? [N]/y: " _lock
         if [[ "$_lock" =~ ^(Y|y|Yes|yes)$ ]]; then
           sudo zypper addlock kernel-default-devel kernel-default kernel-devel kernel-syms
         fi
@@ -321,7 +352,7 @@ if [ "$1" = "install" ]; then
     fi
 
     msg2 "Building kernel"
-    make ${llvm_opt} -j ${_thread_num}
+    make ${llvm_opt} ${_make_extra_flags} -j ${_thread_num}
     msg2 "Build successful"
 
     if [ "$_STRIP" = "true" ]; then
@@ -366,7 +397,7 @@ if [ "$1" = "install" ]; then
     echo "    sudo make install"
 
     msg2 "Note: Uninstalling requires manual intervention, use './install.sh uninstall-help' for more information."
-    read -p "Continue ? Y/[n]: " _continue
+    read -p "Continue ? [N]/y: " _continue
 
     if ! [[ "$_continue" =~ ^(Y|y|Yes|yes)$ ]];then
       exit 0
@@ -388,39 +419,118 @@ if [ "$1" = "install" ]; then
 
     sudo make modules_install $_STRIP_MODS
 
+    sudo cp "$(make ${llvm_opt} -s image_name)" "/lib/modules/$_kernelname/vmlinuz"
+
+    if [ -n "${_module_resolved:-}" ]; then
+      _module_build
+      _module_install
+    fi
+
     msg2 "Removing modules from source folder in /usr/src/${_kernel_src_gentoo}"
     sudo find . -type f -name '*.ko' -delete
     sudo find . -type f -name '*.ko.cmd' -delete
-
-    msg2 "Installing kernel"
-    sudo make install
-
-    sudo cp "$(make ${llvm_opt} -s image_name)" "/lib/modules/$_kernelname/vmlinuz"
 
     if [ "$_distro" = "Gentoo" ]; then
 
       msg2 "Selecting the kernel source code as default source folder"
       sudo ln -sfn "/usr/src/$_headers_folder_name" "/usr/src/linux"
 
+      # Rebuild external modules before make install so installkernel hooks
+      # can include them in a generated initramfs or UKI.
       msg2 "Rebuild kernel modules with \"emerge @module-rebuild\" ?"
-      read -p "Y/[n]: " _continue
+      read -p "[N]/y: " _continue
       if [[ "$_continue" =~ ^(Y|y|Yes|yes)$ ]];then
-        sudo emerge @module-rebuild --keep-going
+        if ! sudo emerge @module-rebuild --keep-going; then
+          warning "External kernel module rebuilds did not complete; continuing with kernel installation."
+        fi
       fi
     fi
+
+    msg2 "Installing kernel"
+    sudo make install
 
   fi
 fi
 
+if [ "$1" = "uninstall" ]; then
+  if [[ -z "$_distro" || ! "$_distro" =~ ^(Generic|Gentoo)$ ]]; then
+    _die "Interactive uninstall is supported only for Generic and Gentoo installations. Run: ./install.sh uninstall-help for more information."
+  fi
+
+  _running_kernel="$(uname -r)"
+  _installed_kernels=()
+  for _module_dir in /lib/modules/*tkg*; do
+    [[ -d "${_module_dir}" ]] || continue
+    _kernel="${_module_dir##*/}"
+
+    if [[ "${_kernel}" = "${_running_kernel}" ]]; then
+      for _path in /boot/EFI/Linux/*"${_kernel}"-old.efi; do
+        if [[ -f "${_path}" ]]; then
+          _installed_kernels+=("${_kernel}-old")
+          break
+        fi
+      done
+    else
+      _installed_kernels+=("${_kernel}")
+    fi
+  done
+
+  if (( ! ${#_installed_kernels[@]} )); then
+    msg2 "No removable tkg kernels found."
+    exit 0
+  fi
+
+  mapfile -t _installed_kernels < <(printf '%s\n' "${_installed_kernels[@]}" | sort -V)
+
+  msg2 "Running kernel: ${_running_kernel} (not selectable)"
+  msg2 "Select the tkg kernel to uninstall:"
+  _prompt_from_array "${_installed_kernels[@]}"
+  _kernel="${_selected_value}"
+
+  warning "The following tkg kernel paths will be removed:"
+  if [[ "${_kernel}" = "${_running_kernel}-old" ]]; then
+    for _path in /boot/EFI/Linux/*"${_running_kernel}"-old.efi; do
+      [[ -f "${_path}" ]] && plain "  ${_path}"
+    done
+  else
+    for _path in \
+      /boot/EFI/Linux/*"${_kernel}"*.efi \
+      /lib/modules/"${_kernel}" \
+      /usr/src/*"${_kernel}"; do
+      [[ -e "${_path}" || -L "${_path}" ]] && plain "  ${_path}"
+    done
+  fi
+  read -rp "Continue? [N]/y: " _continue
+
+  if [[ "${_continue}" =~ ^(Y|y|Yes|yes)$ ]]; then
+    if [[ "${_kernel}" = "${_running_kernel}-old" ]]; then
+      sudo rm -f -- /boot/EFI/Linux/*"${_running_kernel}"-old.efi
+    else
+      sudo rm -rf -- \
+        /boot/EFI/Linux/*"${_kernel}"*.efi \
+        /lib/modules/"${_kernel}" \
+        /usr/src/*"${_kernel}"
+    fi
+    msg2 "Kernel ${_kernel} uninstalled."
+  fi
+  exit 0
+fi
+
 if [ "$1" = "uninstall-help" ]; then
 
-  if [ -z $_distro ]; then
+  if [ -z "$_distro" ]; then
     _distro_prompt
   fi
 
   cd "$_where"
 
-  if [[ "$_distro" =~ ^(Ubuntu|Debian)$ ]]; then
+  if [ "$_distro" = "Arch" ]; then
+    msg2 "List of installed custom tkg kernels: "
+    pacman -Qs "linux.*tkg" || true
+    msg2 "To uninstall a version, remove the kernel package and its headers with: "
+    msg2 "      sudo pacman -Rns PACKAGE PACKAGE-headers"
+    msg2 "       where PACKAGE is the installed linux-tkg package name shown above."
+  elif [[ "$_distro" =~ ^(Ubuntu|Debian)$ ]]; then
     msg2 "List of installed custom tkg kernels: "
     dpkg -l "*tkg*" | grep "linux.*tkg"
     dpkg -l "*linux-libc-dev*" | grep "linux.*tkg"
@@ -451,6 +561,7 @@ if [ "$1" = "uninstall-help" ]; then
     msg2 "  - Remove manually the corresponding folder in '/lib/modules'"
     msg2 "  - Remove manually the corresponding 'System.map', 'vmlinuz', 'config' and 'initramfs' in the folder :/boot"
     msg2 "  - Update the boot menu. e.g. 'sudo grub-mkconfig -o /boot/grub/grub.cfg'"
+    msg2 "To interactively uninstall a Linux-TKG kernel, run: ./install.sh uninstall"
   fi
 
 fi
