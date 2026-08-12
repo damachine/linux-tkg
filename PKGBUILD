@@ -155,6 +155,7 @@ hackbase() {
     'update-grub: Simple wrapper around grub-mkconfig.'
     'scx-scheds: to use sched-ext schedulers'
     'wireless-regdb: to set the correct wireless channels of your country'
+    'pacman-hook-kernel-install: automatically trigger kernel-install on kernel changes'
   )
   provides=("linux=${pkgver}" "${pkgbase}" KSMBD-MODULE VIRTUALBOX-GUEST-MODULES WIREGUARD-MODULE)
   [ -e "${srcdir}/ntsync.conf" ] && provides+=(NTSYNC-MODULE)
