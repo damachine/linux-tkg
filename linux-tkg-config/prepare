@@ -471,6 +471,19 @@ _set_compiler(){
       warning "Clang LTO is only available on linux 5.12 onwards."
       _lto_mode="no"
     fi
+
+    if [[ "${_llvm_autofdo:-false}" != "false" ]]; then
+      (( _kver >= 613 )) || _die "LLVM AutoFDO requires kernel 6.13 or newer."
+
+      if [[ -f "${_llvm_autofdo_profile/#\~/$HOME}" ]]; then
+        llvm_opt+=" CLANG_AUTOFDO_PROFILE=${_llvm_autofdo_profile/#\~/$HOME}"
+        msg2 "LLVM AutoFDO: building an optimized kernel"
+      else
+        _STRIP="false"
+        _debugdisable="false"
+        msg2 "LLVM AutoFDO: building a profiling kernel"
+      fi
+    fi
   else # GCC
     _compiler_name=""
     llvm_opt=""
@@ -1064,6 +1077,13 @@ _tkg_srcprep() {
       _disable "DRM_PANIC_SCREEN_QR_CODE"
       _undefine "DRM_PANIC_SCREEN_QR_CODE_URL" "DRM_PANIC_SCREEN_QR_VERSION"
     fi
+  fi
+
+  # LLVM Autofdo
+  if [[ "${_llvm_autofdo:-false}" != "false" ]]; then
+    _enable "AUTOFDO_CLANG"
+  else
+    _disable "AUTOFDO_CLANG"
   fi
 
   if [ "$_distro" = "Gentoo" ]; then
@@ -1881,6 +1901,10 @@ fi
   # rewrite configuration
   msg2 "Setting config"
   make ${_config_updating} ${llvm_opt} |& tee -a "$_where"/logs/prepare.log.txt
+
+  if [[ "${_llvm_autofdo:-false}" != "false" ]] && ! grep -q '^CONFIG_AUTOFDO_CLANG=y$' .config; then
+    _die "LLVM AutoFDO requires Clang 17 or newer."
+  fi
 
   # Modify the kernel config file to fit Fedora SELinux configuration
   if [ "$_distro" = "Fedora" ] ; then
