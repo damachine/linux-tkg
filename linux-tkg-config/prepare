@@ -484,6 +484,22 @@ _set_compiler(){
         msg2 "LLVM AutoFDO: building a profiling kernel"
       fi
     fi
+    if [[ "${_llvm_propeller:-false}" != "false" ]]; then
+      (( _kver >= 613 )) || _die "LLVM Propeller requires kernel 6.13 or newer."
+
+      if [[ -f "${_llvm_propeller_profile/#\~/$HOME}_cc_profile.txt" &&
+            -f "${_llvm_propeller_profile/#\~/$HOME}_ld_profile.txt" ]]; then
+        llvm_opt+=" CLANG_PROPELLER_PROFILE_PREFIX=${_llvm_propeller_profile/#\~/$HOME}"
+        msg2 "LLVM Propeller: building an optimized kernel"
+      elif [[ -e "${_llvm_propeller_profile/#\~/$HOME}_cc_profile.txt" ||
+              -e "${_llvm_propeller_profile/#\~/$HOME}_ld_profile.txt" ]]; then
+        _die "LLVM Propeller requires both profile files for _llvm_propeller_profile."
+      else
+        _STRIP="false"
+        _debugdisable="false"
+        msg2 "LLVM Propeller: building a profiling kernel"
+      fi
+    fi
   else # GCC
     _compiler_name=""
     llvm_opt=""
@@ -1084,6 +1100,13 @@ _tkg_srcprep() {
     _enable "AUTOFDO_CLANG"
   else
     _disable "AUTOFDO_CLANG"
+  fi
+
+  # LLVM Propeller
+  if [[ "${_llvm_propeller:-false}" != "false" ]]; then
+    _enable "PROPELLER_CLANG"
+  else
+    _disable "PROPELLER_CLANG"
   fi
 
   if [ "$_distro" = "Gentoo" ]; then
@@ -1904,6 +1927,9 @@ fi
 
   if [[ "${_llvm_autofdo:-false}" != "false" ]] && ! grep -q '^CONFIG_AUTOFDO_CLANG=y$' .config; then
     _die "LLVM AutoFDO requires Clang 17 or newer."
+  fi
+  if [[ "${_llvm_propeller:-false}" != "false" ]] && ! grep -q '^CONFIG_PROPELLER_CLANG=y$' .config; then
+    _die "LLVM Propeller requires Clang 19 or newer."
   fi
 
   # Modify the kernel config file to fit Fedora SELinux configuration
