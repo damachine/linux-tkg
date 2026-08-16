@@ -52,6 +52,21 @@ Here's an overview a few toggles from [customization.cfg](./customization.cfg)
     - [Modprobed-db](https://github.com/graysky2/modprobed-db) can help build the list: make sure to read [thoroughly about it first](https://wiki.archlinux.org/index.php/Modprobed-db) as a list too short list can produce unbootable kernels or have runtime issues because of missing modules.
 - `NTsync` & `Fsync` support, including older kernel versions that don't ship them
   - A patched wine may be needed, see [wine-tkg](https://github.com/Frogging-Family/wine-tkg-git)
+- LLVM AutoFDO and Propeller
+
+  AutoFDO and Propeller use representative `perf` profiles. Reported gains reach up to 10% in microbenchmarks and 5% in workloads, depending on workload and profile quality. [Linux kernel evaluation](https://discourse.llvm.org/t/optimizing-the-linux-kernel-with-autofdo-including-thinlto-and-propeller/79108).
+
+  AutoFDO workflow:
+
+  1. Set `_llvm_autofdo="true"` and build, boot, then follow the [AutoFDO kernel documentation](https://docs.kernel.org/dev-tools/autofdo.html) to collect and convert a representative profile.
+  2. Keep `_llvm_autofdo="true"` and set `_llvm_autofdo_profile` to the generated profile, then build the final AutoFDO kernel. A missing profile builds the profiling kernel automatically.
+
+  Propeller workflow: *Optional on top of the final AutoFDO kernel:*
+
+  1. Set `_llvm_propeller="true"`, then build, boot, and follow the [Propeller kernel documentation](https://docs.kernel.org/dev-tools/propeller.html) to collect and convert profiles.
+  2. Keep `_llvm_propeller="true"` and set `_llvm_propeller_profile` to the generated profile prefix, then build the final kernel. Missing profiles build the profiling kernel automatically.
+
+  Propeller can also be used on its own. Both profile files must exist before the final optimized kernel is built.
 
 ### CPU task schedulers
 
