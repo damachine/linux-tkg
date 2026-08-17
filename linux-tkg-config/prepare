@@ -377,6 +377,11 @@ _set_cpu_scheduler() {
     _avail_cpu_scheds+=("bore")
   fi
 
+  # automatically append "muqss" when the CK/MuQSS patch exists for the chosen kernel version
+  if [[ -f "$_where/linux-tkg-patches/${_basekernel}/0004-${_basekernel}-ck1.patch" ]] && ! [[ " ${_avail_cpu_scheds[*]} " == *" muqss "* ]]; then
+    _avail_cpu_scheds+=("muqss")
+  fi
+
   # Manual scheduler additions
   if [ "$_kver" = "504" ]; then
     _avail_cpu_scheds+=("pds" "bmq" "muqss") # PDS is not PrjC in this version, needs to be added manually
