@@ -1023,9 +1023,12 @@ _tkg_srcprep() {
   _disable "SYSFB_SIMPLEFB"
 
   # buggy project C/PSI interaction workaround
-  if [ "${_cpusched}" = "pds" ] || [ "${_cpusched}" = "bmq" ]; then
+  if [ "${_cpusched}" = "pds" ] || [ "${_cpusched}" = "bmq" ] || [ "${_cpusched}" = "muqss" ]; then
     _disable "PSI"
     _enable "PSI_DEFAULT_DISABLED"
+  fi
+
+  if [ "${_cpusched}" = "pds" ] || [ "${_cpusched}" = "bmq" ]; then
     # Disable MLX5_CORE on Prjc
     plain "Disable MLX5_CORE for Prjc"
     _disable "MLX5_CORE"

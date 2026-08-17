@@ -1,7 +1,7 @@
 From 2f409179028ff0aea1a73ec79d3793046cac0225 Mon Sep 17 00:00:00 2001
 From: ckolivas <kernel@kolivas.org>
 Date: Mon, 17 Aug 2026 10:57:08 +1000
-Subject: [PATCH 01/12] MultiQueue Skiplist Scheduler v0.31.
+Subject: [PATCH 01/11] MultiQueue Skiplist Scheduler v0.31.
 
 ---
  block/Makefile                            |     1 +
@@ -13338,7 +13338,7 @@ new file mode 100644
 index 000000000000..0c461e650150
 --- /dev/null
 +++ b/kernel/sched/MuQSS.h
-@@ -0,0 +1,1253 @@
+@@ -0,0 +1,1254 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef MUQSS_SCHED_H
 +#define MUQSS_SCHED_H
@@ -13650,6 +13650,7 @@ index 000000000000..0c461e650150
 +
 +#ifdef CONFIG_IRQ_TIME_ACCOUNTING
 +	u64 prev_irq_time;
++	u64 psi_irq_time;
 +#endif /* CONFIG_IRQ_TIME_ACCOUNTING */
 +#ifdef CONFIG_PARAVIRT
 +	u64 prev_steal_time;
@@ -15291,11 +15292,10 @@ index ee902a468c2f..c6c99c9266b4 100644
 -- 
 2.55.0
 
-
 From 6e41d3480fa4b35dc9440b56bc78201e51e73448 Mon Sep 17 00:00:00 2001
 From: ckolivas <kernel@kolivas.org>
 Date: Wed, 12 Aug 2026 06:35:32 +1000
-Subject: [PATCH 02/12] Make preemptible kernel default.
+Subject: [PATCH 02/11] Make preemptible kernel default.
 
 ---
  kernel/Kconfig.preempt | 44 ++++++++++++++++++++++++++++++++++--------
@@ -15406,7 +15406,7 @@ index 26ac2f8787dd..898eca17be54 100644
 From 1726bd652175add1d52426c98dbf41d836d11a24 Mon Sep 17 00:00:00 2001
 From: ckolivas <kernel@kolivas.org>
 Date: Wed, 12 Aug 2026 06:54:26 +1000
-Subject: [PATCH 03/12] Create highres timeout variants of schedule_timeout
+Subject: [PATCH 03/11] Create highres timeout variants of schedule_timeout
  functions.
 
 ---
@@ -15564,7 +15564,7 @@ index 3c90574bd904..0bbc2bc9ffbe 100644
 From 411f88ce000b7b68308867c88c64d3bb39a44db9 Mon Sep 17 00:00:00 2001
 From: ckolivas <kernel@kolivas.org>
 Date: Wed, 12 Aug 2026 07:15:26 +1000
-Subject: [PATCH 04/12] Convert all low value schedule_timeouts to their
+Subject: [PATCH 04/11] Convert all low value schedule_timeouts to their
  hrtimeout equivalents.
 
 ---
@@ -16303,7 +16303,7 @@ index 2932eaf157f4..6cb136235975 100644
 From e79c7c5bf2313320eb688ee2948fba5b4628f174 Mon Sep 17 00:00:00 2001
 From: ckolivas <kernel@kolivas.org>
 Date: Wed, 12 Aug 2026 07:42:31 +1000
-Subject: [PATCH 05/12] Convert msleep to use hrtimers when active.
+Subject: [PATCH 05/11] Convert msleep to use hrtimers when active.
 
 ---
  kernel/time/sleep_timeout.c | 35 ++++++++++++++++++++++++++++++++---
@@ -16383,7 +16383,7 @@ index 0bbc2bc9ffbe..85754e124475 100644
 From afe3634250f1673719a0f20953e4c4bba4dde5ad Mon Sep 17 00:00:00 2001
 From: ckolivas <kernel@kolivas.org>
 Date: Wed, 12 Aug 2026 07:49:54 +1000
-Subject: [PATCH 06/12] Replace all calls to schedule_timeout_interruptible to
+Subject: [PATCH 06/11] Replace all calls to schedule_timeout_interruptible to
  use schedule_msec_hrtimeout_interruptible.
 
 ---
@@ -17018,7 +17018,7 @@ index b3bbecf074ee..7bda2641005d 100644
 From 7da1f3b446c4ab72e627f828d96f351df36bbb0f Mon Sep 17 00:00:00 2001
 From: ckolivas <kernel@kolivas.org>
 Date: Wed, 12 Aug 2026 07:56:09 +1000
-Subject: [PATCH 07/12] Replace all calls to schedule_timeout_uninterruptible
+Subject: [PATCH 07/11] Replace all calls to schedule_timeout_uninterruptible
  to use schedule_msec_hrtimeout_uninterruptible.
 
 ---
@@ -17259,7 +17259,7 @@ index 4ad126bd4f70..58c08cf6a5c1 100644
 From cfa1a864d97c3db25d8c13cd4c07d2d4e3d12a2f Mon Sep 17 00:00:00 2001
 From: ckolivas <kernel@kolivas.org>
 Date: Wed, 12 Aug 2026 08:07:36 +1000
-Subject: [PATCH 08/12] Don't use hrtimer overlay when pm_freezing since some
+Subject: [PATCH 08/11] Don't use hrtimer overlay when pm_freezing since some
  drivers still don't correctly use freezable timeouts.
 
 ---
@@ -17316,7 +17316,7 @@ index 85754e124475..0f71c1663272 100644
 From 94087f04bd499c26d956db4c7a8619e5ce01a28c Mon Sep 17 00:00:00 2001
 From: ckolivas <kernel@kolivas.org>
 Date: Wed, 12 Aug 2026 08:23:55 +1000
-Subject: [PATCH 09/12] Make hrtimer granularity and minimum hrtimeout
+Subject: [PATCH 09/11] Make hrtimer granularity and minimum hrtimeout
  configurable in sysctl. Set default granularity to 100us and min timeout to
  500us.
 
@@ -17493,7 +17493,7 @@ index 597d816d22e8..e32c0f230111 100644
 From 62f660de9560a41dcd599cfbe27b651355a6136d Mon Sep 17 00:00:00 2001
 From: Con Kolivas <kernel@kolivas.org>
 Date: Wed, 7 Dec 2016 21:23:01 +1100
-Subject: [PATCH 10/12] Set default Hz to 100 in combination with MuQSS and -ck
+Subject: [PATCH 10/11] Set default Hz to 100 in combination with MuQSS and -ck
  patches.
 
 ---
@@ -17592,7 +17592,7 @@ index ce1435cb08b1..08fdfc490224 100644
 From 0c576fb08909fa041d44cf7de211faafb236b825 Mon Sep 17 00:00:00 2001
 From: ckolivas <kernel@kolivas.org>
 Date: Wed, 12 Aug 2026 09:01:42 +1000
-Subject: [PATCH 11/12] Make nohz_full not be picked up as a default config
+Subject: [PATCH 11/11] Make nohz_full not be picked up as a default config
  option and add recommendation to help.
 
 ---
@@ -17663,33 +17663,5 @@ index d098ac39bde4..8fffe5e0eef0 100644
  	 If you're a distro say Y.
  
  endchoice
--- 
-2.55.0
-
-
-From 66626778f448eae758bc35a587552a3ec1555e2a Mon Sep 17 00:00:00 2001
-From: Con Kolivas <kernel@kolivas.org>
-Date: Sun, 11 Dec 2016 17:08:47 +1100
-Subject: [PATCH 12/12] Add -ck1 version.
-
----
- Makefile | 4 ++++
- 1 file changed, 4 insertions(+)
-
-diff --git a/Makefile b/Makefile
-index ddcc6dca1ece..1125afe0c0cc 100644
---- a/Makefile
-+++ b/Makefile
-@@ -22,6 +22,10 @@ $(if $(filter __%, $(MAKECMDGOALS)), \
- PHONY := __all
- __all:
- 
-+CKVERSION = -ck1
-+CKNAME = MuQSS Powered
-+EXTRAVERSION := $(EXTRAVERSION)$(CKVERSION)
-+
- # We are using a recursive build, so we need to do a little thinking
- # to get the ordering right.
- #
 -- 
 2.55.0
