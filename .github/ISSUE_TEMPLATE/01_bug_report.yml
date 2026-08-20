@@ -67,7 +67,6 @@ body:
 
         Notes:
         - If you are using the kernel from the [releases](https://github.com/Frogging-Family/linux-tkg/releases) page, please mention it.
-        - Arch users: the full build output isn't captured automatically, please re-run `makepkg [args] | tee shell-output.log.txt` then drag & drop that file
     validations:
       required: true
   - type: dropdown
