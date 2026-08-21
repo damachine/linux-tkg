@@ -1,0 +1,34 @@
+# BBRv3 TCP congestion control.
+#
+# Public options:
+#   _bbr3=""
+
+[[ -v _bbr3 ]] || _bbr3=""
+
+_staging_patches_bbr3() {
+  tkgpatch="$srcdir/0016-bbr3.patch"
+  if [ -e "$tkgpatch" ]; then
+    if [ -z "$_bbr3" ]; then
+      plain ""
+      plain "Apply optional BBRv3 network patch?"
+      read -rp "`echo $'    > N/y : '`" CONDITION_bbr3;
+    fi
+    if [[ "${CONDITION_bbr3:-}" =~ [yY] ]] || [[ "$_bbr3" =~ ^(true|yes|1)$ ]]; then
+      _msg="Applying BBRv3 network patch" && _tkg_patcher
+    fi
+  fi
+}
+
+_set_tcp_alg_bbr3() {
+  if [[ "$_bbr3" =~ ^(true|yes|1)$ ]]; then
+    _user_set_tcp_alg="true"
+    _module "TCP_CONG_CUBIC" "NET_SCH_FQ_CODEL"
+    # Keep BBRv1 disabled here: some patched trees can fail to register bbr3
+    # when both BBR variants are built-in at the same time.
+    _disable "TCP_CONG_BBR"
+    _enable "TCP_CONG_BBR3" "DEFAULT_BBR3" "NET_SCH_DEFAULT" "NET_SCH_FQ" "DEFAULT_FQ"
+    _disable "DEFAULT_YEAH" "DEFAULT_BBR" "DEFAULT_CUBIC" "DEFAULT_VEGAS" "DEFAULT_WESTWOOD" "DEFAULT_RENO" "DEFAULT_FQ_CODEL" "DEFAULT_FQ_PIE"
+    scripts/config --set-str "DEFAULT_TCP_CONG" "bbr3"
+    scripts/config --set-str "DEFAULT_NET_SCH" "fq"
+  fi
+}

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # List of kernels that are maintained upstream
 _current_kernels=("7.2" "7.1" "6.18" "6.12" "6.6" "6.1" "5.15" "5.10")
@@ -30,6 +30,7 @@ _all_scheds=(
   ["muqss"]="Multiple Queue Skiplist Scheduler (MuQSS)"
   ["upds"]="TkG's Undead PDS"
   ["bore"]="Burst-Oriented Response Enhancer Scheduler (BORE)"
+  ["infinity"]="Infinity CPU/GPU scheduler with EEVDF-based EMA control"
 )
 
 typeset -Ag _cpu_marchs
@@ -139,6 +140,32 @@ _frog_banner() {
   plain ''
 }
 
+_run_staging_knob() {
+  local _hook="$1"
+  shift
+  local _status=0
+  local _fn
+
+  if declare -F "${_hook}" >/dev/null; then
+    "${_hook}" "$@" || _status=$?
+  fi
+
+  if [ "${_hook}" = "_build_after_kernel" ] && declare -F _build_after_kmod >/dev/null; then
+    _build_after_kmod "$@" || _status=$?
+  fi
+
+  while IFS= read -r _fn; do
+    "${_fn}" "$@" || _status=$?
+  done < <(declare -F | awk '{print $3}' | grep -E "^${_hook}_" | sort)
+
+  return "${_status}"
+}
+
+_run_config_command() {
+  "$@" |& tee -a "${_where}/logs/prepare.log.txt"
+  return "${PIPESTATUS[0]}"
+}
+
 _undefine() {
   for _config_name in "$@"; do
     scripts/config -k --undefine "${_config_name}"
@@ -184,6 +211,17 @@ _replace() {
   fi
 
   sed -i "s${delim}${search}${delim}${replace}${delim}g" "$file"
+}
+
+_kernel_version_at_least() {
+  local _required_major="$1"
+  local _required_minor="$2"
+  local _kernel_major="${_basekernel%%.*}"
+  local _kernel_minor="${_basekernel#*.}"
+
+  [[ "$_kernel_major" =~ ^[0-9]+$ && "$_kernel_minor" =~ ^[0-9]+$ ]] &&
+    (( _kernel_major > _required_major ||
+      (_kernel_major == _required_major && _kernel_minor >= _required_minor) ))
 }
 
 _prompt_from_array() {
@@ -299,7 +337,7 @@ _set_kver_internal_vars() {
     _default_cpu_sched="eevdf"
   fi
 
-  echo -e "_basekernel='$_basekernel'\n_basever='$_basever'\n_sub='$_sub'\n_kver='$_kver'\n_default_cpu_sched='$_default_cpu_sched'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_basekernel='$_basekernel'\n_basever='$_basever'\n_sub='$_sub'\n_kver='$_kver'\n_default_cpu_sched='$_default_cpu_sched'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 }
 
 _set_kernel_version() {
@@ -367,7 +405,7 @@ _set_kernel_version() {
 
     _kernel_git_tag="$_selected_value"
   fi
-  echo -e "_kernel_git_tag='$_kernel_git_tag'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_kernel_git_tag='$_kernel_git_tag'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 }
 
 _set_cpu_scheduler() {
@@ -382,14 +420,22 @@ _set_cpu_scheduler() {
     _recommended_sched="upds"
   fi
 
+  # automatically append "pds" & "bmq" when the patch 0009-prjc.patch exists for the chosen kernel version
   if [[ -f "$_where/linux-tkg-patches/${_basekernel}/0009-prjc.patch" ]]; then
     _avail_cpu_scheds+=("pds" "bmq")
   fi
 
+  # automatically append "bore" when the patch 0001-bore.patch exists for the chosen kernel version
   if [[ -f "$_where/linux-tkg-patches/${_basekernel}/0001-bore.patch" ]]; then
     _avail_cpu_scheds+=("bore")
   fi
 
+  # automatically append "infinity" when the patch exists for the chosen kernel version
+  if [[ -f "$_where/linux-tkg-patches/${_basekernel}/0001-infinity.patch" ]]; then
+    _avail_cpu_scheds+=("infinity")
+  fi
+
+  # automatically append "muqss" when the patch 0004-muqss.patch exists for the chosen kernel version
   if [[ -f "$_where/linux-tkg-patches/${_basekernel}/0004-muqss.patch" ]]; then
     _avail_cpu_scheds+=("muqss")
   fi
@@ -439,10 +485,14 @@ _set_cpu_scheduler() {
 
   msg2 "Using $_cpusched CPU scheduler"
 
-  echo -e "_cpusched='$_cpusched'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_cpusched='$_cpusched'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 }
 
 _set_compiler(){
+  _run_staging_knob _autofdo_preflight
+  _run_staging_knob _propeller_preflight
+  _run_staging_knob _bolt_preflight
+
   if ! [[ "$_compiler" =~ ^(gcc|llvm)$ ]]; then
     if [ -n "$_compiler" ] && [ "$_nofallback" = "true" ]; then
       _die "Compiler \" $_compiler \" not recognized, exiting..."
@@ -459,7 +509,7 @@ _set_compiler(){
 
   if [ "$_compiler" = "llvm" ]; then
     _compiler_name="-llvm"
-    llvm_opt="LLVM=1 LLVM_IAS=${_llvm_ias:-0}"
+    llvm_opt="CC=clang LD=ld.lld LLVM=1 LLVM_IAS=${_llvm_ias:-0}"
     if [ $_kver -ge 512 ]; then
       if [[ -z "$_lto_mode" || ! "$_lto_mode" =~ ^(no|thin|full)$ ]]; then
         plain "Would you like to enable Clang Link Time Optimizations (LTO) ? It may improve the performance of the kernel."
@@ -476,7 +526,7 @@ _set_compiler(){
         _lto_mode="${_lto_mode_array[$_selected_index]}"
       fi
       if [ "$_lto_mode" != "no" ]; then
-        llvm_opt="LLVM=1 LLVM_IAS=1"
+        llvm_opt="CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1"
       fi
     elif [[ -n "$_lto_mode" && "$_lto_mode" != "no" ]]; then
       warning "Clang LTO is only available on linux 5.12 onwards."
@@ -487,7 +537,30 @@ _set_compiler(){
     llvm_opt=""
   fi
 
-  echo -e "_compiler_name='$_compiler_name'\nllvm_opt='$llvm_opt'" >> "$_where"/BIG_UGLY_FROGMINER
+  if [ "$_compiler" = "llvm" ]; then
+    read -ra BUILD_FLAGS <<< "$llvm_opt"
+  else
+    BUILD_FLAGS=()
+  fi
+
+  _run_staging_knob _autofdo_finalize_compiler
+  _run_staging_knob _propeller_finalize_compiler
+  _run_staging_knob _bolt_finalize_compiler
+
+  echo -e "_compiler_name='$_compiler_name'\nllvm_opt='$llvm_opt'\n_lto_mode='$_lto_mode'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+  if ((${#BUILD_FLAGS[@]})); then
+    {
+      local _build_flag _build_flag_sep=""
+      printf 'BUILD_FLAGS=('
+      for _build_flag in "${BUILD_FLAGS[@]}"; do
+        printf '%s%q' "$_build_flag_sep" "$_build_flag"
+        _build_flag_sep=" "
+      done
+      printf ')\n'
+    } >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+  else
+    printf 'BUILD_FLAGS=()\n' >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+  fi
 }
 
 _define_kernel_abs_paths() {
@@ -496,13 +569,13 @@ _define_kernel_abs_paths() {
   if [[ "$_kernel_work_folder" == /* ]]; then
     _kernel_work_folder_abs="$_kernel_work_folder/linux-tkg/linux-src-git"
   fi
-  echo -e "_kernel_work_folder_abs=\"$_kernel_work_folder_abs\"" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_kernel_work_folder_abs=\"$_kernel_work_folder_abs\"" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 
   _kernel_source_folder_abs="$_where/$_kernel_source_folder/linux-kernel.git"
   if [[ "$_kernel_source_folder" == /* ]]; then
     _kernel_source_folder_abs="$_kernel_source_folder/linux-tkg/linux-kernel.git"
   fi
-  echo -e "_kernel_source_folder_abs=\"$_kernel_source_folder_abs\"" >> "$_where"/BIG_UGLY_FROGMINER
+  echo -e "_kernel_source_folder_abs=\"$_kernel_source_folder_abs\"" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 
 }
 
@@ -611,32 +684,81 @@ _setup_kernel_work_folder() {
 
 # Aggregate user configuration into BIG_UGLY_FROGMINER.
 # Duplicated variables are merged: env vars > ext config file > repo's customization.cfg
+# Strips blank lines and comments
 aggregate_user_config() {
   local _cfg="${_where}/customization.cfg"
+  local _current_env
 
   # Collect valid cfg keys to filter env overrides against
   local -A _keys=()
-  local _k
-  while read -r _k _; do
-    [[ "$_k" =~ ^([A-Za-z_][A-Za-z0-9_]*)= ]] && _keys["${BASH_REMATCH[1]}"]=1
+  local _k _line
+  while IFS= read -r _line; do
+    if [[ $_line =~ ^[[:space:]]*([a-zA-Z_][a-zA-Z0-9_]*)= ]]; then
+      _keys["${BASH_REMATCH[1]}"]=1
+    fi
   done < "$_cfg"
 
-  local _env="$(declare -p -x)"
+  # Keep the exported environment in memory
+  _current_env="$(declare -p -x)"
 
   source "$_cfg"
-  eval "$_env"
+
+  # Restore env before resolving _EXT_CONFIG_PATH
+  eval "$_current_env"
 
   if [[ -f "${_EXT_CONFIG_PATH}" ]]; then
     msg2 "External configuration file ${_EXT_CONFIG_PATH} will be used and will override customization.cfg values."
     source "${_EXT_CONFIG_PATH}"
-    eval "$_env"
   fi
 
+  # Environment variables have the highest priority
+  eval "$_current_env"
+
   for _k in "${!_keys[@]}"; do
-    declare -p "$_k"
-  done > "${_where}/BIG_UGLY_FROGMINER"
+    printf '%s=%q\n' "$_k" "${!_k}"
+  done > "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 }
 
+
+_frogminer_bootstrap() {
+  if [[ -n "${FAKEROOTKEY:-}" ]]; then
+    if [[ ! -f "${1:-${_where}/BIG_UGLY_FROGMINER}" ]]; then
+      _die "Missing BIG_UGLY_FROGMINER in fakeroot phase."
+    fi
+    source "${1:-${_where}/BIG_UGLY_FROGMINER}"
+    return
+  fi
+
+  if [[ "${_FROGMINER_BOOTSTRAPPED:-}" == "${_where}" ]]; then
+    if [[ ! -f "${1:-${_where}/BIG_UGLY_FROGMINER}" ]]; then
+      _die "Missing BIG_UGLY_FROGMINER after bootstrap."
+    fi
+    source "${1:-${_where}/BIG_UGLY_FROGMINER}"
+    return
+  fi
+
+  if [[ -e "${2:-${1:-${_where}/BIG_UGLY_FROGMINER}.pending}" ]]; then
+    warning "Cleaning leftover BIG_UGLY_FROGMINER.pending at startup."
+    rm -f "${2:-${1:-${_where}/BIG_UGLY_FROGMINER}.pending}"
+  fi
+  if [[ -e "${1:-${_where}/BIG_UGLY_FROGMINER}" ]]; then
+    warning "Cleaning leftover BIG_UGLY_FROGMINER at startup."
+    rm -f "${1:-${_where}/BIG_UGLY_FROGMINER}"
+  fi
+
+  _FROGMINER_TARGET="${2:-${1:-${_where}/BIG_UGLY_FROGMINER}.pending}"
+  aggregate_user_config
+  echo -e "_ispkgbuild=\"true\"\n_distro=\"Arch\"\n_where=\"${_where}\"" >> "${_FROGMINER_TARGET}"
+
+  source "${_FROGMINER_TARGET}"
+  _tkg_initscript
+
+  mv -f "${2:-${1:-${_where}/BIG_UGLY_FROGMINER}.pending}" "${1:-${_where}/BIG_UGLY_FROGMINER}"
+  unset _FROGMINER_TARGET
+  export _FROGMINER_BOOTSTRAPPED="${_where}"
+
+  source "${1:-${_where}/BIG_UGLY_FROGMINER}"
+}
 
 _tkg_initscript() {
 
@@ -678,15 +800,19 @@ _tkg_initscript() {
 
   _set_compiler
 
+  _run_staging_knob _set_nvidia_open
+
+  _run_staging_knob _set_module_drv
+
   if [ -n "$_custom_pkgbase" ]; then
-    echo -e "_custom_pkgbase=\"$_custom_pkgbase\"" >> "$_where"/BIG_UGLY_FROGMINER
+    echo -e "_custom_pkgbase=\"$_custom_pkgbase\"" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
   fi
 }
 
 user_patcher() {
     for _f in "$_where"/*."${_userpatch_ext}patch" "$_where"/*."${_userpatch_ext}revert"; do
       if [ -e "${_f}" ]; then
-        warning "Found userpatch file ${_f##*/} in the PKGBUILD directory." #"
+        warning "Found userpatch file ${f##*/} in the PKGBUILD directory." #"
         warning "Userpatches must now be placed in version-specific subdirectories (linux${_basever}-tkg-userpatches for this kernel version)."
         warning "The patch will not be applied."
       fi
@@ -747,6 +873,7 @@ _tkg_patcher() {
     warning "_vanilla toggle active: not applying ${tkgpatch##*/}"
     return 0
   fi
+  _run_staging_knob _patch_allowed "$@" || return 0
   if [ -e "$tkgpatch" ] && [[ $(wc -l <"$tkgpatch") -ge 7 ]]; then
     msg2 "$_msg"
     echo -e "### Applying ${tkgpatch##*/}... ###" >> "$_where"/logs/prepare.log.txt
@@ -886,10 +1013,6 @@ _tkg_srcprep() {
     _msg="Applying MuQSS base patch"
     tkgpatch="$srcdir/0004-muqss.patch" && _tkg_patcher
 
-    # the MuQSS patch appends $(CKVERSION) to EXTRAVERSION, which ends up in the kernel's name
-    # we don't want that, so we remove that
-    sed -i '/^EXTRAVERSION := $(EXTRAVERSION)$(CKVERSION)$/d' Makefile
-
     if [ "${_aggressive_ondemand}" = "true" ]; then
       _msg="Applying MuQSS agressive ondemand governor patch"
       tkgpatch="$srcdir/0004-glitched-ondemand-muqss.patch" && _tkg_patcher
@@ -897,6 +1020,10 @@ _tkg_srcprep() {
 
     _msg="Applying Glitched MuQSS patch"
     tkgpatch="$srcdir/0004-glitched-muqss.patch" && _tkg_patcher
+
+    # the MuQSS patch appends $(CKVERSION) to EXTRAVERSION, which ends up in the kernel's name
+    # we don't want that, so we remove that
+    sed -i '/^EXTRAVERSION := $(EXTRAVERSION)$(CKVERSION)$/d' Makefile
 
   elif [ "${_cpusched}" = "upds" ] || [ "${_cpusched}" = "pds" ]; then
     # upds naming quirk
@@ -943,6 +1070,9 @@ _tkg_srcprep() {
   elif [ "${_cpusched}" = "bore" ]; then
     _msg="Applying BORE patch"
     tkgpatch="$srcdir/0001-bore.patch" && _tkg_patcher
+  elif [ "${_cpusched}" = "infinity" ]; then
+    _msg="Applying Infinity scheduler patch"
+    tkgpatch="$srcdir/0001-infinity.patch" && _tkg_patcher
   elif [ "${_cpusched}" = "cfs" ]; then
     _msg="Applying Glitched CFS additions patch"
     tkgpatch="$srcdir/0003-glitched-cfs-additions.patch" && _tkg_patcher
@@ -960,7 +1090,7 @@ _tkg_srcprep() {
     fi
   fi
 
-  if [ "${_cpusched}" = "cfs" ] || [ "${_cpusched}" = "bore" ] || [[ "${_cpusched}" =~ "eevdf" ]]; then
+  if [ "${_cpusched}" = "cfs" ] || [ "${_cpusched}" = "bore" ] || [ "${_cpusched}" = "infinity" ] || [[ "${_cpusched}" =~ "eevdf" ]]; then
     _msg="Applying Glitched CFS/EEVDF patch"
     tkgpatch="$srcdir/0003-glitched-cfs.patch" && _tkg_patcher
   fi
@@ -1015,6 +1145,7 @@ _tkg_srcprep() {
     _enable "ZSWAP_COMPRESSOR_DEFAULT_LZ4"
     scripts/config --set-str "ZSWAP_COMPRESSOR_DEFAULT" "lz4"
   fi
+
   _enable "CPU_FREQ_DEFAULT_GOV_SCHEDUTIL"
   _disable "CPU_FREQ_DEFAULT_GOV_ONDEMAND" "CPU_FREQ_DEFAULT_GOV_CONSERVATIVE" "CPU_FREQ_DEFAULT_GOV_PERFORMANCE" "CPU_FREQ_DEFAULT_GOV_PERFORMANCE_NODEF"
   _module "BLK_DEV_LOOP"
@@ -1083,6 +1214,8 @@ _tkg_srcprep() {
       _undefine "DRM_PANIC_SCREEN_QR_CODE_URL" "DRM_PANIC_SCREEN_QR_VERSION"
     fi
   fi
+
+  _run_staging_knob _config_after_lto
 
   if [ "$_distro" = "Gentoo" ]; then
     _enable "GENTOO_PRINT_FIRMWARE_INFO"
@@ -1194,7 +1327,7 @@ _tkg_srcprep() {
 
   msg2 "Setting cpu micro architecture to $_processor_opt"
 
-  echo "_processor_opt='$_processor_opt'" >> "$_where"/BIG_UGLY_FROGMINER
+  echo "_processor_opt='$_processor_opt'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 
   # Disable some debugging
   if [ "${_debugdisable}" = "true" ]; then
@@ -1220,6 +1353,8 @@ _tkg_srcprep() {
       _disable "DEFAULT_${_alg_upper}"
     fi
   done
+
+  _run_staging_knob _set_tcp_alg
 
   if [ "$_user_set_tcp_alg" = "false" ];then
     _enable "DEFAULT_CUBIC"
@@ -1390,6 +1525,11 @@ _tkg_srcprep() {
       _enable "CC_OPTIMIZE_HARDER"
     else
       _enable "CC_OPTIMIZE_FOR_PERFORMANCE_O3"
+      # Polly is available only with a compatible Clang toolchain. Its Kconfig
+      # dependency verifies the plugin before the generated config keeps it.
+      if [ "$_compiler" = "llvm" ]; then
+        _enable "POLLY_CLANG"
+      fi
     fi
   elif [ "$_compileroptlevel" = "3" ]; then
     _disable "CC_OPTIMIZE_FOR_PERFORMANCE"
@@ -1462,6 +1602,7 @@ _tkg_srcprep() {
     ["eevdf"]="5"
     ["bmq"]="5"
     ["bore"]="5"
+    ["infinity"]="5"
   )
 
   if [[ -n "$_timer_freq" && ! "${_avail_timer_frequencies[*]}" =~ "$_timer_freq" ]]; then
@@ -1780,6 +1921,8 @@ fi
   fi
 
   # We're done with tkgpatch
+  _run_staging_knob _staging_patches
+
   unset tkgpatch
   unset _msg
 
@@ -1864,16 +2007,14 @@ fi
       _die "modprobed-db database not found"
     fi
 
-    yes "" | make LSMOD=$_modprobeddb_db_path localmodconfig ${llvm_opt}
+    yes "" 2>/dev/null | make LSMOD=$_modprobeddb_db_path localmodconfig ${llvm_opt}
   fi
 
   if [ true = "$_config_fragments" ]; then
     local fragments=()
     mapfile -d '' -t fragments < <(find "$_where"/ -type f -name "*.myfrag" -print0 | sort -z)
 
-    if [ true = "$_config_fragments_no_confirm" ]; then
-      printf 'Using config fragment %s\n' "${fragments[@]#$_where/}" #"
-    else
+    if [ true != "$_config_fragments_no_confirm" ]; then
       for i in "${!fragments[@]}"; do
         while true; do
           read -r -p 'Found config fragment '"${fragments[$i]#$_where/}"', apply it? [y/N] ' CONDITIONMPDB #"
@@ -1892,13 +2033,20 @@ fi
     fi
 
     if [ 0 -lt "${#fragments[@]}" ]; then
-      scripts/kconfig/merge_config.sh -m .config "${fragments[@]}"
+      local fragment
+      for fragment in "${fragments[@]}"; do
+        msg2 "Using config fragment ${fragment#$_where/}"
+      done
+      _run_config_command \
+        scripts/kconfig/merge_config.sh -m .config "${fragments[@]}"
     fi
   fi
 
   # rewrite configuration
   msg2 "Setting config"
-  make ${_config_updating} ${llvm_opt} |& tee -a "$_where"/logs/prepare.log.txt
+  make ${_config_updating} ${llvm_opt}
+
+  _run_staging_knob _config_after_update
 
   # Modify the kernel config file to fit Fedora SELinux configuration
   if [ "$_distro" = "Fedora" ] ; then
@@ -2008,11 +2156,17 @@ fi
     fi
   fi
 
-  # copy new config file back to the user's git folder for an eventual future use
+  # Apply NVIDIA open kernel module patches
+  _run_staging_knob _nvidia_patch
+
   cp .config "${_where}"/kernelconfig.new
 }
 
 exit_cleanup() {
+  local _exit_status=$?
+  set +e
+
+  mkdir -p "$_where/logs"
 
   # Move eventual shell-output.log file to logs folder
   if [ -f "$_where/shell-output.log" ]; then
@@ -2030,14 +2184,23 @@ exit_cleanup() {
   rm -f "$_where"/prepare
   rm -f "$_where"/minimal-modprobed.db
 
+  # Staging cleanup
+  rm -f "$_where"/kernelconfig.new
+  rm -rf "$_where"/it87
+  rm -rf "$_where"/nct6687
+  rm -rf "$_where"/v4l2loopback
+  rm -rf "$_where"/virtualbox
+
   # Cleanup & move BIG_UGLY_FROGMINER into the logs, since it has the actual final customization state
   if [[ -f "$_where"/BIG_UGLY_FROGMINER ]]; then
     sed -E 's|^declare -[^ ]* ||g' "$_where"/BIG_UGLY_FROGMINER > "$_where"/logs/customization.cfg.txt
     rm "$_where"/BIG_UGLY_FROGMINER
   fi
+  rm -f "${_where}/BIG_UGLY_FROGMINER.pending"
 
-  # Remove ntsync rules file
+  # Remove ntsync generated files
   rm -f "$_where"/ntsync.rules
+  rm -f "$_where"/ntsync.conf
 
   # Community patches removal in case of failure
   for _p in ${_community_patches[@]}; do
@@ -2068,6 +2231,8 @@ exit_cleanup() {
   fi
   echo "#################" >> "$_where"/logs/system-info.txt
   gcc --version 2>&1 | head -n1 >> "$_where"/logs/system-info.txt
+
+  return "$_exit_status"
 }
 
 trap exit_cleanup EXIT

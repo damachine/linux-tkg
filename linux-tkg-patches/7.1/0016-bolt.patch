@@ -1,0 +1,96 @@
+From a39dc894e1fa30545f7b9b7db5bea27eb857267b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Christian=20K=C3=BChn?= <damachin3@proton.me>
+Date: Thu, 30 Jul 2026 23:04:57 +0200
+Subject: [PATCH] bolt: add optional vmlinux post-link optimization
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add an x86-64 BOLT build mode based on the LLVM kernel guide.
+
+Reserve text space in both profiling and optimized builds.
+
+Run llvm-bolt only when a profile is supplied.
+
+Signed-off-by: Christian Kühn <damachin3@proton.me>
+---
+ arch/Kconfig                  | 12 ++++++++++++
+ arch/x86/kernel/vmlinux.lds.S |  7 +++++++
+ scripts/link-vmlinux.sh       | 22 ++++++++++++++++++++++
+ 3 files changed, 41 insertions(+)
+
+diff --git a/arch/Kconfig b/arch/Kconfig
+index e86880045..957edbe31 100644
+--- a/arch/Kconfig
++++ b/arch/Kconfig
+@@ -902,6 +902,18 @@ config PROPELLER_CLANG
+ 
+ 	  If unsure, say N.
+ 
++config BOLT_CLANG
++	bool "Enable LLVM BOLT build (EXPERIMENTAL)"
++	depends on X86_64
++	depends on CC_IS_CLANG
++	help
++	  Reserve additional kernel text space for LLVM BOLT. When
++	  KERNEL_BOLT_PROFILE is specified, the final vmlinux is optimized
++	  with llvm-bolt after linking. This permits post-link code layout
++	  optimization from a profile collected on an exact matching kernel.
++
++	  If unsure, say N.
++
+ config ARCH_SUPPORTS_CFI
+ 	bool
+ 	help
+diff --git a/arch/x86/kernel/vmlinux.lds.S b/arch/x86/kernel/vmlinux.lds.S
+index 4711a35e7..a35d62151 100644
+--- a/arch/x86/kernel/vmlinux.lds.S
++++ b/arch/x86/kernel/vmlinux.lds.S
+@@ -161,6 +161,13 @@ SECTIONS
+ 		STATIC_CALL_TEXT
+ 		*(.gnu.warning)
+ 
++#ifdef CONFIG_BOLT_CLANG
++		/* Space used when BOLT splits hot and cold functions. */
++		__bolt_reserved_start = .;
++		. += 2048 * 1024;
++		__bolt_reserved_end = .;
++#endif
++
+ 	} :text = 0xcccccccc
+ 
+ 	/* End of text section, which should occupy whole number of pages */
+diff --git a/scripts/link-vmlinux.sh b/scripts/link-vmlinux.sh
+index f99e196ab..7def839ae 100755
+--- a/scripts/link-vmlinux.sh
++++ b/scripts/link-vmlinux.sh
+@@ -293,5 +293,27 @@ if is_enabled CONFIG_KALLSYMS; then
+ 	fi
+ fi
+ 
++if is_enabled CONFIG_BOLT_CLANG && [ -n "${KERNEL_BOLT_PROFILE}" ]; then
++	BOLT=${LLVM_BOLT:-llvm-bolt}
++	BOLT_OPTS=${KERNEL_BOLT_OPTS:-"--dyno-stats \
++--eliminate-unreachable=0 --reorder-blocks=ext-tsp \
++--simplify-conditional-tail-calls=0 \
++--skip-funcs=__entry_text_start,irq_entries_start --split-functions"}
++
++	if ! command -v "${BOLT}" >/dev/null 2>&1; then
++		echo >&2 "${BOLT}: LLVM BOLT executable not found"
++		exit 1
++	fi
++	if [ ! -r "${KERNEL_BOLT_PROFILE}" ]; then
++		echo >&2 "${KERNEL_BOLT_PROFILE}: BOLT profile not readable"
++		exit 1
++	fi
++
++	mv "${VMLINUX}" "${VMLINUX}.pre-bolt"
++	info BOLT "${VMLINUX}"
++	${BOLT} "${VMLINUX}.pre-bolt" -o "${VMLINUX}" \
++		--data "${KERNEL_BOLT_PROFILE}" ${BOLT_OPTS}
++fi
++
+ # For fixdep
+ echo "${VMLINUX}: $0" > ".${VMLINUX}.d"
+-- 
+2.55.0
