@@ -102,13 +102,13 @@ index 7a637e87005f..15e206771816 100644
  	If enabled, provide RFC2861 behavior and time out the congestion
  	window after an idle period.  An idle period is defined at
 diff --git a/Makefile b/Makefile
-index 7f6474d36c70..04b1b49966b1 100644
+index 3c9141925807..4819d0dda3c5 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -2,7 +2,7 @@
  VERSION = 6
  PATCHLEVEL = 18
- SUBLEVEL = 45
+ SUBLEVEL = 46
 -EXTRAVERSION =
 +EXTRAVERSION = -hardened1
  NAME = Baby Opossum Posse
@@ -1124,7 +1124,7 @@ index 829f49ae07b9..5bb7ee4028ad 100644
  
  /**
 diff --git a/kernel/events/core.c b/kernel/events/core.c
-index d64f8edeaf8b..d8b5fd2d2b86 100644
+index 04c9d4915093..c0842a2877c8 100644
 --- a/kernel/events/core.c
 +++ b/kernel/events/core.c
 @@ -463,8 +463,13 @@ static struct kmem_cache *perf_event_cache;
@@ -2677,7 +2677,7 @@ index afcbb9d48cfa..5c4b3013881b 100644
  
  static struct ctl_table ipv4_net_table[] = {
 diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
-index c1769031a9e9..792aeea5466c 100644
+index 05521a3509a9..1497bca31fa0 100644
 --- a/net/ipv4/tcp_input.c
 +++ b/net/ipv4/tcp_input.c
 @@ -85,6 +85,7 @@
