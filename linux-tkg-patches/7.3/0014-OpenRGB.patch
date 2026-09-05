@@ -1,11 +1,11 @@
 diff --git a/drivers/i2c/busses/Kconfig b/drivers/i2c/busses/Kconfig
-index 2ddca08f8a76..72647850f08e 100644
+index d7b895083..95603dcd5 100644
 --- a/drivers/i2c/busses/Kconfig
 +++ b/drivers/i2c/busses/Kconfig
-@@ -217,6 +217,15 @@ config I2C_CHT_WC
+@@ -248,6 +248,15 @@ config I2C_CHT_WC
  	  combined with a FUSB302 Type-C port-controller as such it is advised
  	  to also select CONFIG_TYPEC_FUSB302=m.
-
+ 
 +config I2C_NCT6775
 +	tristate "Nuvoton NCT6775 and compatible SMBus controller"
 +	help
@@ -17,22 +17,22 @@ index 2ddca08f8a76..72647850f08e 100644
 +
  config I2C_NFORCE2
  	tristate "Nvidia nForce2, nForce3 and nForce4"
- 	depends on PCI
+ 	depends on PCI && HAS_IOPORT
 diff --git a/drivers/i2c/busses/Makefile b/drivers/i2c/busses/Makefile
-index 25d60889713c..3c2a9b237ac6 100644
+index 3755c54b3..0cbf700e5 100644
 --- a/drivers/i2c/busses/Makefile
 +++ b/drivers/i2c/busses/Makefile
-@@ -17,6 +17,7 @@ obj-$(CONFIG_I2C_CHT_WC)	+= i2c-cht-wc.o
+@@ -19,6 +19,7 @@ obj-$(CONFIG_I2C_CHT_WC)	+= i2c-cht-wc.o
  obj-$(CONFIG_I2C_I801)		+= i2c-i801.o
  obj-$(CONFIG_I2C_ISCH)		+= i2c-isch.o
  obj-$(CONFIG_I2C_ISMT)		+= i2c-ismt.o
-+obj-$(CONFIG_I2C_NCT6775)   += i2c-nct6775.o
++obj-$(CONFIG_I2C_NCT6775)	+= i2c-nct6775.o
  obj-$(CONFIG_I2C_NFORCE2)	+= i2c-nforce2.o
- obj-$(CONFIG_I2C_NFORCE2_S4985)	+= i2c-nforce2-s4985.o
  obj-$(CONFIG_I2C_NVIDIA_GPU)	+= i2c-nvidia-gpu.o
+ obj-$(CONFIG_I2C_PIIX4)		+= i2c-piix4.o
 diff --git a/drivers/i2c/busses/i2c-nct6775.c b/drivers/i2c/busses/i2c-nct6775.c
 new file mode 100644
-index 000000000000..0462f0952043
+index 000000000..e7899b572
 --- /dev/null
 +++ b/drivers/i2c/busses/i2c-nct6775.c
 @@ -0,0 +1,647 @@
@@ -684,20 +684,20 @@ index 000000000000..0462f0952043
 +module_init(i2c_nct6775_init);
 +module_exit(i2c_nct6775_exit);
 diff --git a/drivers/i2c/busses/i2c-piix4.c b/drivers/i2c/busses/i2c-piix4.c
-index 30ded6422e7b..e25ce84c26af 100644
+index 7b6a4e201..aa27fe856 100644
 --- a/drivers/i2c/busses/i2c-piix4.c
 +++ b/drivers/i2c/busses/i2c-piix4.c
-@@ -467,11 +467,11 @@ static int piix4_transaction(struct i2c_adapter *piix4_adapter)
+@@ -549,11 +549,11 @@ int piix4_transaction(struct i2c_adapter *piix4_adapter, unsigned short piix4_sm
  	if (srvrworks_csb5_delay) /* Extra delay for SERVERWORKS_CSB5 */
  		usleep_range(2000, 2100);
  	else
 -		usleep_range(250, 500);
 +		usleep_range(25, 50);
-
+ 
  	while ((++timeout < MAX_TIMEOUT) &&
  	       ((temp = inb_p(SMBHSTSTS)) & 0x01))
 -		usleep_range(250, 500);
 +		usleep_range(25, 50);
-
+ 
  	/* If the SMBus is still busy, we give up */
  	if (timeout == MAX_TIMEOUT) {

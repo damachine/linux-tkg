@@ -1,6 +1,8 @@
---- a/drivers/base/firmware_loader/main.c	2021-08-24 15:42:07.025482085 -0400
-+++ b/drivers/base/firmware_loader/main.c	2021-08-24 15:44:40.782975313 -0400
-@@ -809,6 +809,11 @@ _request_firmware(const struct firmware
+diff --git a/drivers/base/firmware_loader/main.c b/drivers/base/firmware_loader/main.c
+index 24213a0ea..16c4544e5 100644
+--- a/drivers/base/firmware_loader/main.c
++++ b/drivers/base/firmware_loader/main.c
+@@ -861,6 +861,11 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
  
  	ret = _request_firmware_prepare(&fw, name, device, buf, size,
  					offset, opt_flags);

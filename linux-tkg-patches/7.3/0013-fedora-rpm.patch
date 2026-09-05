@@ -1,4 +1,4 @@
-From bbd1a1149b46190561da863b24f9db9c17e8cb52 Mon Sep 17 00:00:00 2001
+From e354742d830f728b5e80bdc6b608b2d66c64aa36 Mon Sep 17 00:00:00 2001
 From: Adel KARA SLIMANE <adel.ks@zegrapher.com>
 Date: Sat, 7 Feb 2026 18:52:48 +0100
 Subject: [PATCH] package: kernel.spec: various RPM fixes
@@ -8,12 +8,12 @@ Subject: [PATCH] package: kernel.spec: various RPM fixes
  1 file changed, 21 insertions(+), 1 deletion(-)
 
 diff --git a/scripts/package/kernel.spec b/scripts/package/kernel.spec
-index 0f1c8de1bd95..c569b69274b3 100644
+index 46e80970f..b00632533 100644
 --- a/scripts/package/kernel.spec
 +++ b/scripts/package/kernel.spec
-@@ -5,6 +5,22 @@
- %define __spec_install_post /usr/lib/rpm/brp-compress || :
- %define debug_package %{nil}
+@@ -3,6 +3,22 @@
+ %{!?make: %define make make}
+ %define makeflags %{?_smp_mflags} ARCH=%{ARCH}
  
 +# Opt out of a lot of Fedora hardening flags etc...
 +# See https://src.fedoraproject.org/rpms/redhat-rpm-config//blob/rawhide/f/buildflags.md
@@ -34,7 +34,7 @@ index 0f1c8de1bd95..c569b69274b3 100644
  Name: kernel
  Summary: The Linux Kernel
  Version: %(echo %{KERNELRELEASE} | sed -e 's/-/_/g')
-@@ -16,6 +32,7 @@ URL: https://www.kernel.org
+@@ -14,6 +30,7 @@ URL: https://www.kernel.org
  Source0: linux.tar.gz
  Source1: config
  Source2: diff.patch
@@ -42,7 +42,7 @@ index 0f1c8de1bd95..c569b69274b3 100644
  Provides: kernel-%{KERNELRELEASE}
  BuildRequires: bc binutils bison dwarves
  BuildRequires: (elfutils-devel or libdw-devel)
-@@ -28,8 +45,8 @@ The Linux Kernel, the operating system core itself
+@@ -26,8 +43,8 @@ The Linux Kernel, the operating system core itself
  %package headers
  Summary: Header files for the Linux kernel for use by glibc
  Group: Development/System
@@ -52,7 +52,7 @@ index 0f1c8de1bd95..c569b69274b3 100644
  %description headers
  Kernel-headers includes the C header files that specify the interface
  between the Linux kernel and userspace libraries and programs.  The
-@@ -40,6 +49,9 @@ glibc package.
+@@ -39,6 +56,9 @@ glibc package.
  %package devel
  Summary: Development package for building kernel modules to match the %{version} kernel
  Group: System Environment/Kernel
@@ -62,7 +62,6 @@ index 0f1c8de1bd95..c569b69274b3 100644
  AutoReqProv: no
  %description -n kernel-devel
  This package provides kernel headers and makefiles sufficient to build modules
-
 -- 
-2.53.0
+2.55.0
 
