@@ -1853,18 +1853,26 @@ fi
 
   if [[ "$_modprobeddb" = "true" || "$_kernel_on_diet" == "true" ]]; then
     msg2 "Using modprobed-db"
-    if [ -f "$_where"/"$_modprobeddb_db_path" ]; then
+    if [[ -n "$_modprobeddb_db_path" && -f "$_where/$_modprobeddb_db_path" ]]; then
       _modprobeddb_db_path="$_where"/"$_modprobeddb_db_path"
+    fi
+    if [[ -z "$_modprobeddb_db_path" ]]; then
+      for _db_path in "${XDG_DATA_HOME:-$HOME/.local/share}/modprobed-db/modprobed.db" "${XDG_CONFIG_HOME:-$HOME/.config}/modprobed.db"; do
+        if [[ -f "$_db_path" ]]; then
+          _modprobeddb_db_path="$_db_path"
+          break
+        fi
+      done
     fi
     if [ "$_kernel_on_diet" == "true" ]; then
       msg2 "Using linux-tkg diet db"
       _modprobeddb_db_path="$_where/minimal-modprobed.db"
     fi
-    if [ ! -f $_modprobeddb_db_path ]; then
+    if [[ ! -f "$_modprobeddb_db_path" ]]; then
       _die "modprobed-db database not found"
     fi
 
-    yes "" | make LSMOD=$_modprobeddb_db_path localmodconfig ${llvm_opt}
+    yes "" | make LSMOD="$_modprobeddb_db_path" localmodconfig ${llvm_opt}
   fi
 
   if [ true = "$_config_fragments" ]; then
