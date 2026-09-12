@@ -1,0 +1,398 @@
+From 67cbdcff64c602dc5bf25010ccd7666e1409294d Mon Sep 17 00:00:00 2001
+From: Kairui Song <kasong@tencent.com>
+Date: Tue, 28 Apr 2026 02:06:54 +0800
+Subject: [PATCH 1/5] mm/mglru: relocate the LRU scan batch limit to callers
+
+Same as active / inactive LRU, MGLRU isolates and scans folios in batches.
+The batch split is done hidden deep in the helper, which makes the code
+harder to follow.  The helper's arguments are also confusing since callers
+usually request more folios than the batch size, so the helper almost
+never processes the full requested amount.
+
+Move the batch splitting into the top loop to make it cleaner, there
+should be no behavior change.
+
+Reviewed-by: Axel Rasmussen <axelrasmussen@google.com>
+Reviewed-by: Baolin Wang <baolin.wang@linux.alibaba.com>
+Reviewed-by: Barry Song <baohua@kernel.org>
+Reviewed-by: Chen Ridong <chenridong@huaweicloud.com>
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index e55eb94e5..72efd1aab 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4979,7 +4979,7 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 			should_age = true;
+ 		}
+ 
+-		nr_batch = min(nr_to_scan, MIN_LRU_BATCH);
++		nr_batch = min(nr_to_scan, MAX_LRU_BATCH);
+ 		delta = evict_folios(nr_batch, lruvec, sc, swappiness);
+ 		if (!delta)
+ 			break;
+-- 
+2.55.0
+
+
+From 1fce0c5f23f597f0a6ed88e59a072cd2eb760786 Mon Sep 17 00:00:00 2001
+From: Kairui Song <kasong@tencent.com>
+Date: Tue, 28 Apr 2026 02:06:55 +0800
+Subject: [PATCH 2/5] mm/mglru: restructure the reclaim loop
+
+The current loop will calculate the scan number on each iteration.  The
+number of folios to scan is based on the LRU length, with some unclear
+behaviors, e.g, the scan number is only shifted by reclaim priority when
+aging is not needed or when at the default priority, and it couples the
+number calculation with aging and rotation.
+
+Adjust, simplify it, and decouple aging and rotation.  Just calculate the
+scan number for once at the beginning of the reclaim, always respect the
+reclaim priority, and make the aging and rotation more explicit.
+
+This slightly changes how aging and offline memcg reclaim works:
+Previously, aging was skipped at DEF_PRIORITY even when eviction was no
+longer possible, so the reclaimer wasted an iteration until the priority
+escalated.  Now aging runs immediately whenever it is needed to make
+progress; the DEF_PRIORITY skip only applies when eviction is still
+viable.  This may avoid wasted iterations that over-reclaim slab and break
+reclaim balance in multi-cgroup setups.
+
+Similar for offline memcg.  Previously, offline memcg wouldn't be aged
+unless it didn't have any evictable folios.  Now, we might age it if it
+has only 3 generations, which should be fine.  On one hand, offline memcg
+might still hold long-term folios, and in fact, a long-existing offline
+memcg must be pinned by some long-term folios like shmem.  These folios
+might be used by other memcg, so aging them as ordinary memcg seems
+correct.  Besides, aging enables further reclaim of an offlined memcg,
+which will certainly happen if we keep shrinking it.  And offline memcg
+might soon be no longer an issue with reparenting.
+
+Overall, the memcg LRU rotation, as described in mmzone.h, remains the
+same.
+
+Note that because the scan budget is now pinned at loop entry, tiny
+lruvec might skip this reclaim pass, also skipping aging, which could be
+beneficial as aging is not helpful since it will still be un-reclaimable
+after aging. Reclaim will go on as usual once priority escalates.
+
+Reviewed-by: Axel Rasmussen <axelrasmussen@google.com>
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 12 +++---------
+ 1 file changed, 3 insertions(+), 9 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 72efd1aab..f4aa444c4 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4958,7 +4958,7 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
+  */
+ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ {
+-	bool need_rotate = false, should_age = false;
++	bool need_rotate = false;
+ 	long nr_batch, nr_to_scan;
+ 	int swappiness = get_swappiness(lruvec, sc);
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+@@ -4976,7 +4976,8 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		if (should_run_aging(lruvec, max_seq, sc, swappiness)) {
+ 			if (try_to_inc_max_seq(lruvec, max_seq, swappiness, false))
+ 				need_rotate = true;
+-			should_age = true;
++			/* stop scanning as it's low on cold folios */
++			break;
+ 		}
+ 
+ 		nr_batch = min(nr_to_scan, MAX_LRU_BATCH);
+@@ -4987,13 +4988,6 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		if (should_abort_scan(lruvec, sc))
+ 			break;
+ 
+-		/*
+-		 * Root reclaim needs rotation when low on cold folio for better
+-		 * fairness. Cgroup reclaim gets fairness from the iterator.
+-		 */
+-		if (root_reclaim(sc) && should_age)
+-			break;
+-
+ 		nr_to_scan -= delta;
+ 		cond_resched();
+ 	}
+-- 
+2.55.0
+
+
+From f9ff711d52aefb48b996e008e244679c2a825bb3 Mon Sep 17 00:00:00 2001
+From: Kairui Song <kasong@tencent.com>
+Date: Tue, 28 Apr 2026 02:06:58 +0800
+Subject: [PATCH 3/5] mm/mglru: use a smaller batch for reclaim
+
+With a fixed number to reclaim calculated at the beginning, making each
+following step smaller should reduce the lock contention and avoid
+over-aggressive reclaim of folios, as it will abort earlier when the
+number of folios to be reclaimed is reached.
+
+Reviewed-by: Axel Rasmussen <axelrasmussen@google.com>
+Reviewed-by: Chen Ridong <chenridong@huaweicloud.com>
+Reviewed-by: Baolin Wang <baolin.wang@linux.alibaba.com>
+Reviewed-by: Barry Song <baohua@kernel.org>
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index f4aa444c4..f8fcdb2aa 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4980,7 +4980,7 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 			break;
+ 		}
+ 
+-		nr_batch = min(nr_to_scan, MAX_LRU_BATCH);
++		nr_batch = min(nr_to_scan, MIN_LRU_BATCH);
+ 		delta = evict_folios(nr_batch, lruvec, sc, swappiness);
+ 		if (!delta)
+ 			break;
+-- 
+2.55.0
+
+
+From 79c5b5e4b832d70d44bb305b7a2c166036a08450 Mon Sep 17 00:00:00 2001
+From: Kairui Song <kasong@tencent.com>
+Date: Tue, 28 Apr 2026 02:06:59 +0800
+Subject: [PATCH 4/5] mm/mglru: don't abort scan immediately right after aging
+
+Right now, if eviction triggers aging, the reclaimer will abort.  This is
+not the optimal strategy for several reasons.
+
+Aborting the reclaim early wastes a reclaim cycle when under pressure, and
+for concurrent reclaim, if the LRU is under aging, all concurrent
+reclaimers might fail.  And if the age has just finished, new cold folios
+exposed by the aging are not reclaimed until the next reclaim iteration.
+
+What's more, the current aging trigger is quite lenient, having 3 gens
+with a reclaim priority lower than default will trigger aging, and blocks
+reclaiming from one memcg.  This wastes reclaim retry cycles easily.  And
+in the worst case, if the reclaim is making slower progress and all
+following attempts fail due to being blocked by aging, it triggers
+unexpected early OOM.
+
+And if a lruvec requires aging, it doesn't mean it's hot.  Instead, the
+lruvec could be idle for quite a while, and hence it might contain lots of
+cold folios to be reclaimed.
+
+While it's helpful to rotate memcg LRU after aging for global reclaim, as
+global reclaim fairness is coupled with the rotation in shrink_many, memcg
+fairness is instead handled by cgroup iteration in shrink_node_memcgs.
+So, for memcg level pressure, this abort is not the key part for keeping
+the fairness.  And in most cases, there is no need to age, and fairness
+must be achieved by upper-level reclaim control.
+
+So instead, just keep the scanning going unless one whole batch of folios
+failed to be isolated or enough folios have been scanned, which is
+triggered by evict_folios returning 0.  And only abort for global reclaim
+after one batch, so when there are fewer memcgs, progress is still made,
+and the fairness mechanism described above still works fine.
+
+And in most cases, the one more batch attempt for global reclaim might
+just be enough to satisfy what the reclaimer needs, hence improving global
+reclaim performance by reducing reclaim retry cycles.
+
+Rotation is still there after the reclaim is done, which still follows the
+comment in mmzone.h.  And fairness still looking good.
+
+Reviewed-by: Axel Rasmussen <axelrasmussen@google.com>
+Reviewed-by: Chen Ridong <chenridong@huaweicloud.com>
+Reviewed-by: Barry Song <baohua@kernel.org>
+Signed-off-by: Kairui Song <kasong@tencent.com>
+---
+ mm/vmscan.c | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index f8fcdb2aa..e55eb94e5 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4958,7 +4958,7 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
+  */
+ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ {
+-	bool need_rotate = false;
++	bool need_rotate = false, should_age = false;
+ 	long nr_batch, nr_to_scan;
+ 	int swappiness = get_swappiness(lruvec, sc);
+ 	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+@@ -4976,8 +4976,7 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		if (should_run_aging(lruvec, max_seq, sc, swappiness)) {
+ 			if (try_to_inc_max_seq(lruvec, max_seq, swappiness, false))
+ 				need_rotate = true;
+-			/* stop scanning as it's low on cold folios */
+-			break;
++			should_age = true;
+ 		}
+ 
+ 		nr_batch = min(nr_to_scan, MIN_LRU_BATCH);
+@@ -4988,6 +4987,13 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 		if (should_abort_scan(lruvec, sc))
+ 			break;
+ 
++		/*
++		 * Root reclaim needs rotation when low on cold folio for better
++		 * fairness. Cgroup reclaim gets fairness from the iterator.
++		 */
++		if (root_reclaim(sc) && should_age)
++			break;
++
+ 		nr_to_scan -= delta;
+ 		cond_resched();
+ 	}
+-- 
+2.55.0
+
+
+From 7d4bcdd76f00dbaff578df2bffe92453a279ae05 Mon Sep 17 00:00:00 2001
+From: Baolin Wang <baolin.wang@linux.alibaba.com>
+Date: Wed, 15 Jul 2026 14:33:03 +0800
+Subject: [PATCH 5/5] mm: mglru: promote mapped executable folios after first
+ usage
+
+Classical LRU protects mapped executable file folios through commit
+8cab4754d24a0 ("vmscan: make mapped executable pages the first class
+citizen") and commit c909e99364c8 ("vmscan: activate executable pages
+after first usage"), giving executable code a better chance to stay in
+memory, avoiding IO thrashing and improving workload performance.
+
+However, MGLRU's protection of mapped executable file folios is less
+reliable. Although shrink_folio_list() checks references, the access flag
+of mapped executable file folios may have already been checked and
+cleared by lru_gen_look_around() or walk_mm(). Additionally,
+folio_update_gen() only sets the 'PG_referenced' flag for mapped executable
+file folios, which causes shrink_folio_list() to ignore the first usage
+of these mapped executable file folios and reclaim them.
+
+Follow the classical LRU's logic, promoting mapped executable file folios
+after their first usage in folio_update_gen(), giving executable code a
+better chance to stay in memory.
+
+On my 32-core Arm machine, with the memcg limit set to 2G, running
+'make -j32' to build kernel showed some improvement in sys time.
+
+base			patched
+9248.543s		7861.579s
+
+Signed-off-by: Baolin Wang <baolin.wang@linux.alibaba.com>
+---
+ mm/vmscan.c | 25 +++++++++++++++----------
+ 1 file changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index e55eb94e5..e2f613308 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -3195,7 +3195,7 @@ static bool positive_ctrl_err(struct ctrl_pos *sp, struct ctrl_pos *pv)
+  ******************************************************************************/
+ 
+ /* promote pages accessed through page tables */
+-static int folio_update_gen(struct folio *folio, int gen)
++static int folio_update_gen(struct vm_area_struct *vma, struct folio *folio, int gen)
+ {
+ 	unsigned long new_flags, old_flags = READ_ONCE(folio->flags.f);
+ 
+@@ -3203,10 +3203,15 @@ static int folio_update_gen(struct folio *folio, int gen)
+ 
+ 	/* see the comment on LRU_REFS_FLAGS */
+ 	if (!folio_test_referenced(folio) && !folio_test_workingset(folio)) {
++		/* Activate file-backed executable folios after first usage. */
++		if (vma_test(vma, VMA_EXEC_BIT) && folio_is_file_lru(folio))
++			goto promote;
++
+ 		set_mask_bits(&folio->flags.f, LRU_REFS_MASK, BIT(PG_referenced));
+ 		return -1;
+ 	}
+ 
++promote:
+ 	do {
+ 		/* lru_gen_del_folio() has isolated this page? */
+ 		if (!(old_flags & LRU_GEN_MASK))
+@@ -3433,8 +3438,8 @@ static bool suitable_to_scan(int total, int young)
+ 	return young * n >= total;
+ }
+ 
+-static void walk_update_folio(struct lru_gen_mm_walk *walk, struct folio *folio,
+-			      int new_gen, bool dirty)
++static void walk_update_folio(struct lru_gen_mm_walk *walk, struct vm_area_struct *vma,
++		struct folio *folio, int new_gen, bool dirty)
+ {
+ 	int old_gen;
+ 
+@@ -3447,7 +3452,7 @@ static void walk_update_folio(struct lru_gen_mm_walk *walk, struct folio *folio,
+ 		folio_mark_dirty(folio);
+ 
+ 	if (walk) {
+-		old_gen = folio_update_gen(folio, new_gen);
++		old_gen = folio_update_gen(vma, folio, new_gen);
+ 		if (old_gen >= 0 && old_gen != new_gen)
+ 			update_batch_size(walk, folio, old_gen, new_gen);
+ 	} else if (lru_gen_set_refs(folio)) {
+@@ -3523,7 +3528,7 @@ static bool walk_pte_range(pmd_t *pmd, unsigned long start, unsigned long end,
+ 			continue;
+ 
+ 		if (last != folio) {
+-			walk_update_folio(walk, last, gen, dirty);
++			walk_update_folio(walk, args->vma, last, gen, dirty);
+ 
+ 			last = folio;
+ 			dirty = false;
+@@ -3536,7 +3541,7 @@ static bool walk_pte_range(pmd_t *pmd, unsigned long start, unsigned long end,
+ 		walk->mm_stats[MM_LEAF_YOUNG] += nr;
+ 	}
+ 
+-	walk_update_folio(walk, last, gen, dirty);
++	walk_update_folio(walk, args->vma, last, gen, dirty);
+ 	last = NULL;
+ 
+ 	if (i < PTRS_PER_PTE && get_next_vma(PMD_MASK, PAGE_SIZE, args, &start, &end))
+@@ -3614,7 +3619,7 @@ static void walk_pmd_range_locked(pud_t *pud, unsigned long addr, struct vm_area
+ 			goto next;
+ 
+ 		if (last != folio) {
+-			walk_update_folio(walk, last, gen, dirty);
++			walk_update_folio(walk, vma, last, gen, dirty);
+ 
+ 			last = folio;
+ 			dirty = false;
+@@ -3628,7 +3633,7 @@ static void walk_pmd_range_locked(pud_t *pud, unsigned long addr, struct vm_area
+ 		i = i > MIN_LRU_BATCH ? 0 : find_next_bit(bitmap, MIN_LRU_BATCH, i) + 1;
+ 	} while (i <= MIN_LRU_BATCH);
+ 
+-	walk_update_folio(walk, last, gen, dirty);
++	walk_update_folio(walk, vma, last, gen, dirty);
+ 
+ 	lazy_mmu_mode_disable();
+ 	spin_unlock(ptl);
+@@ -4266,7 +4271,7 @@ bool lru_gen_look_around(struct page_vma_mapped_walk *pvmw, unsigned int nr)
+ 			continue;
+ 
+ 		if (last != folio) {
+-			walk_update_folio(walk, last, gen, dirty);
++			walk_update_folio(walk, vma, last, gen, dirty);
+ 
+ 			last = folio;
+ 			dirty = false;
+@@ -4278,7 +4283,7 @@ bool lru_gen_look_around(struct page_vma_mapped_walk *pvmw, unsigned int nr)
+ 		young += nr;
+ 	}
+ 
+-	walk_update_folio(walk, last, gen, dirty);
++	walk_update_folio(walk, vma, last, gen, dirty);
+ 
+ 	lazy_mmu_mode_disable();
+ 
+-- 
+2.55.0
+

@@ -1,0 +1,90 @@
+From a3ea8ddb93ccd93b1fecbbb24cebd0a61fdb07c6 Mon Sep 17 00:00:00 2001
+From: Frogging-Family
+From: damachine <damachin3@proton.me>
+Date: Mon, 27 Apr 2026 21:14:59 +0200
+Subject: [PATCH] nvidia open-kernel: dsc/dp fixes
+
+Patches against the latest NVIDIA open-gpu-kernel-modules release:
+- src/common/displayport/src/dp_wardatabase.cpp: add Bigscreen Beyond VR
+  headset (ManufID 0x2709, ProdID 0x1234) to DP WAR database (4 lanes HBR2)
+- src/common/modeset/timing/nvt_dsc_pps.c: correct DSC RC parameter tables
+  to match VESA DSC 1.1 (9 fixes in minqp444_8b, maxqp444_8b, ofs_und8)
+
+Signed-off-by: damachine <damachin3@proton.me>
+
+---
+ src/common/displayport/src/dp_wardatabase.cpp | 13 +++++++++++++
+ src/common/modeset/timing/nvt_dsc_pps.c       | 18 +++++++++---------
+ 2 files changed, 22 insertions(+), 9 deletions(-)
+diff --git a/src/common/displayport/src/dp_wardatabase.cpp b/src/common/displayport/src/dp_wardatabase.cpp
+index 74daf1e..4fafb5f 100644
+--- a/src/common/displayport/src/dp_wardatabase.cpp
++++ b/src/common/displayport/src/dp_wardatabase.cpp
+@@ -547,6 +547,19 @@ void Edid::applyEdidWorkArounds(NvU32 warFlag, const DpMonitorDenylistData *pDen
+             }
+             break;
+ 
++        // Bigscreen Beyond VR headset
++        case 0x2709:
++            if (ProductID == 0x1234)
++            {
++                //
++                // The Bigscreen Beyond connects via a link box (DP -> optical).
++                // Force 4 lanes HBR2 to ensure sufficient bandwidth.
++                //
++                this->WARFlags.forceMaxLinkConfig = true;
++                DP_PRINTF(DP_NOTICE, "DP-WAR> Force maximum link config for Bigscreen Beyond VR headset.");
++            }
++            break;
++
+         // CMN
+         case 0xAE0D:
+             if (ProductID == 0x1747)
+diff --git a/src/common/modeset/timing/nvt_dsc_pps.c b/src/common/modeset/timing/nvt_dsc_pps.c
+index ce6d6a7..d100c57 100644
+--- a/src/common/modeset/timing/nvt_dsc_pps.c
++++ b/src/common/modeset/timing/nvt_dsc_pps.c
+@@ -187,12 +187,12 @@ static const NvU8 minqp444_8b[15][37]={
+        ,{ 5, 5, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0}
+        ,{ 5, 5, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0}
+        ,{ 5, 5, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 0}
+-       ,{ 6, 5, 5, 4, 4, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 0}
++       ,{ 6, 5, 5, 4, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0, 0}  // [9] col4: 4->3 (VESA DSC 1.1)
+        ,{ 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 3, 3, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 0}
+        ,{ 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1, 0}
+        ,{ 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 1, 1, 1, 1, 0}
+-       ,{ 9, 9, 9, 9, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 1, 1, 1}
+-       ,{14,14,13,13,12,12,12,12,11,11,10,10,10,10, 9, 9, 9, 8, 8, 8, 7, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 3, 3, 3, 3}
++       ,{ 9, 9, 9, 9, 7, 8, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 1, 1, 1}  // [13] col4: 8->7 (VESA DSC 1.1)
++       ,{14,14,13,13,13,12,12,12,11,11,10,10,10,10, 9, 9, 9, 8, 8, 8, 7, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 3, 3, 3, 3}  // [14] col4: 12->13 (VESA DSC 1.1)
+ };
+ 
+ static const NvU8 maxqp444_8b[15][37]={
+@@ -206,11 +206,11 @@ static const NvU8 maxqp444_8b[15][37]={
+        ,{10,10, 9, 9, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 6, 5, 5, 4, 4, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1}
+        ,{11,11,10,10, 9, 9, 9, 9, 9, 9, 8, 8, 8, 7, 7, 6, 6, 5, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1}
+        ,{12,11,11,10,10,10, 9, 9, 9, 9, 9, 9, 9, 8, 8, 7, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1}
+-       ,{12,12,11,11,10,10,10,10,10,10, 9, 9, 9, 8, 8, 7, 7, 6, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 1}
+-       ,{12,12,12,11,11,11,10,10,10,10, 9, 9, 9, 9, 8, 8, 8, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1}
+-       ,{12,12,12,12,11,11,11,11,11,10,10, 9, 9, 9, 8, 8, 8, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1}
+-       ,{13,13,13,13,12,12,11,11,11,11,10,10,10,10, 9, 9, 8, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2}
+-       ,{15,15,14,14,13,13,13,13,12,12,11,11,11,11,10,10,10, 9, 9, 9, 8, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 5, 4, 4, 4, 4}
++       ,{12,12,11,11,11,10,10,10,10,10, 9, 9, 9, 8, 8, 7, 7, 6, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 1}  // [10] col4: 10->11 (VESA DSC 1.1)
++       ,{12,12,12,11,12,11,10,10,10,10, 9, 9, 9, 9, 8, 8, 8, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1}  // [11] col4: 11->12 (VESA DSC 1.1)
++       ,{12,12,12,12,13,11,11,11,11,10,10, 9, 9, 9, 8, 8, 8, 7, 7, 7, 6, 6, 5, 5, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 1}  // [12] col4: 11->13 (VESA DSC 1.1)
++       ,{13,13,13,13,13,12,11,11,11,11,10,10,10,10, 9, 9, 8, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 4, 4, 4, 4, 3, 3, 2, 2, 2}  // [13] col4: 12->13 (VESA DSC 1.1)
++       ,{15,15,14,14,15,13,13,13,12,12,11,11,11,11,10,10,10, 9, 9, 9, 8, 8, 8, 8, 7, 7, 6, 6, 6, 6, 5, 5, 5, 4, 4, 4, 4}  // [14] col4: 13->15 (VESA DSC 1.1)
+ };
+ 
+ static const NvU8 minqp444_10b[15][49]={
+@@ -934,7 +934,7 @@ DSC_PpsCalcRcParam
+             //else
+             {
+                 const NvU32 ofs_und6[] = { 0, -2, -2, -4, -6, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12 };
+-                const NvU32 ofs_und8[] = { 2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12 };
++                const NvU32 ofs_und8[] = { 2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12 };  // [11]: -10->-12 (VESA DSC 1.1)
+                 const NvU32 ofs_und12[] = { 2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12 };
+                 const NvU32 ofs_und15[] = { 10, 8, 6, 4, 2, 0, -2, -4, -6, -8, -10, -10, -12, -12, -12 };
+ 
+-- 
+2.54.0

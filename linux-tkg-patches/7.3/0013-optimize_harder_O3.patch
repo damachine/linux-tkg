@@ -1,4 +1,4 @@
-From 402a66a01876617f084aabf237b5e439ef543acb Mon Sep 17 00:00:00 2001
+From ffd6767d7e4879322a6c85888eaa111176f987be Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Christian=20K=C3=BChn?= <damachin3@proton.me>
 Date: Wed, 15 Apr 2026 21:55:26 +0200
 Subject: [PATCH] Add O3 compiler optimization options
@@ -30,10 +30,10 @@ Signed-off-by: Christian Kühn <damachin3@proton.me>
  3 files changed, 16 insertions(+), 6 deletions(-)
 
 diff --git a/Makefile b/Makefile
-index bfb47ad8c..ee931c6b5 100644
+index 4ad67b737..9eb4ba864 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -929,16 +929,25 @@ KBUILD_CFLAGS	+= -fno-delete-null-pointer-checks
+@@ -932,11 +932,20 @@ KBUILD_CFLAGS	+= -fno-delete-null-pointer-checks
  ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE
  KBUILD_CFLAGS += -O2
  KBUILD_RUSTFLAGS += -Copt-level=2
@@ -54,12 +54,7 @@ index bfb47ad8c..ee931c6b5 100644
  # Always set `debug-assertions` and `overflow-checks` because their default
  # depends on `opt-level` and `debug-assertions`, respectively.
  KBUILD_RUSTFLAGS += -Cdebug-assertions=$(if $(CONFIG_RUST_DEBUG_ASSERTIONS),y,n)
- KBUILD_RUSTFLAGS += -Coverflow-checks=$(if $(CONFIG_RUST_OVERFLOW_CHECKS),y,n)
- 
- # Tell gcc to never replace conditional load with a non-conditional one
- ifdef CONFIG_CC_IS_GCC
- # gcc-10 renamed --param=allow-store-data-races=0 to
-@@ -1154,11 +1179,6 @@ KBUILD_CFLAGS	+= -fno-strict-overflow
+@@ -1168,11 +1177,6 @@ KBUILD_CFLAGS	+= -fno-strict-overflow
  # Make sure -fstack-check isn't enabled (like gentoo apparently did)
  KBUILD_CFLAGS  += -fno-stack-check
  
@@ -85,10 +80,10 @@ index 598f17810..a2ef052ce 100644
  KBUILD_RUSTFLAGS += -Ctarget-feature=-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-avx2
  
 diff --git a/init/Kconfig b/init/Kconfig
-index 5230d4879..b57b6ac83 100644
+index 8583d9f06..94168b03d 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
-@@ -1613,6 +1621,12 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
+@@ -1661,6 +1661,12 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
  	  with the "-O2" compiler flag for best performance and most
  	  helpful compile-time warnings.
  
@@ -103,3 +98,4 @@ index 5230d4879..b57b6ac83 100644
  	help
 -- 
 2.55.0
+
