@@ -1,0 +1,18 @@
+# LLVM Kernel Control Flow Integrity (KCFI).
+#
+# Public options:
+#   _llvm_kcfi="false"
+
+[[ -v _llvm_kcfi ]] || _llvm_kcfi="false"
+
+_config_after_lto_kcfi() {
+  if [[ "$_llvm_kcfi" =~ ^(true|yes|1)$ ]]; then
+    if [ "$_compiler_name" = "-llvm" ] && [ $_kver -ge 601 ]; then
+      _enable CFI CFI_CLANG CFI_AUTO_DEFAULT
+    elif [ "$_compiler_name" != "-llvm" ]; then
+      warning "KCFI (_llvm_kcfi=\"true\") requires the LLVM compiler (_compiler=\"llvm\") - skipping"
+    else
+      warning "KCFI (_llvm_kcfi=\"true\") requires kernel >= 6.1 - skipping"
+    fi
+  fi
+}

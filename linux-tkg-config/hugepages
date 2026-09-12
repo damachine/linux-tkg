@@ -1,0 +1,32 @@
+# Transparent Hugepages.
+#
+# Public options:
+#   _hugepage=""
+
+[[ -v _hugepage ]] || _hugepage=""
+
+_config_after_lto_hugepages() {
+  if [ -n "$_hugepage" ]; then
+    case "$_hugepage" in
+      always)
+        _enable "TRANSPARENT_HUGEPAGE" "TRANSPARENT_HUGEPAGE_ALWAYS"
+        _disable "TRANSPARENT_HUGEPAGE_MADVISE" "TRANSPARENT_HUGEPAGE_NEVER"
+        ;;
+      madvise)
+        _enable "TRANSPARENT_HUGEPAGE" "TRANSPARENT_HUGEPAGE_MADVISE"
+        _disable "TRANSPARENT_HUGEPAGE_ALWAYS" "TRANSPARENT_HUGEPAGE_NEVER"
+        ;;
+      never)
+        _enable "TRANSPARENT_HUGEPAGE" "TRANSPARENT_HUGEPAGE_NEVER"
+        _disable "TRANSPARENT_HUGEPAGE_ALWAYS" "TRANSPARENT_HUGEPAGE_MADVISE"
+        ;;
+      *)
+        warning "Transparent Hugepages value '${_hugepage}' is invalid; expected 'always', 'madvise' or 'never'"
+        if [ "$_nofallback" = "true" ]; then
+          _die "Since _nofallback is enabled, exiting..."
+        fi
+        warning "Keeping the current Transparent Hugepages config"
+        ;;
+    esac
+  fi
+}
