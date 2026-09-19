@@ -1,0 +1,184 @@
+# LLVM BOLT feature.
+#
+# Public options:
+#   _llvm_bolt="false"
+#   _llvm_bolt_profile="~/.config/frogminer/tkg.fdata"
+#
+# Build flow:
+#   1. Set _llvm_bolt="pass1" and boot the profiling kernel.
+#   2. Record perf data and convert it with perf2bolt.
+#   3. Set _llvm_bolt="pass2" and rebuild the exact same kernel with the profile.
+
+[[ -v _llvm_bolt ]] || _llvm_bolt="false"
+[[ -v _llvm_bolt_profile ]] || _llvm_bolt_profile="~/.config/frogminer/tkg.fdata"
+
+_bolt_enabled() {
+  [[ "${_llvm_bolt,,}" =~ ^(pass1|pass2)$ ]]
+}
+
+_bolt_supported() {
+  [[ "${_basekernel:-}" =~ ^7\.(1|2)$ ]]
+}
+
+_bolt_preflight() {
+  local _resolved_path=""
+  local _bolt_binary="${LLVM_BOLT:-llvm-bolt}"
+
+  if [[ -z "$_llvm_bolt" ]]; then
+    plain "Which BOLT phase do you want to build?"
+    _bolt_prompt_array=(
+      "Disable BOLT (default)"
+      "Pass 1: build a profiling kernel"
+      "Pass 2: optimize vmlinux with an existing profile"
+    )
+    _bolt_value_array=("false" "pass1" "pass2")
+
+    _default_index="0"
+    _prompt_from_array "${_bolt_prompt_array[@]}"
+    _llvm_bolt="${_bolt_value_array[$_selected_index]}"
+  else
+    _llvm_bolt="${_llvm_bolt,,}"
+  fi
+
+  case "$_llvm_bolt" in
+    false)
+      return 0
+      ;;
+    pass1|pass2)
+      ;;
+    true|yes|y|1)
+      _die "BOLT: _llvm_bolt=\"$_llvm_bolt\" is not supported. Use \"pass1\" or \"pass2\"."
+      ;;
+    *)
+      _die "Invalid _llvm_bolt value \"$_llvm_bolt\". Use \"false\", \"pass1\", or \"pass2\"."
+      ;;
+  esac
+
+  if ! _bolt_supported; then
+    if [[ "${_nofallback:-false}" == "true" ]]; then
+      _die "BOLT is currently available for x86-64 kernel 7.1 and 7.2."
+    else
+      warning "BOLT is currently available for x86-64 kernel 7.1 and 7.2 - disabling BOLT"
+      _llvm_bolt="false"
+      return 0
+    fi
+  fi
+
+  if [[ "${_llvm_autofdo:-false}" == "pass1" || "${_llvm_propeller:-false}" == "pass1" ]]; then
+    if [[ "${_nofallback:-false}" == "true" ]]; then
+      _die "BOLT must profile the final compiler-optimized kernel, not another feature's Pass 1 build."
+    else
+      warning "BOLT must profile the final compiler-optimized kernel - disabling BOLT for this Pass 1 build"
+      _llvm_bolt="false"
+      return 0
+    fi
+  fi
+
+  if [[ -n "$_llvm_bolt_profile" ]]; then
+    _resolved_path="${_llvm_bolt_profile/#\~/$HOME}"
+  fi
+
+  if [[ "$_llvm_bolt" == "pass2" ]]; then
+    if [[ -z "$_resolved_path" || ! -f "$_resolved_path" ]]; then
+      if [[ "${_nofallback:-false}" == "true" ]]; then
+        _die "BOLT: Pass 2 requires an existing profile at ${_resolved_path:-<empty path>}."
+      else
+        warning "BOLT: Pass 2 profile not found at ${_resolved_path:-<empty path>} - disabling BOLT"
+        _llvm_bolt="false"
+        return 0
+      fi
+    fi
+    _llvm_bolt_profile="$_resolved_path"
+  fi
+
+  if [[ "$_compiler" != "llvm" ]]; then
+    if [[ "${_nofallback:-false}" == "true" ]]; then
+      _die "BOLT (_llvm_bolt=\"$_llvm_bolt\") requires the LLVM compiler (_compiler=\"llvm\")."
+    else
+      plain "BOLT requires Clang/LLVM. Would you like to use it for this build?"
+      _compiler_array_text=(
+        "Yes: switch to Clang/LLVM and keep BOLT enabled"
+        "No: keep current compiler selection and disable BOLT"
+      )
+      _compiler_array=("llvm" "keep")
+
+      _default_index="0"
+      _prompt_from_array "${_compiler_array_text[@]}"
+
+      if [[ "${_compiler_array[$_selected_index]}" == "llvm" ]]; then
+        _compiler="llvm"
+      else
+        warning "Disabling BOLT because LLVM was not selected"
+        _llvm_bolt="false"
+        return 0
+      fi
+    fi
+  fi
+
+  if [[ "$_llvm_bolt" == "pass2" ]] && ! command -v "$_bolt_binary" >/dev/null 2>&1; then
+    if [[ "${_nofallback:-false}" == "true" ]]; then
+      _die "BOLT: Pass 2 requires $_bolt_binary."
+    else
+      warning "BOLT executable not found: $_bolt_binary - disabling BOLT"
+      _llvm_bolt="false"
+      return 0
+    fi
+  fi
+
+  if [[ "$_llvm_bolt" == "pass1" ]]; then
+    if [[ "${_debugdisable:-false}" == "true" ]]; then
+      _debugdisable="false"
+      msg2 "BOLT: Pass 1 enabled (forcing _debugdisable=\"false\" for profiling)"
+    fi
+    if [[ "${_STRIP:-false}" == "true" ]]; then
+      _STRIP="false"
+      msg2 "BOLT: Pass 1 enabled (forcing _STRIP=\"false\" for profiling)"
+    else
+      msg2 "BOLT: Pass 1 enabled"
+    fi
+  else
+    msg2 "BOLT: Pass 2 enabled (using profile $_llvm_bolt_profile)"
+  fi
+}
+
+_bolt_finalize_compiler() {
+  if _bolt_enabled && [[ -n "$_llvm_bolt_profile" ]]; then
+    _llvm_bolt_profile="${_llvm_bolt_profile/#\~/$HOME}"
+  fi
+
+  echo -e "_llvm_bolt='$_llvm_bolt'\n_llvm_bolt_profile='$_llvm_bolt_profile'\n_STRIP='$_STRIP'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+}
+
+_staging_patches_bolt() {
+  _bolt_enabled || return 0
+
+  tkgpatch="$srcdir/0016-bolt.patch"
+  [[ -e "$tkgpatch" ]] || _die "BOLT patch is unavailable for kernel ${_basekernel}."
+  _msg="Applying LLVM BOLT support"
+  _tkg_patcher
+}
+
+_config_after_lto_bolt() {
+  if [[ "$_compiler_name" == "-llvm" ]] && _bolt_enabled; then
+    _enable BOLT_CLANG
+  else
+    _disable BOLT_CLANG
+  fi
+}
+
+_config_after_update_bolt() {
+  if _bolt_enabled && ! grep -q '^CONFIG_BOLT_CLANG=y$' .config; then
+    _die "BOLT could not enable CONFIG_BOLT_CLANG. x86-64 and Clang are required."
+  fi
+}
+
+_build_make_flags_bolt() {
+  [[ "$_llvm_bolt" == "pass2" ]] || return 0
+
+  if [[ -z "$_llvm_bolt_profile" || ! -f "$_llvm_bolt_profile" ]]; then
+    _die "BOLT: Pass 2 profile is missing: ${_llvm_bolt_profile:-<empty path>}"
+  fi
+
+  msg2 "BOLT: using profile ${_llvm_bolt_profile}" >&2
+  printf '%s\n' "KERNEL_BOLT_PROFILE=${_llvm_bolt_profile}"
+}
