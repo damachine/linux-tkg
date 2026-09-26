@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From c87e01fbeb27ae7b54b605f140839e320c59f29f Mon Sep 17 00:00:00 2001
 From: Arjan van de Ven <arjan@linux.intel.com>
 Date: Mon, 14 Mar 2016 11:10:58 -0600
-Subject: [PATCH] pci pme wakeups
+Subject: [PATCH 1/5] pci pme wakeups
 
 Reduce wakeups for PME checks, which are a workaround for miswired
 boards (sadly, too many of them) in laptops.
@@ -10,36 +10,37 @@ boards (sadly, too many of them) in laptops.
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
-index c9338f9..6974fbf 100644
+index b2879a6be..b76446ea5 100644
 --- a/drivers/pci/pci.c
 +++ b/drivers/pci/pci.c
-@@ -62,7 +62,7 @@ struct pci_pme_device {
+@@ -65,7 +65,7 @@ struct pci_pme_device {
  	struct pci_dev *dev;
  };
  
 -#define PME_TIMEOUT 1000 /* How long between PME checks */
 +#define PME_TIMEOUT 4000 /* How long between PME checks */
  
- static void pci_dev_d3_sleep(struct pci_dev *dev)
- {
+ /*
+  * Following exit from Conventional Reset, devices must be ready within 1 sec
 -- 
-https://clearlinux.org
+2.55.0
 
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+
+From 1aad28d1ea5ef5f81cdbd16a983dab508efe4499 Mon Sep 17 00:00:00 2001
 From: Arjan van de Ven <arjan@linux.intel.com>
 Date: Fri, 6 Jan 2017 15:34:09 +0000
-Subject: [PATCH] ipv4/tcp: allow the memory tuning for tcp to go a little
+Subject: [PATCH 2/5] ipv4/tcp: allow the memory tuning for tcp to go a little
  bigger than default
 
 ---
- net/ipv4/tcp.c | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
+ net/ipv4/tcp.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
-index 30c1142..4345075 100644
+index b4237d0e9..881f9fdfe 100644
 --- a/net/ipv4/tcp.c
 +++ b/net/ipv4/tcp.c
-@@ -5226,7 +5226,7 @@ void __init tcp_init(void)
+@@ -5361,7 +5361,7 @@ void __init tcp_init(void)
  	tcp_init_mem();
  	/* Set per-socket limits to no more than 1/128 the pressure threshold */
  	limit = nr_free_buffer_pages() << (PAGE_SHIFT - 7);
@@ -49,12 +50,13 @@ index 30c1142..4345075 100644
  
  	init_net.ipv4.sysctl_tcp_wmem[0] = PAGE_SIZE;
 -- 
-https://clearlinux.org
+2.55.0
 
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+
+From 280b57bc55b991b6593aaf3ca563e531940fa7cf Mon Sep 17 00:00:00 2001
 From: Arjan van de Ven <arjan@linux.intel.com>
 Date: Sun, 18 Feb 2018 23:35:41 +0000
-Subject: [PATCH] locking: rwsem: spin faster
+Subject: [PATCH 3/5] locking: rwsem: spin faster
 
 tweak rwsem owner spinning a bit
 ---
@@ -62,18 +64,18 @@ tweak rwsem owner spinning a bit
  1 file changed, 3 insertions(+), 1 deletion(-)
 
 diff --git a/kernel/locking/rwsem.c b/kernel/locking/rwsem.c
-index f11b9bd..1bbfcc1 100644
+index b9c180ac1..e4d7c04e3 100644
 --- a/kernel/locking/rwsem.c
 +++ b/kernel/locking/rwsem.c
-@@ -717,6 +717,7 @@ rwsem_spin_on_owner(struct rw_semaphore *sem, unsigned long nonspinnable)
+@@ -770,6 +770,7 @@ rwsem_spin_on_owner(struct rw_semaphore *sem)
  	struct task_struct *new, *owner;
  	unsigned long flags, new_flags;
  	enum owner_state state;
 +	int i = 0;
  
- 	owner = rwsem_owner_flags(sem, &flags);
- 	state = rwsem_owner_state(owner, flags, nonspinnable);
-@@ -750,7 +751,8 @@ rwsem_spin_on_owner(struct rw_semaphore *sem, unsigned long nonspinnable)
+ 	lockdep_assert_preemption_disabled();
+ 
+@@ -806,7 +807,8 @@ rwsem_spin_on_owner(struct rw_semaphore *sem)
  			break;
  		}
  
@@ -81,15 +83,16 @@ index f11b9bd..1bbfcc1 100644
 +		if (i++ > 1000)
 +			cpu_relax();
  	}
- 	rcu_read_unlock();
  
+ 	return state;
 -- 
-https://clearlinux.org
+2.55.0
 
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+
+From 632f5d189a766134da3f2458adc8af6d0413846d Mon Sep 17 00:00:00 2001
 From: Arjan van de Ven <arjan@linux.intel.com>
 Date: Thu, 2 Jun 2016 23:36:32 -0500
-Subject: [PATCH] initialize ata before graphics
+Subject: [PATCH 4/5] initialize ata before graphics
 
 ATA init is the long pole in the boot process, and its asynchronous.
 move the graphics init after it so that ata and graphics initialize
@@ -99,7 +102,7 @@ in parallel
  1 file changed, 7 insertions(+), 6 deletions(-)
 
 diff --git a/drivers/Makefile b/drivers/Makefile
-index b5749cf67044..a935f67eecf2 100644
+index 0841ea851..d7a39fabe 100644
 --- a/drivers/Makefile
 +++ b/drivers/Makefile
 @@ -64,14 +64,8 @@ obj-y				+= char/
@@ -133,12 +136,13 @@ index b5749cf67044..a935f67eecf2 100644
  obj-$(CONFIG_MTD)		+= mtd/
  obj-$(CONFIG_SPI)		+= spi/
 -- 
-https://clearlinux.org
+2.55.0
 
-From 48dc9669f8db68adc480ffc2698ed8204440e45b Mon Sep 17 00:00:00 2001
+
+From 51433d13670474cb2db338e8cf1f57adf0713503 Mon Sep 17 00:00:00 2001
 From: Arjan van de Ven <arjan@linux.intel.com>
 Date: Thu, 13 Dec 2018 01:00:49 +0000
-Subject: [PATCH 2/9] sched/wait: Do accept() in LIFO order for cache
+Subject: [PATCH 5/5] sched/wait: Do accept() in LIFO order for cache
  efficiency
 
 Signed-off-by: Alexandre Frade <kernel@xanmod.org>
@@ -149,18 +153,18 @@ Signed-off-by: Alexandre Frade <kernel@xanmod.org>
  3 files changed, 27 insertions(+), 1 deletion(-)
 
 diff --git a/include/linux/wait.h b/include/linux/wait.h
-index a0307b516b09..edc21128f387 100644
+index 7e2153301..e17659a06 100644
 --- a/include/linux/wait.h
 +++ b/include/linux/wait.h
-@@ -165,6 +165,7 @@ static inline bool wq_has_sleeper(struct wait_queue_head *wq_head)
-
+@@ -163,6 +163,7 @@ static inline bool wq_has_sleeper(struct wait_queue_head *wq_head)
+ 
  extern void add_wait_queue(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
  extern void add_wait_queue_exclusive(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
 +extern void add_wait_queue_exclusive_lifo(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
  extern void add_wait_queue_priority(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
- extern void remove_wait_queue(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
-
-@@ -1192,6 +1193,7 @@ do {										\
+ extern int add_wait_queue_priority_exclusive(struct wait_queue_head *wq_head,
+ 					     struct wait_queue_entry *wq_entry);
+@@ -1224,6 +1225,7 @@ do {										\
   */
  void prepare_to_wait(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry, int state);
  bool prepare_to_wait_exclusive(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry, int state);
@@ -169,13 +173,13 @@ index a0307b516b09..edc21128f387 100644
  void finish_wait(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry);
  long wait_woken(struct wait_queue_entry *wq_entry, unsigned mode, long timeout);
 diff --git a/kernel/sched/wait.c b/kernel/sched/wait.c
-index 133b74730738..1647fb8662eb 100644
+index d033f600f..059088bb3 100644
 --- a/kernel/sched/wait.c
 +++ b/kernel/sched/wait.c
-@@ -47,6 +47,17 @@ void add_wait_queue_priority(struct wait_queue_head *wq_head, struct wait_queue_
+@@ -67,6 +67,17 @@ int add_wait_queue_priority_exclusive(struct wait_queue_head *wq_head,
  }
- EXPORT_SYMBOL_GPL(add_wait_queue_priority);
-
+ EXPORT_SYMBOL_GPL(add_wait_queue_priority_exclusive);
+ 
 +void add_wait_queue_exclusive_lifo(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry)
 +{
 +	unsigned long flags;
@@ -190,10 +194,10 @@ index 133b74730738..1647fb8662eb 100644
  void remove_wait_queue(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry)
  {
  	unsigned long flags;
-@@ -293,6 +304,19 @@ prepare_to_wait_exclusive(struct wait_queue_head *wq_head, struct wait_queue_ent
+@@ -278,6 +289,19 @@ prepare_to_wait_exclusive(struct wait_queue_head *wq_head, struct wait_queue_ent
  }
  EXPORT_SYMBOL(prepare_to_wait_exclusive);
-
+ 
 +void prepare_to_wait_exclusive_lifo(struct wait_queue_head *wq_head, struct wait_queue_entry *wq_entry, int state)
 +{
 +	unsigned long flags;
@@ -211,10 +215,10 @@ index 133b74730738..1647fb8662eb 100644
  {
  	wq_entry->flags = flags;
 diff --git a/net/ipv4/inet_connection_sock.c b/net/ipv4/inet_connection_sock.c
-index f2c43f67187d..9885bfb429a2 100644
+index 6257459bc..76a2a1a4f 100644
 --- a/net/ipv4/inet_connection_sock.c
 +++ b/net/ipv4/inet_connection_sock.c
-@@ -606,7 +606,7 @@ static int inet_csk_wait_for_connect(struct sock *sk, long timeo)
+@@ -619,7 +619,7 @@ static int inet_csk_wait_for_connect(struct sock *sk, long timeo)
  	 * having to remove and re-insert us on the wait queue.
  	 */
  	for (;;) {
@@ -223,5 +227,6 @@ index f2c43f67187d..9885bfb429a2 100644
  					  TASK_INTERRUPTIBLE);
  		release_sock(sk);
  		if (reqsk_queue_empty(&icsk->icsk_accept_queue))
---
-2.39.1
+-- 
+2.55.0
+
