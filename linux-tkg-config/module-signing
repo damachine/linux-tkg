@@ -1,0 +1,58 @@
+# Module signing feature knobs and helpers.
+#
+# Public options:
+#   _RESIGN_AFTER_STRIP="false"  re-sign installed kernel modules after strip
+#   _install_signing_keys=""     install signing key/cert into headers package
+
+[[ -v _RESIGN_AFTER_STRIP ]] || _RESIGN_AFTER_STRIP="false"
+[[ -v _install_signing_keys ]] || _install_signing_keys=""
+
+_signing_resolve() {
+  if ! grep -q 'CONFIG_MODULE_SIG=y' "${_kernel_work_folder_abs}/.config"; then
+    warning "Module signing was requested but CONFIG_MODULE_SIG=y is not set in .config - skipping."
+    return 1
+  fi
+
+  _sign_script="${_kernel_work_folder_abs}/scripts/sign-file"
+  _sign_key="$(grep -Po 'CONFIG_MODULE_SIG_KEY="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+  [[ "$_sign_key" =~ ^/ ]] || _sign_key="${_kernel_work_folder_abs}/${_sign_key}"
+  _sign_cert="${_kernel_work_folder_abs}/certs/signing_key.x509"
+  _sign_hash="$(grep -Po 'CONFIG_MODULE_SIG_HASH="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+
+  if [[ ! -f "$_sign_key" ]]; then
+    warning "Module signing key not found: ${_sign_key}"
+    return 1
+  elif [[ ! -f "$_sign_cert" ]]; then
+    warning "Module signing certificate not found: ${_sign_cert}"
+    return 1
+  fi
+
+  return 0
+}
+
+_signing() {
+  _signing_resolve
+}
+
+_pkgbase_after_modules_install__90_module_signing() {
+  local _modulesdir="$1"
+
+  if [[ "$_RESIGN_AFTER_STRIP" == "true" && "$_STRIP" == "true" ]]; then
+    if _signing_resolve; then
+      msg2 "Re-signing kernel modules after strip..."
+      find "${_modulesdir}" -type f -name '*.ko' \
+        -exec "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" '{}' \;
+    else
+      warning "_RESIGN_AFTER_STRIP is enabled but signing is not available - skipping module re-signing."
+    fi
+  fi
+}
+
+_headers_after_install__10_module_signing() {
+  local _builddir="$1"
+
+  if [[ "$_install_signing_keys" == "true" && -f "certs/signing_key.pem" ]]; then
+    msg2 "Installing module signing keys..."
+    install -Dt "${_builddir}/certs" -m 400 certs/signing_key.pem certs/signing_key.x509
+  fi
+}
