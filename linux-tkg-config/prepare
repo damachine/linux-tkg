@@ -586,7 +586,10 @@ _setup_kernel_work_folder() {
 
   if [[ ! "$_offline" =~ ^(y|Y|yes|true|True)$ ]]; then
     msg2 "Fetching tag: $_kernel_git_tag from remote $_git_mirror" | _log "$_where/logs/git_work.log.txt"
-    git fetch --depth 1 $_git_mirror tag "$_kernel_git_tag" &>> "$_where/logs/git_work.log.txt"
+    (
+      set -o pipefail
+      git fetch --progress --depth 1 "$_git_mirror" tag "$_kernel_git_tag" |& _log "$_where/logs/git_work.log.txt"
+    )
   fi
 
   msg2 "Checking out tag: $_kernel_git_tag in $_kernel_work_folder_abs" | _log "$_where/logs/git_work.log.txt"
