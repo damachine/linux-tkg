@@ -1,8 +1,7 @@
+From 9b7102d09f61ed2d130de8ca47c63daf5d01c78e Mon Sep 17 00:00:00 2001
 From: Michal Suchanek <msuchanek@suse.de>
 Date: Wed, 7 Feb 2018 15:16:04 +0100
-Subject: Add ksym-provides tool.
-Patch-mainline: Never, not needed in upstream
-References: bsc#1077692
+Subject: [PATCH] Add ksym-provides tool.
 
 Signed-off-by: Michal Suchanek <msuchanek@suse.de>
 ---
@@ -11,25 +10,30 @@ Signed-off-by: Michal Suchanek <msuchanek@suse.de>
  2 files changed, 129 insertions(+), 1 deletion(-)
  create mode 100644 scripts/mod/ksym-provides.c
 
+diff --git a/scripts/mod/Makefile b/scripts/mod/Makefile
+index c729bc936..10852bc9a 100644
 --- a/scripts/mod/Makefile
 +++ b/scripts/mod/Makefile
 @@ -1,11 +1,15 @@
  # SPDX-License-Identifier: GPL-2.0
  CFLAGS_REMOVE_empty.o += $(CC_FLAGS_LTO)
-
+ 
 -hostprogs-always-y	+= modpost mk_elfconfig
 +hostprogs-always-y	+= modpost mk_elfconfig ksym-provides
  always-y		+= empty.o
-
+ 
  modpost-objs	:= modpost.o file2alias.o sumversion.o symsearch.o
-
+ 
 +ksym-provides-objs	:= ksym-provides.o
 +
 +HOSTLDLIBS_ksym-provides := -lelf
 +
  devicetable-offsets-file := devicetable-offsets.h
-
+ 
  $(obj)/$(devicetable-offsets-file): $(obj)/devicetable-offsets.s FORCE
+diff --git a/scripts/mod/ksym-provides.c b/scripts/mod/ksym-provides.c
+new file mode 100644
+index 000000000..c71fb79d4
 --- /dev/null
 +++ b/scripts/mod/ksym-provides.c
 @@ -0,0 +1,124 @@
@@ -157,3 +161,6 @@ Signed-off-by: Michal Suchanek <msuchanek@suse.de>
 +	close(fd);
 +	return 1;
 +}
+-- 
+2.55.0
+

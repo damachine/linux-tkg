@@ -1,0 +1,284 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alexandre Ghiti <alex@ghiti.fr>
+Date: Wed,  7 Oct 2026 17:34:43 +0200
+Subject: [PATCH 1/2] mm/zswap: batch the writeback IO of consecutive entries
+
+Commit 8f29aa226f82 ("mm/swap: introduce struct swap_io_ctx") introduced a
+simple way to batch the swap writes of folios with consecutive slots into a
+single bio. zswap writeback does not use it: zswap_writeback_entry()
+submits a context of its own for every entry, so every entry written back
+becomes its own IO.
+
+So let the two functions that walk the zswap LRU, zswap_shrinker_scan()
+and shrink_memcg(), own the context and submit it once the walk is done.
+
+Kernel build (defconfig, -j4) in a 600M memory.max cgroup with the zswap
+shrinker enabled, swapping to an NVMe partition with iocost enabled. It
+runs alone, and next to a sibling fio random writer with 10 times its
+io.weight so that iocost throttles it. Mean +- stddev, counters from the
+build's cgroup:
+
+Alone:
+
+                                unbatched       batched
+  build time (s)                1066 +- 9     1061 +- 2   -0.5%
+  write requests (k)            748 +- 47     596 +- 26   -20.4%
+  pages per write request    1.07 +- 0.01  1.30 +- 0.01   +21.2%
+  iocost debt (s)             15.0 +- 2.7   12.1 +- 1.2   -19.5%
+  iocost wait (s)              7.5 +- 1.2    7.2 +- 1.1   -3.6%
+  IO full pressure (s)        19.0 +- 1.8   18.2 +- 0.9   -4.2%
+
+Next to the writer:
+
+                                unbatched       batched
+  build time (s)               2269 +- 50    2203 +- 62   -2.9%
+  write requests (k)            714 +- 31     605 +- 24   -15.2%
+  pages per write request    1.08 +- 0.00  1.30 +- 0.02   +20.3%
+  iocost debt (s)               685 +- 25     646 +- 26   -5.7%
+  iocost wait (s)               655 +- 26     632 +- 23   -3.6%
+  IO full pressure (s)          655 +- 31     624 +- 30   -4.7%
+
+[TKG: use the v7.3-rc6 __swap_writepage() path and retain its
+existing folio cleanup.]
+
+Suggested-by: Nhat Pham <nphamcs@gmail.com>
+Signed-off-by: Alexandre Ghiti <alex@ghiti.fr>
+Link: https://lore.kernel.org/all/20261007153507.50715-2-alex@ghiti.fr/
+Acked-by: Nhat Pham <nphamcs@gmail.com>
+---
+diff --git a/mm/zswap.c b/mm/zswap.c
+--- a/mm/zswap.c
++++ b/mm/zswap.c
+@@ -972,6 +972,21 @@
+ /*********************************
+ * writeback code
+ **********************************/
++/* State shared by all the entries written back by one LRU walk. */
++struct zswap_shrink_ctl {
++	/*
++	 * Collects the writeback of consecutive entries into as few IOs as
++	 * possible. The owner of the walk must submit what is left in it
++	 * once it is done.
++	 */
++	struct swap_io_ctx io_ctx;
++	/*
++	 * If not NULL, stop the walk when writeback finds a folio already in
++	 * the swap cache, and set it to true.
++	 */
++	bool *encountered_page_in_swapcache;
++};
++
+ /*
+  * Attempts to free an entry by adding a folio to the swap cache,
+  * decompressing the entry data into the folio, and issuing a
+@@ -983,8 +998,12 @@
+  * in the first place.  After the folio has been decompressed into
+  * the swap cache, the compressed version stored by zswap can be
+  * freed.
++ *
++ * The folio is only added to @ctx here, it is up to the owner of @ctx to
++ * submit the IO.
+  */
+-static int zswap_writeback_entry(struct zswap_entry *entry,
++static int zswap_writeback_entry(struct swap_io_ctx *ctx,
++				 struct zswap_entry *entry,
+ 				 swp_entry_t swpentry)
+ {
+ 	struct xarray *tree;
+@@ -992,7 +1011,6 @@
+ 	struct folio *folio;
+ 	struct mempolicy *mpol;
+ 	struct swap_info_struct *si;
+-	struct swap_io_ctx ctx = {};
+ 	int ret = 0;
+ 
+ 	/* try to allocate swap cache folio */
+@@ -1050,8 +1068,7 @@
+ 	folio_set_reclaim(folio);
+ 
+ 	/* start writeback */
+-	__swap_writepage(&ctx, folio);
+-	swap_write_submit(&ctx);
++	__swap_writepage(ctx, folio);
+ 
+ out:
+ 	if (ret) {
+@@ -1091,7 +1108,7 @@
+ 				       void *arg)
+ {
+ 	struct zswap_entry *entry = container_of(item, struct zswap_entry, lru);
+-	bool *encountered_page_in_swapcache = (bool *)arg;
++	struct zswap_shrink_ctl *ctl = arg;
+ 	swp_entry_t swpentry;
+ 	enum lru_status ret = LRU_REMOVED_RETRY;
+ 	int writeback_result;
+@@ -1146,7 +1163,7 @@
+ 	 */
+ 	spin_unlock(&l->lock);
+ 
+-	writeback_result = zswap_writeback_entry(entry, swpentry);
++	writeback_result = zswap_writeback_entry(&ctl->io_ctx, entry, swpentry);
+ 
+ 	if (writeback_result) {
+ 		zswap_reject_reclaim_fail++;
+@@ -1157,9 +1174,9 @@
+ 		 * into the warmer region. We should terminate shrinking (if we're in the dynamic
+ 		 * shrinker context).
+ 		 */
+-		if (writeback_result == -EEXIST && encountered_page_in_swapcache) {
++		if (writeback_result == -EEXIST && ctl->encountered_page_in_swapcache) {
+ 			ret = LRU_STOP;
+-			*encountered_page_in_swapcache = true;
++			*ctl->encountered_page_in_swapcache = true;
+ 		}
+ 	} else {
+ 		zswap_written_back_pages++;
+@@ -1171,8 +1188,11 @@
+ static unsigned long zswap_shrinker_scan(struct shrinker *shrinker,
+ 		struct shrink_control *sc)
+ {
++	bool encountered_page_in_swapcache = false;
++	struct zswap_shrink_ctl ctl = {
++		.encountered_page_in_swapcache = &encountered_page_in_swapcache,
++	};
+ 	unsigned long shrink_ret;
+-	bool encountered_page_in_swapcache = false;
+ 
+ 	if (!zswap_shrinker_enabled ||
+ 			!mem_cgroup_zswap_writeback_enabled(sc->memcg)) {
+@@ -1181,7 +1201,9 @@
+ 	}
+ 
+ 	shrink_ret = list_lru_shrink_walk(&zswap_list_lru, sc, &shrink_memcg_cb,
+-		&encountered_page_in_swapcache);
++		&ctl);
++
++	swap_write_submit(&ctl.io_ctx);
+ 
+ 	if (encountered_page_in_swapcache)
+ 		return SHRINK_STOP;
+@@ -1287,6 +1309,7 @@
+  */
+ static int shrink_memcg(struct mem_cgroup *memcg)
+ {
++	struct zswap_shrink_ctl ctl = {};
+ 	int nid, shrunk = 0, scanned = 0;
+ 
+ 	if (!mem_cgroup_zswap_writeback_enabled(memcg))
+@@ -1303,9 +1326,11 @@
+ 		unsigned long nr_to_walk = SWAP_CLUSTER_MAX;
+ 
+ 		shrunk += list_lru_walk_one(&zswap_list_lru, nid, memcg,
+-					    &shrink_memcg_cb, NULL, &nr_to_walk);
++					    &shrink_memcg_cb, &ctl, &nr_to_walk);
+ 		scanned += SWAP_CLUSTER_MAX - nr_to_walk;
+ 	}
++
++	swap_write_submit(&ctl.io_ctx);
+ 
+ 	/* Nothing was scanned: every LRU under @memcg was empty. */
+ 	if (!scanned)
+-- 
+2.53.0
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alexandre Ghiti <alex@ghiti.fr>
+Date: Wed,  7 Oct 2026 17:34:44 +0200
+Subject: [PATCH 2/2] mm/zswap: plug the writeback IO of an LRU walk
+
+zswap writeback only appends an entry to the pending bio when its slot
+directly follows the previous one, and submits the pending bio
+otherwise.
+
+Plug the LRU walk so that the block layer can merge what the batch
+cannot.
+
+Kernel build (defconfig, -j4) in a 600M memory.max cgroup with the zswap
+shrinker enabled, swapping to an NVMe partition with iocost enabled. It
+runs alone, and next to a sibling fio random writer with 10 times its
+io.weight so that iocost throttles it. Mean +- stddev, counters from the
+build's cgroup:
+
+Alone:
+
+                                unplugged       plugged
+  build time (s)                1061 +- 2     1057 +- 2   -0.4%
+  write requests (k)            622 +- 34     579 +- 21   -6.8%
+  pages per write request    1.30 +- 0.02  1.36 +- 0.05   +4.9%
+  iocost debt (s)             14.0 +- 2.5   11.0 +- 1.7   -21.6%
+  iocost wait (s)              7.7 +- 1.8    7.1 +- 1.1   -7.9%
+  IO full pressure (s)        18.3 +- 1.4   17.5 +- 1.3   -4.5%
+
+Next to the writer:
+
+                                unplugged       plugged
+  build time (s)               2188 +- 45    2104 +- 75   -3.8%
+  write requests (k)            594 +- 21     567 +- 24   -4.6%
+  pages per write request    1.30 +- 0.01  1.35 +- 0.02   +3.6%
+  iocost debt (s)               648 +- 22     645 +- 29   -0.5%
+  iocost wait (s)               624 +- 23     633 +- 29   +1.5%
+  IO full pressure (s)          615 +- 31     550 +- 44   -10.6%
+
+Signed-off-by: Alexandre Ghiti <alex@ghiti.fr>
+Link: https://lore.kernel.org/all/20261007153507.50715-3-alex@ghiti.fr/
+Acked-by: Nhat Pham <nphamcs@gmail.com>
+---
+diff --git a/mm/zswap.c b/mm/zswap.c
+--- a/mm/zswap.c
++++ b/mm/zswap.c
+@@ -20,6 +20,7 @@
+ #include <linux/spinlock.h>
+ #include <linux/types.h>
+ #include <linux/atomic.h>
++#include <linux/blkdev.h>
+ #include <linux/swap_ops.h>
+ #include <linux/crypto.h>
+ #include <linux/scatterlist.h>
+@@ -1193,6 +1194,7 @@
+ 		.encountered_page_in_swapcache = &encountered_page_in_swapcache,
+ 	};
+ 	unsigned long shrink_ret;
++	struct blk_plug plug;
+ 
+ 	if (!zswap_shrinker_enabled ||
+ 			!mem_cgroup_zswap_writeback_enabled(sc->memcg)) {
+@@ -1200,10 +1202,12 @@
+ 		return SHRINK_STOP;
+ 	}
+ 
++	blk_start_plug(&plug);
+ 	shrink_ret = list_lru_shrink_walk(&zswap_list_lru, sc, &shrink_memcg_cb,
+ 		&ctl);
+ 
+ 	swap_write_submit(&ctl.io_ctx);
++	blk_finish_plug(&plug);
+ 
+ 	if (encountered_page_in_swapcache)
+ 		return SHRINK_STOP;
+@@ -1311,6 +1315,7 @@
+ {
+ 	struct zswap_shrink_ctl ctl = {};
+ 	int nid, shrunk = 0, scanned = 0;
++	struct blk_plug plug;
+ 
+ 	if (!mem_cgroup_zswap_writeback_enabled(memcg))
+ 		return -ENOENT;
+@@ -1322,6 +1327,7 @@
+ 	if (memcg && !mem_cgroup_online(memcg))
+ 		return -ENOENT;
+ 
++	blk_start_plug(&plug);
+ 	for_each_node_state(nid, N_NORMAL_MEMORY) {
+ 		unsigned long nr_to_walk = SWAP_CLUSTER_MAX;
+ 
+@@ -1331,6 +1337,7 @@
+ 	}
+ 
+ 	swap_write_submit(&ctl.io_ctx);
++	blk_finish_plug(&plug);
+ 
+ 	/* Nothing was scanned: every LRU under @memcg was empty. */
+ 	if (!scanned)
+-- 
+2.53.0
+
