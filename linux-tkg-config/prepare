@@ -603,8 +603,15 @@ _setup_kernel_work_folder() {
     cd "$_kernel_work_folder_abs"
     git reset --hard &>> "$_where/logs/git_work.log.txt"
     git clean -ffdx &>> "$_where/logs/git_work.log.txt"
-    git am --abort &>> "$_where/logs/git_work.log.txt" || true
-    git rebase --abort &>> "$_where/logs/git_work.log.txt" || true
+
+    if [[ -f "$(git rev-parse --git-path rebase-apply/applying)" ]]; then
+      git am --abort &>> "$_where/logs/git_work.log.txt"
+    fi
+
+    if [[ -d "$(git rev-parse --git-path rebase-merge)" || -d "$(git rev-parse --git-path rebase-apply)" ]]; then
+      git rebase --abort &>> "$_where/logs/git_work.log.txt"
+    fi
+
     git checkout --no-progress "$_kernel_git_tag" &>> "$_where/logs/git_work.log.txt"
   else
     # In all other cases, just force create the work tree
