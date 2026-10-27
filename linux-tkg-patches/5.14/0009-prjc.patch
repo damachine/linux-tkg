@@ -673,7 +673,7 @@ index 978fcfca5871..0425ee149b4d 100644
  obj-$(CONFIG_CPU_FREQ_GOV_SCHEDUTIL) += cpufreq_schedutil.o
 diff --git a/kernel/sched/alt_core.c b/kernel/sched/alt_core.c
 new file mode 100644
-index 000000000000..56aed2b1e42c
+index 000000000000..e1a7c163c2d5
 --- /dev/null
 +++ b/kernel/sched/alt_core.c
 @@ -0,0 +1,7341 @@
@@ -746,7 +746,7 @@ index 000000000000..56aed2b1e42c
 +#define sched_feat(x)	(0)
 +#endif /* CONFIG_SCHED_DEBUG */
 +
-+#define ALT_SCHED_VERSION "v5.14-r3"
++#define ALT_SCHED_VERSION "v5.14-r4"
 +
 +/* rt_prio(prio) defined in include/linux/sched/rt.h */
 +#define rt_task(p)		rt_prio((p)->prio)
@@ -1282,7 +1282,7 @@ index 000000000000..56aed2b1e42c
 +	u64 delta = min(LOAD_BLOCK(time) - LOAD_BLOCK(rq->load_stamp),
 +			RQ_LOAD_HISTORY_BITS - 1);
 +	u64 prev = !!(rq->load_history & CURRENT_LOAD_BIT);
-+	u64 curr = !!cpu_rq(rq->cpu)->nr_running;
++	u64 curr = !!rq->nr_running;
 +
 +	if (delta) {
 +		rq->load_history = rq->load_history >> delta;
@@ -9510,60 +9510,3 @@ index adf7ef194005..11c8f36e281b 100644
  	};
  	struct wakeup_test_data *x = data;
  
-diff --git a/kernel/sched/alt_core.c b/kernel/sched/alt_core.c
-index 9576c57f82da0a1f831b02474db8cd64b945f294..b8d5b1db9fac55ce5ee74033c253832cc36999b6 100644
---- a/kernel/sched/alt_core.c
-+++ b/kernel/sched/alt_core.c
-@@ -2912,9 +2912,6 @@ static inline void __sched_fork(unsigned long clone_flags, struct task_struct *p
-  */
- int sched_fork(unsigned long clone_flags, struct task_struct *p)
- {
--	unsigned long flags;
--	struct rq *rq;
--
- 	__sched_fork(clone_flags, p);
- 	/*
- 	 * We mark the process as NEW here. This guarantees that
-@@ -2948,6 +2945,20 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
- 		p->sched_reset_on_fork = 0;
- 	}
-
-+#ifdef CONFIG_SCHED_INFO
-+	if (unlikely(sched_info_on()))
-+		memset(&p->sched_info, 0, sizeof(p->sched_info));
-+#endif
-+	init_task_preempt_count(p);
-+
-+	return 0;
-+}
-+
-+void sched_post_fork(struct task_struct *p, struct kernel_clone_args *kargs)
-+{
-+	unsigned long flags;
-+	struct rq *rq;
-+
- 	/*
- 	 * The child is not yet in the pid-hash so no cgroup attach races,
- 	 * and the cgroup is pinned to this child due to cgroup_fork()
-@@ -2982,20 +2993,10 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
- 	 * We're setting the CPU for the first time, we don't migrate,
- 	 * so use __set_task_cpu().
- 	 */
--	__set_task_cpu(p, cpu_of(rq));
-+	__set_task_cpu(p, smp_processor_id());
- 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
--
--#ifdef CONFIG_SCHED_INFO
--	if (unlikely(sched_info_on()))
--		memset(&p->sched_info, 0, sizeof(p->sched_info));
--#endif
--	init_task_preempt_count(p);
--
--	return 0;
- }
-
--void sched_post_fork(struct task_struct *p) {}
--
- #ifdef CONFIG_SCHEDSTATS
-
- DEFINE_STATIC_KEY_FALSE(sched_schedstats);
