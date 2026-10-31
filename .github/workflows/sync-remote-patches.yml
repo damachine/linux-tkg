@@ -13,6 +13,13 @@ jobs:
       max-parallel: 1
       matrix:
         include:
+          # Temporarily disabled to preserve TkG's rebased Project C patches.
+          # - description: Project C patch from upstream
+          #   type: patches-in-git-repo
+          #   repo_link: https://gitlab.com/alfredchen/projectc.git
+          #   patch_file_regex:
+          #     - '.*/@kver@/prjc_v@kver@-r[0-9]+\.patch'
+          #   copy_as: 0009-prjc.patch
           - description: BORE patch from upstream
             type: patches-in-git-repo
             repo_link: https://github.com/firelzrd/bore-scheduler.git
