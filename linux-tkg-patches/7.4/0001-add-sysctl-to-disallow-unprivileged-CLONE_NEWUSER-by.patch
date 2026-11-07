@@ -1,0 +1,150 @@
+From aed1a0d31fcf078e431a80639e84d2be02c75626 Mon Sep 17 00:00:00 2001
+From: "Jan Alexander Steffens (heftig)" <jan.steffens@gmail.com>
+Date: Mon, 16 Sep 2019 04:53:20 +0200
+Subject: [PATCH] ZEN: Add sysctl and CONFIG to disallow unprivileged
+ CLONE_NEWUSER
+
+---
+ include/linux/user_namespace.h |  4 ++++
+ init/Kconfig                   | 16 ++++++++++++++++
+ kernel/fork.c                  | 14 ++++++++++++++
+ kernel/sysctl.c                | 12 ++++++++++++
+ kernel/user_namespace.c        |  7 +++++++
+ 5 files changed, 53 insertions(+)
+
+diff --git a/include/linux/user_namespace.h b/include/linux/user_namespace.h
+index 912320537..cefa7e8f7 100644
+--- a/include/linux/user_namespace.h
++++ b/include/linux/user_namespace.h
+@@ -176,6 +176,8 @@ static inline struct user_namespace *to_user_ns(struct ns_common *ns)
+ 
+ #ifdef CONFIG_USER_NS
+ 
++extern int unprivileged_userns_clone;
++
+ static inline struct user_namespace *get_user_ns(struct user_namespace *ns)
+ {
+ 	if (ns)
+@@ -216,6 +218,8 @@ extern int uid_gid_map_sort(struct uid_gid_map *map);
+ 
+ #else
+ 
++#define unprivileged_userns_clone 0
++
+ static inline struct user_namespace *get_user_ns(struct user_namespace *ns)
+ {
+ 	return &init_user_ns;
+diff --git a/init/Kconfig b/init/Kconfig
+index 4013781e0..696cbfbe5 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -1264,6 +1264,22 @@ config USER_NS_MAP_KUNIT_TEST
+ 
+ 	  If unsure, say N.
+ 
++config USER_NS_UNPRIVILEGED
++	bool "Allow unprivileged users to create namespaces"
++	default y
++	depends on USER_NS
++	help
++	  When disabled, unprivileged users will not be able to create
++	  new namespaces. Allowing users to create their own namespaces
++	  has been part of several recent local privilege escalation
++	  exploits, so if you need user namespaces but are
++	  paranoid^Wsecurity-conscious you want to disable this.
++
++	  This setting can be overridden at runtime via the
++	  kernel.unprivileged_userns_clone sysctl.
++
++	  If unsure, say Y.
++
+ config PID_NS
+ 	bool "PID Namespaces"
+ 	default y
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 8b108ed37..fe5a05d54 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -113,6 +113,10 @@
+ #include <linux/pgalloc.h>
+ #include <linux/uaccess.h>
+ 
++#ifdef CONFIG_USER_NS
++#include <linux/user_namespace.h>
++#endif
++
+ #include <asm/mmu_context.h>
+ #include <asm/cacheflush.h>
+ #include <asm/tlbflush.h>
+@@ -2041,6 +2045,10 @@ __latent_entropy struct task_struct *copy_process(
+ 	if ((clone_flags & (CLONE_NEWUSER|CLONE_FS)) == (CLONE_NEWUSER|CLONE_FS))
+ 		return ERR_PTR(-EINVAL);
+ 
++	if ((clone_flags & CLONE_NEWUSER) && !unprivileged_userns_clone)
++		if (!capable(CAP_SYS_ADMIN))
++			return ERR_PTR(-EPERM);
++
+ 	/*
+ 	 * Thread groups must share signals as well, and detached threads
+ 	 * can only be started up within the thread group.
+@@ -3276,6 +3284,12 @@ int ksys_unshare(unsigned long unshare_flags)
+ 	VFS_WARN_ON_ONCE(unshare_flags & (CLONE_NEWNS | CLONE_FS) &&
+ 			 current->fs != current->real_fs);
+ 
++	if ((unshare_flags & CLONE_NEWUSER) && !unprivileged_userns_clone) {
++		err = -EPERM;
++		if (!capable(CAP_SYS_ADMIN))
++			goto bad_unshare_out;
++	}
++
+ 	err = check_unshare_flags(unshare_flags);
+ 	if (err)
+ 		goto bad_unshare_out;
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index f5145b32f..6992f316a 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -21,6 +21,9 @@
+ 
+ #include <linux/uaccess.h>
+ #include <asm/processor.h>
++#ifdef CONFIG_USER_NS
++#include <linux/user_namespace.h>
++#endif
+ 
+ /* shared constants to be used in various sysctls */
+ const int sysctl_vals[] = { 0, 1, 2, 3, 4, 100, 200, 1000, 3000, INT_MAX, 65535, -1 };
+@@ -1363,6 +1366,15 @@ int proc_do_static_key(const struct ctl_table *table, int dir,
+ }
+ 
+ static const struct ctl_table sysctl_subsys_table[] = {
++#ifdef CONFIG_USER_NS
++	{
++		.procname	= "unprivileged_userns_clone",
++		.data		= &unprivileged_userns_clone,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec,
++	},
++#endif
+ 	{
+ 		.procname	= "sysctl_writes_strict",
+ 		.data		= &sysctl_writes_strict,
+diff --git a/kernel/user_namespace.c b/kernel/user_namespace.c
+index cd748e1cb..71d04bf90 100644
+--- a/kernel/user_namespace.c
++++ b/kernel/user_namespace.c
+@@ -24,6 +24,13 @@
+ #include <linux/sort.h>
+ #include <linux/nstree.h>
+ 
++/* sysctl */
++#ifdef CONFIG_USER_NS_UNPRIVILEGED
++int unprivileged_userns_clone = 1;
++#else
++int unprivileged_userns_clone;
++#endif
++
+ static struct kmem_cache *user_ns_cachep __ro_after_init;
+ static DEFINE_MUTEX(userns_state_mutex);
+ 
