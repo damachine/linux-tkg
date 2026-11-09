@@ -1,0 +1,180 @@
+# Clang AutoFDO feature.
+#
+# Public options:
+#   _llvm_autofdo="false"
+#   _llvm_autofdo_profile="~/.config/frogminer/tkg.afdo"
+#
+# Build flow:
+#   1. Set _llvm_autofdo="pass1" for a profiling build.
+#   2. Boot the profiling kernel, collect perf data, and convert it with llvm-profgen.
+#   3. Set _llvm_autofdo="pass2" and rebuild with the profile.
+
+[[ -v _llvm_autofdo ]] || _llvm_autofdo="false"
+[[ -v _llvm_autofdo_profile ]] || _llvm_autofdo_profile="~/.config/frogminer/tkg.afdo"
+
+_autofdo_enabled() {
+  [[ "${_llvm_autofdo,,}" =~ ^(pass1|pass2)$ ]]
+}
+
+_autofdo_require_lto() {
+  _lto_mode="${_lto_mode:-}"
+  _lto_mode="${_lto_mode,,}"
+
+  if [[ "$_lto_mode" != "thin" ]]; then
+    warning "AutoFDO/Propeller requires ThinLTO - setting _lto_mode=\"thin\""
+    _lto_mode="thin"
+  fi
+}
+
+_autofdo_preflight() {
+  local _resolved_path=""
+  local _requested_propeller="${_llvm_propeller:-}"
+  local _requested_bolt="${_llvm_bolt:-}"
+
+  if [[ -z "$_llvm_autofdo" ]]; then
+    plain "Which AutoFDO phase do you want to build?"
+    _autofdo_prompt_array=(
+      "Disable AutoFDO (default)"
+      "Pass 1: build a profiling kernel"
+      "Pass 2: build with an existing profile"
+    )
+    _autofdo_value_array=("false" "pass1" "pass2")
+
+    _default_index="0"
+    _prompt_from_array "${_autofdo_prompt_array[@]}"
+    _llvm_autofdo="${_autofdo_value_array[$_selected_index]}"
+  else
+    _llvm_autofdo="${_llvm_autofdo,,}"
+  fi
+
+  case "$_llvm_autofdo" in
+    false)
+      return 0
+    ;;
+    pass1|pass2)
+    ;;
+    true|yes|y|1)
+      _die "AutoFDO: _llvm_autofdo=\"$_llvm_autofdo\" is no longer supported. Use \"pass1\" or \"pass2\"."
+    ;;
+    *)
+      _die "Invalid _llvm_autofdo value \"$_llvm_autofdo\". Use \"false\", \"pass1\", or \"pass2\"."
+    ;;
+  esac
+
+  if ! _kernel_version_at_least 6 13; then
+    if [[ "${_nofallback:-false}" == "true" ]]; then
+      _die "AutoFDO requires kernel >= 6.13."
+    else
+      warning "AutoFDO requires kernel >= 6.13 - disabling AutoFDO and Propeller"
+      _llvm_autofdo="false"
+      _llvm_propeller="false"
+      return 0
+    fi
+  fi
+
+  if [[ "$_llvm_autofdo" == "pass1" ]]; then
+    if [[ -n "$_requested_propeller" && "${_requested_propeller,,}" != "false" ]]; then
+      warning "AutoFDO: Pass 1 ignores _llvm_propeller=\"$_requested_propeller\" - disabling Propeller"
+    fi
+    if [[ -n "$_requested_bolt" && "${_requested_bolt,,}" != "false" ]]; then
+      warning "AutoFDO: Pass 1 ignores _llvm_bolt=\"$_requested_bolt\" - disabling BOLT"
+    fi
+    _llvm_propeller="false"
+    _llvm_bolt="false"
+  fi
+
+  if [[ -n "$_llvm_autofdo_profile" ]]; then
+    _resolved_path="${_llvm_autofdo_profile/#\~/$HOME}"
+  fi
+
+  if [[ "$_llvm_autofdo" == "pass2" ]]; then
+    if [[ -z "$_resolved_path" || ! -f "$_resolved_path" ]]; then
+      if [ "$_nofallback" = "true" ]; then
+        _die "AutoFDO: Pass 2 requires an existing profile at ${_resolved_path:-<empty path>}."
+      else
+        warning "AutoFDO: Pass 2 profile not found at ${_resolved_path:-<empty path>} - disabling AutoFDO"
+        _llvm_autofdo="false"
+        return 0
+      fi
+    fi
+    _llvm_autofdo_profile="$_resolved_path"
+  fi
+
+  if [[ "$_compiler" != "llvm" ]]; then
+    if [ "$_nofallback" = "true" ]; then
+      _die "AutoFDO (_llvm_autofdo=\"$_llvm_autofdo\") requires the LLVM compiler (_compiler=\"llvm\"). Exiting."
+    else
+      plain "AutoFDO requires Clang/LLVM. Would you like to use Clang/LLVM for this build?"
+      _compiler_array_text=(
+        "Yes: switch to Clang/LLVM and keep AutoFDO enabled"
+        "No: keep current compiler selection and disable AutoFDO"
+      )
+      _compiler_array=("llvm" "keep")
+
+      _default_index="0"
+      _prompt_from_array "${_compiler_array_text[@]}"
+
+      if [ "${_compiler_array[$_selected_index]}" = "llvm" ]; then
+        _compiler="llvm"
+      else
+        warning "Disabling AutoFDO because LLVM was not selected"
+        _llvm_autofdo="false"
+        return 0
+      fi
+    fi
+  fi
+
+  _autofdo_require_lto
+
+  if [[ "$_llvm_autofdo" == "pass1" ]]; then
+    if [[ "${_debugdisable:-false}" == "true" ]]; then
+      _debugdisable="false"
+      msg2 "AutoFDO: Pass 1 enabled (forcing _debugdisable=\"false\" for profiling)"
+    fi
+    if [[ "$_STRIP" == "true" ]]; then
+      _STRIP="false"
+      msg2 "AutoFDO: Pass 1 enabled (forcing _STRIP=\"false\" for profiling)"
+    else
+      msg2 "AutoFDO: Pass 1 enabled"
+    fi
+  else
+    msg2 "AutoFDO: Pass 2 enabled (using profile $_llvm_autofdo_profile)"
+  fi
+}
+
+_autofdo_finalize_compiler() {
+  if _autofdo_enabled && [[ -n "$_llvm_autofdo_profile" ]]; then
+    _llvm_autofdo_profile="${_llvm_autofdo_profile/#\~/$HOME}"
+  fi
+
+  echo -e "_llvm_autofdo='$_llvm_autofdo'\n_llvm_autofdo_profile='$_llvm_autofdo_profile'\n_STRIP='$_STRIP'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+}
+
+_config_after_lto() {
+  if [[ "$_compiler_name" == "-llvm" ]] && _autofdo_enabled && _kernel_version_at_least 6 13; then
+    _enable AUTOFDO_CLANG
+  else
+    if _autofdo_enabled && ! _kernel_version_at_least 6 13; then
+      warning "AutoFDO requires kernel >= 6.13 - disabling CONFIG_AUTOFDO_CLANG"
+    fi
+    _disable AUTOFDO_CLANG
+  fi
+}
+
+_config_after_update_autofdo() {
+  if _autofdo_enabled && ! grep -q '^CONFIG_AUTOFDO_CLANG=y$' .config; then
+    _die "AutoFDO could not enable CONFIG_AUTOFDO_CLANG. Kernel >= 6.13 and Clang >= 17 are required."
+  fi
+}
+
+_build_make_flags() {
+  [[ "$_llvm_autofdo" == "pass2" ]] || return 0
+
+  if [[ -z "$_llvm_autofdo_profile" || ! -f "$_llvm_autofdo_profile" ]]; then
+    _die "AutoFDO: Pass 2 profile is missing: ${_llvm_autofdo_profile:-<empty path>}"
+  fi
+
+  # Keep hook stdout clean: only emit make flags here.
+  msg2 "AutoFDO: using profile ${_llvm_autofdo_profile}" >&2
+  printf '%s\n' "CLANG_AUTOFDO_PROFILE=${_llvm_autofdo_profile}"
+}

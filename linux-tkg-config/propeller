@@ -1,0 +1,185 @@
+# Clang Propeller feature.
+#
+# Public options:
+#   _llvm_propeller="false"
+#   _llvm_propeller_profile="~/.config/frogminer/tkg-propeller"
+#
+# Build flow:
+#   1. Build an AutoFDO-optimized kernel with its profile source set to "pass2"
+#      and _llvm_propeller="pass1".
+#   2. Boot that kernel, collect perf data, and convert it with create_llvm_prof.
+#   3. Set _llvm_propeller="pass2" and rebuild with the generated profiles.
+#      The expected files are ${prefix}_cc_profile.txt and ${prefix}_ld_profile.txt.
+
+[[ -v _llvm_propeller ]] || _llvm_propeller="false"
+[[ -v _llvm_propeller_profile ]] || _llvm_propeller_profile="~/.config/frogminer/tkg-propeller"
+
+_propeller_enabled() {
+  [[ "${_llvm_propeller,,}" =~ ^(pass1|pass2)$ ]]
+}
+
+_propeller_require_lto() {
+  _lto_mode="${_lto_mode:-}"
+  _lto_mode="${_lto_mode,,}"
+
+  if [[ "$_lto_mode" != "thin" ]]; then
+    warning "AutoFDO/Propeller requires ThinLTO - setting _lto_mode=\"thin\""
+    _lto_mode="thin"
+  fi
+}
+
+_propeller_preflight() {
+  local _resolved_prefix="" _cc_profile="" _ld_profile=""
+  local _resolved_autofdo_profile=""
+  local _profile_source=""
+
+  if [[ -z "$_llvm_propeller" ]]; then
+    plain "Which Propeller phase do you want to build?"
+    _propeller_prompt_array=(
+      "Disable Propeller (default)"
+      "Pass 1: build a profiling kernel"
+      "Pass 2: build with existing profiles"
+    )
+    _propeller_value_array=("false" "pass1" "pass2")
+
+    _default_index="0"
+    _prompt_from_array "${_propeller_prompt_array[@]}"
+    _llvm_propeller="${_propeller_value_array[$_selected_index]}"
+  else
+    _llvm_propeller="${_llvm_propeller,,}"
+  fi
+
+  case "$_llvm_propeller" in
+    false)
+      return 0
+    ;;
+    pass1|pass2)
+    ;;
+    true|yes|y|1)
+      _die "Propeller: _llvm_propeller=\"$_llvm_propeller\" is no longer supported. Use \"pass1\" or \"pass2\"."
+    ;;
+    *)
+      _die "Invalid _llvm_propeller value \"$_llvm_propeller\". Use \"false\", \"pass1\", or \"pass2\"."
+    ;;
+  esac
+
+  if [[ -n "$_llvm_propeller_profile" ]]; then
+    _resolved_prefix="${_llvm_propeller_profile/#\~/$HOME}"
+    _cc_profile="${_resolved_prefix}_cc_profile.txt"
+    _ld_profile="${_resolved_prefix}_ld_profile.txt"
+  fi
+
+  if [[ -n "$_llvm_autofdo_profile" ]]; then
+    _resolved_autofdo_profile="${_llvm_autofdo_profile/#\~/$HOME}"
+  fi
+  if [[ "${_llvm_autofdo:-false}" == "pass2" && -n "$_resolved_autofdo_profile" && -f "$_resolved_autofdo_profile" ]]; then
+    _profile_source="AutoFDO"
+  fi
+
+  if [[ -z "$_profile_source" ]]; then
+    if [ "$_nofallback" = "true" ]; then
+      _die "Propeller requires an AutoFDO Pass 2 build with an existing profile."
+    else
+      warning "Propeller requires AutoFDO Pass 2 with an existing profile - disabling Propeller"
+      _llvm_propeller="false"
+      return 0
+    fi
+  fi
+
+  if [[ "$_llvm_propeller" == "pass2" ]]; then
+    if [[ -z "$_resolved_prefix" || ! -f "$_cc_profile" || ! -f "$_ld_profile" ]]; then
+      if [ "$_nofallback" = "true" ]; then
+        _die "Propeller: Pass 2 requires profiles at ${_resolved_prefix:-<empty prefix>}_{cc,ld}_profile.txt."
+      else
+        warning "Propeller: Pass 2 profiles not found at ${_resolved_prefix:-<empty prefix>}_{cc,ld}_profile.txt - disabling Propeller"
+        _llvm_propeller="false"
+        return 0
+      fi
+    fi
+    _llvm_propeller_profile="$_resolved_prefix"
+  fi
+
+  if [[ "$_compiler" != "llvm" ]]; then
+    if [ "$_nofallback" = "true" ]; then
+      _die "Propeller (_llvm_propeller=\"$_llvm_propeller\") requires the LLVM compiler (_compiler=\"llvm\"). Exiting."
+    else
+      plain "Propeller requires Clang/LLVM. Would you like to use Clang/LLVM for this build?"
+      _compiler_array_text=(
+        "Yes: switch to Clang/LLVM and keep Propeller enabled"
+        "No: keep current compiler selection and disable Propeller"
+      )
+      _compiler_array=("llvm" "keep")
+
+      _default_index="0"
+      _prompt_from_array "${_compiler_array_text[@]}"
+
+      if [ "${_compiler_array[$_selected_index]}" = "llvm" ]; then
+        _compiler="llvm"
+      else
+        warning "Disabling Propeller because LLVM was not selected"
+        _llvm_propeller="false"
+        return 0
+      fi
+    fi
+  fi
+
+  _propeller_require_lto
+
+  if [[ "$_llvm_propeller" == "pass1" ]]; then
+    if [[ "${_debugdisable:-false}" == "true" ]]; then
+      _debugdisable="false"
+      msg2 "Propeller: Pass 1 enabled (forcing _debugdisable=\"false\" for profiling)"
+    fi
+    if [[ "$_STRIP" == "true" ]]; then
+      _STRIP="false"
+      msg2 "Propeller: Pass 1 enabled on $_profile_source (forcing _STRIP=\"false\" for profiling)"
+    else
+      msg2 "Propeller: Pass 1 enabled on $_profile_source"
+    fi
+  else
+    msg2 "Propeller: Pass 2 enabled (using profiles ${_llvm_propeller_profile}_{cc,ld}_profile.txt)"
+  fi
+}
+
+_propeller_finalize_compiler() {
+  if _propeller_enabled && [[ -n "$_llvm_propeller_profile" ]]; then
+    _llvm_propeller_profile="${_llvm_propeller_profile/#\~/$HOME}"
+  fi
+
+  echo -e "_llvm_propeller='$_llvm_propeller'\n_llvm_propeller_profile='$_llvm_propeller_profile'\n_STRIP='$_STRIP'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+}
+
+_config_after_lto_propeller() {
+  if [[ "$_compiler_name" == "-llvm" ]] && _propeller_enabled && _kernel_version_at_least 6 13; then
+    _enable PROPELLER_CLANG
+  else
+    if _propeller_enabled && ! _kernel_version_at_least 6 13; then
+      warning "Propeller requires kernel >= 6.13 - disabling CONFIG_PROPELLER_CLANG"
+    fi
+    _disable PROPELLER_CLANG
+  fi
+}
+
+_config_after_update_propeller() {
+  if _propeller_enabled && ! grep -q '^CONFIG_PROPELLER_CLANG=y$' .config; then
+    _die "Propeller could not enable CONFIG_PROPELLER_CLANG. Kernel >= 6.13 and Clang >= 19 are required."
+  fi
+}
+
+_build_make_flags_propeller() {
+  local _cc_profile="" _ld_profile=""
+
+  [[ "$_llvm_propeller" == "pass2" ]] || return 0
+
+  _llvm_propeller_profile="${_llvm_propeller_profile/#\~/$HOME}"
+  _cc_profile="${_llvm_propeller_profile}_cc_profile.txt"
+  _ld_profile="${_llvm_propeller_profile}_ld_profile.txt"
+
+  if [[ ! -f "$_cc_profile" || ! -f "$_ld_profile" ]]; then
+    _die "Propeller: Pass 2 profiles are missing: ${_llvm_propeller_profile}_{cc,ld}_profile.txt"
+  fi
+
+  # Keep hook stdout clean: only emit make flags here.
+  msg2 "Propeller: using profile path ${_llvm_propeller_profile}" >&2
+  printf '%s\n' "CLANG_PROPELLER_PROFILE_PREFIX=${_llvm_propeller_profile}"
+}
