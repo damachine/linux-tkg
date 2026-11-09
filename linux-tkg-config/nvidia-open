@@ -174,7 +174,7 @@ _build_after_kernel() {
   fi
   msg2 "Building NVIDIA open kernel modules (${_nvidia_ver})..."
   env CFLAGS= CXXFLAGS= LDFLAGS= make "${BUILD_FLAGS[@]}" "${MODULE_FLAGS[@]}" \
-    -C "${_nv_open_src}" -j"$(nproc)" modules
+    -C "${_nv_open_src}" -j"$(nproc)" modules || _die "Failed to build NVIDIA open kernel modules for ${_kernuname}."
 }
 
 _nvidia_patch() {
@@ -221,27 +221,30 @@ _package_nvidia_open_files() {
   local _kernver="$(<version)"
   local modulesdir="${pkgdir}/usr/lib/modules/${_kernver}/extramodules"
 
-  install -dm755 "${modulesdir}"
-  install -m644 "${_nv_open_src}"/kernel-open/*.ko "${modulesdir}"
-  install -Dt "${pkgdir}/usr/share/licenses/${pkgname}" -m644 "${_nv_open_src}/COPYING"
+  install -dm755 "${modulesdir}" || _die "Failed to create ${modulesdir}."
+  install -m644 "${_nv_open_src}"/kernel-open/*.ko "${modulesdir}" || _die "Failed to install NVIDIA modules for ${_kernver}."
+  install -Dt "${pkgdir}/usr/share/licenses/${pkgname}" -m644 "${_nv_open_src}/COPYING" || _die "Failed to install the NVIDIA license."
 
   local strip_bin="strip"
   [ "${_compiler_name}" = "-llvm" ] && strip_bin="llvm-strip"
-  find "${modulesdir}" -type f -name '*.ko' -exec "${strip_bin}" --strip-debug '{}' \;
+  find "${modulesdir}" -type f -name '*.ko' -exec "${strip_bin}" --strip-debug '{}' + || _die "Failed to strip NVIDIA modules for ${_kernver}."
 
   if [[ "${_nvidia_sign}" == "true" ]]; then
     if declare -F _signing_resolve >/dev/null && _signing_resolve; then
       msg2 "Signing NVIDIA open kernel modules..."
-      find "${modulesdir}" -type f -name '*.ko' -exec "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" '{}' \;
+      local _module_path
+      while IFS= read -r -d '' _module_path; do
+        "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" "${_module_path}" || _die "Failed to sign ${_module_path}."
+      done < <(find "${modulesdir}" -type f -name '*.ko' -print0)
     else
       warning "_nvidia_sign is enabled but signing is not available - skipping module signing."
     fi
   fi
 
-  find "${pkgdir}" -name '*.ko' -exec zstd --rm -19 -T0 {} +
+  find "${pkgdir}" -name '*.ko' -exec zstd --rm -19 -T0 {} + || _die "Failed to compress NVIDIA modules for ${_kernver}."
 
   if [ "${_NUKR}" = "true" ] && { ! declare -F _module_split_enabled >/dev/null || ! _module_split_enabled; }; then
-    rm -rf "${srcdir}"
+    rm -rf "${srcdir}" || _die "Failed to remove ${srcdir}."
   fi
 }
 

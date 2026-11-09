@@ -2066,6 +2066,8 @@ fi
     fi
   fi
 
+  _run_staging_knob _signing_config
+
   # rewrite configuration
   msg2 "Setting config" |& tee -a "$_where/logs/prepare.log.txt"
   ( set -o pipefail; make ${_config_updating} ${llvm_opt} |& tee -a "$_where"/logs/prepare.log.txt )

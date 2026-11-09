@@ -366,6 +366,7 @@ _hackheaders() {
   mkdir -p "$pkgdir/usr/src"
   ln -sr "$builddir" "$pkgdir/usr/src/$pkgbase"
 
+  _run_staging_knob _install_signing_keys "${builddir}"
   _run_staging_knob _headers_after_install "${builddir}"
 
   if [ "$_STRIP" = "true" ]; then

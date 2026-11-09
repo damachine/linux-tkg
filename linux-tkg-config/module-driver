@@ -247,7 +247,7 @@ _module_build() {
     fi
     local _module_display_name="$(_module_drv_get_display_name "${_module_id}")"
     msg2 "Building ${_module_display_name}..."
-    make "${_module_make_jobs[@]}" ${llvm_opt} -C "${_kernel_work_folder_abs}" M="${_module_src}" "${_module_make_opts[@]}" modules
+    make "${_module_make_jobs[@]}" ${llvm_opt} -C "${_kernel_work_folder_abs}" M="${_module_src}" "${_module_make_opts[@]}" modules || _die "Failed to build ${_module_display_name}."
   done
 }
 
@@ -264,7 +264,7 @@ _module_sign() {
 
   msg2 "Signing $(_module_drv_get_display_name "${_module_id}") kernel module..."
   [ "${_sign_as_root}" = "true" ] && _sign_cmd=(sudo)
-  "${_sign_cmd[@]}" "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" "${_module_path}"
+  "${_sign_cmd[@]}" "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" "${_module_path}" || _die "Failed to sign ${_module_path}."
 }
 
 _module_drv_install_config() {
@@ -275,9 +275,9 @@ _module_drv_install_config() {
   local _install_cmd=()
   [ "${4:-false}" = "true" ] && _install_cmd=(sudo)
 
-  "${_install_cmd[@]}" install -Dm644 "${_module_src}/hid-xpadneo/etc-modprobe.d/xpadneo.conf" "${_target_prefix}/usr/lib/modprobe.d/${_config_name}.conf"
-  "${_install_cmd[@]}" install -Dm644 "${_module_src}/hid-xpadneo/etc-udev-rules.d/60-xpadneo.rules" "${_target_prefix}/usr/lib/udev/rules.d/60-${_config_name}.rules"
-  "${_install_cmd[@]}" install -Dm644 "${_module_src}/hid-xpadneo/etc-udev-rules.d/70-xpadneo-disable-hidraw.rules" "${_target_prefix}/usr/lib/udev/rules.d/70-${_config_name}-disable-hidraw.rules"
+  "${_install_cmd[@]}" install -Dm644 "${_module_src}/hid-xpadneo/etc-modprobe.d/xpadneo.conf" "${_target_prefix}/usr/lib/modprobe.d/${_config_name}.conf" || _die "Failed to install xpadneo modprobe configuration."
+  "${_install_cmd[@]}" install -Dm644 "${_module_src}/hid-xpadneo/etc-udev-rules.d/60-xpadneo.rules" "${_target_prefix}/usr/lib/udev/rules.d/60-${_config_name}.rules" || _die "Failed to install xpadneo udev rules."
+  "${_install_cmd[@]}" install -Dm644 "${_module_src}/hid-xpadneo/etc-udev-rules.d/70-xpadneo-disable-hidraw.rules" "${_target_prefix}/usr/lib/udev/rules.d/70-${_config_name}-disable-hidraw.rules" || _die "Failed to install xpadneo udev rules."
 }
 
 _module_install() {
@@ -307,37 +307,37 @@ _module_install_as_pkg() {
     local _license_file
 
     msg2 "Installing $(_module_drv_get_display_name "${_module_id}")..."
-    install -dm755 "${_module_extramodules}"
+    install -dm755 "${_module_extramodules}" || _die "Failed to create ${_module_extramodules}."
 
     while IFS= read -r _module_relative_path; do
       [ -n "${_module_relative_path}" ] || continue
       _module_filename="${_module_relative_path##*/}"
       _module_path="${_module_extramodules}/${_module_filename}"
-      install -m644 "${_module_src}/${_module_relative_path}" "${_module_path}"
+      install -m644 "${_module_src}/${_module_relative_path}" "${_module_path}" || _die "Failed to install ${_module_path}."
 
-      "${strip_bin}" --strip-debug "${_module_path}"
+      "${strip_bin}" --strip-debug "${_module_path}" || _die "Failed to strip ${_module_path}."
 
       if _module_drv_should_sign "${_module_id}"; then
         _module_sign "${_module_id}" "${_module_path}"
       fi
 
-      zstd --force --rm -19 -T0 "${_module_path}"
+      zstd --force --rm -19 -T0 "${_module_path}" || _die "Failed to compress ${_module_path}."
     done < <(_module_drv_get_module_paths "${_module_id}")
 
     while IFS= read -r _license_file; do
       [ -n "${_license_file}" ] || continue
       if [ -f "${_module_src}/${_license_file}" ]; then
-        install -Dm644 "${_module_src}/${_license_file}" "${_target_pkgdir}/usr/share/licenses/${pkgbase}/${_module_id}/${_license_file}"
+        install -Dm644 "${_module_src}/${_license_file}" "${_target_pkgdir}/usr/share/licenses/${pkgbase}/${_module_id}/${_license_file}" || _die "Failed to install the ${_module_id} license."
       fi
     done < <(_module_drv_get_license_file "${_module_id}")
 
     if [ "${_module_id}" = "virtualbox" ]; then
       printf '%s\n' vboxdrv vboxnetadp vboxnetflt |
-        install -Dm644 /dev/stdin "${_target_pkgdir}/usr/lib/modules-load.d/${pkgbase}-virtualbox.conf"
+        install -Dm644 /dev/stdin "${_target_pkgdir}/usr/lib/modules-load.d/${pkgbase}-virtualbox.conf" || _die "Failed to install VirtualBox modules-load configuration."
     fi
 
     _module_drv_install_config "${_module_id}" "${_module_src}" "${_target_pkgdir}"
-    rm -rf "${_module_src}"
+    rm -rf "${_module_src}" || _die "Failed to remove ${_module_src}."
   done
 }
 
@@ -355,26 +355,26 @@ _module_install_as_kmod() {
     local _module_path
 
     msg2 "Installing $(_module_drv_get_display_name "${_module_id}")..."
-    sudo install -dm755 "${_extramodules}"
+    sudo install -dm755 "${_extramodules}" || _die "Failed to create ${_extramodules}."
 
     while IFS= read -r _module_relative_path; do
       [ -n "${_module_relative_path}" ] || continue
       _module_filename="${_module_relative_path##*/}"
       _module_path="${_extramodules}/${_module_filename}"
-      sudo install -m644 "${_module_src}/${_module_relative_path}" "${_module_path}"
+      sudo install -m644 "${_module_src}/${_module_relative_path}" "${_module_path}" || _die "Failed to install ${_module_path}."
 
-      sudo "${strip_bin}" --strip-debug "${_module_path}"
+      sudo "${strip_bin}" --strip-debug "${_module_path}" || _die "Failed to strip ${_module_path}."
 
       if _module_drv_should_sign "${_module_id}"; then
         _module_sign "${_module_id}" "${_module_path}" true
       fi
 
-      sudo zstd --force --rm -19 -T0 "${_module_path}"
+      sudo zstd --force --rm -19 -T0 "${_module_path}" || _die "Failed to compress ${_module_path}."
     done < <(_module_drv_get_module_paths "${_module_id}")
     _module_drv_install_config "${_module_id}" "${_module_src}" "" true
   done
 
-  sudo depmod -a "${_kernelname}"
+  sudo depmod -a "${_kernelname}" || _die "Failed to update module dependencies for ${_kernelname}."
 }
 
 _set_module_drv() {
