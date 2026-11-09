@@ -1,11 +1,9 @@
 # NVIDIA open kernel module package feature.
 #
 # Public options:
-#   _nvidia_pkg=""
-#   _nvidia_sign=""
+#   _module_nvidia_pkg=""
 
-[[ -v _nvidia_pkg ]] || _nvidia_pkg=""
-[[ -v _nvidia_sign ]] || _nvidia_sign=""
+[[ -v _module_nvidia_pkg ]] || _module_nvidia_pkg=""
 
 typeset -Ag _nvidia_versions=(
   [latest]="620.70.06"
@@ -20,14 +18,14 @@ _resolve_nvidia() {
   _nv_pkg=""
   local _variant
 
-  case "${_nvidia_pkg:-}" in
+  case "${_module_nvidia_pkg:-}" in
     ""|"false")
       return 0
     ;;
     latest|vulkan|legacy)
-      _nvidia_var="${_nvidia_pkg}"
+      _nvidia_var="${_module_nvidia_pkg}"
       _nvidia_ver="${_nvidia_versions[${_nvidia_var}]}"
-      _nvidia_pkg="${_nvidia_ver}"
+      _module_nvidia_pkg="${_nvidia_ver}"
       if [ "${_nvidia_var}" = "vulkan" ]; then
         _nv_pkg="open-gpu-kernel-modules-${_nvidia_ver}"
       else
@@ -38,9 +36,9 @@ _resolve_nvidia() {
   esac
 
   for _variant in latest vulkan legacy; do
-    if [ "${_nvidia_pkg}" = "${_nvidia_versions[${_variant}]}" ]; then
+    if [ "${_module_nvidia_pkg}" = "${_nvidia_versions[${_variant}]}" ]; then
       _nvidia_var="${_variant}"
-      _nvidia_ver="${_nvidia_pkg}"
+      _nvidia_ver="${_module_nvidia_pkg}"
       if [ "${_nvidia_var}" = "vulkan" ]; then
         _nv_pkg="open-gpu-kernel-modules-${_nvidia_ver}"
       else
@@ -50,11 +48,11 @@ _resolve_nvidia() {
     fi
   done
 
-  _die "Invalid _nvidia_pkg value '${_nvidia_pkg}'. Use 'false' or one of: ${_nvidia_versions[latest]}, ${_nvidia_versions[vulkan]}, ${_nvidia_versions[legacy]}"
+  _die "Invalid _module_nvidia_pkg value '${_module_nvidia_pkg}'. Use 'false' or one of: ${_nvidia_versions[latest]}, ${_nvidia_versions[vulkan]}, ${_nvidia_versions[legacy]}"
 }
 
 _set_nvidia_open() {
-  if [ "${_nvidia_pkg}" = "false" ]; then
+  if [ "${_module_nvidia_pkg}" = "false" ]; then
     _nvidia_var=""
     _nvidia_ver=""
     return
@@ -62,14 +60,14 @@ _set_nvidia_open() {
 
   if [ "${_numadisable}" = "true" ]; then
     warning "nvidia-open requires NUMA enabled for CUDA/NvEnc. _numadisable is \"true\" - disabling nvidia-open."
-    _nvidia_pkg="false"
+    _module_nvidia_pkg="false"
     _nvidia_var=""
     _nvidia_ver=""
-    echo -e "_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+    echo -e "_module_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
     return
   fi
 
-  if [ -z "${_nvidia_pkg}" ]; then
+  if [ -z "${_module_nvidia_pkg}" ]; then
       local _nvidia_prompt_array=()
       local _nvidia_var_map=()
 
@@ -89,22 +87,22 @@ _set_nvidia_open() {
       _prompt_from_array "${_nvidia_prompt_array[@]}"
       _nvidia_var="${_nvidia_var_map[$_selected_index]}"
       if [ "${_nvidia_var}" = "false" ]; then
-        _nvidia_pkg="false"
+        _module_nvidia_pkg="false"
       else
-        _nvidia_pkg="${_nvidia_versions[${_nvidia_var}]}"
+        _module_nvidia_pkg="${_nvidia_versions[${_nvidia_var}]}"
       fi
   fi
 
-  if [ "${_nvidia_pkg}" = "false" ]; then
+  if [ "${_module_nvidia_pkg}" = "false" ]; then
     _nvidia_var=""
     _nvidia_ver=""
-    echo -e "_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+    echo -e "_module_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
     return
   fi
 
   _resolve_nvidia
 
-  if [ "${_nvidia_pkg}" != "false" ]; then
+  if [ "${_module_nvidia_pkg}" != "false" ]; then
     local _kernel_supported="false"
     for _k in "${_nvidia_current_kernels[@]}"; do
       if [ "${_k}" = "${_basekernel}" ]; then
@@ -115,36 +113,25 @@ _set_nvidia_open() {
     if [ "${_kernel_supported}" != "true" ]; then
       error "nvidia-open is not supported for kernel ${_basekernel}. Supported kernels: ${_nvidia_current_kernels[*]}"
       error "Disabling nvidia-open."
-      _nvidia_pkg="false"
+      _module_nvidia_pkg="false"
       _nvidia_var=""
       _nvidia_ver=""
-      echo -e "_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+      echo -e "_module_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
       return
     fi
 
-    if [ "${_nvidia_pkg}" != "false" ] && [ -n "${_nvidia_pkg}" ] && [ -z "${_nvidia_sign}" ]; then
-      msg2 "[EXPERIMENTAL] Do you want to sign the NVIDIA open kernel modules?"
-      msg2 "Requires CONFIG_MODULE_SIG=y in your kernel config. Has no effect without _nvidia_pkg."
-      _nvidia_sign_array_text=("No (disable - recommended)" "Yes (enable - experimental)")
-      _nvidia_sign_array=("false" "true")
-      _default_index="0"
-      _prompt_from_array "${_nvidia_sign_array_text[@]}"
-      _nvidia_sign="${_nvidia_sign_array[$_selected_index]}"
-      echo -e "_nvidia_sign='${_nvidia_sign}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
-    fi
-
-    if [ "${_nvidia_pkg}" != "false" ]; then
-      echo -e "_nvidia_pkg='${_nvidia_pkg}'\n_nvidia_var='${_nvidia_var}'\n_nvidia_ver='${_nvidia_ver}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+    if [ "${_module_nvidia_pkg}" != "false" ]; then
+      echo -e "_module_nvidia_pkg='${_module_nvidia_pkg}'\n_nvidia_var='${_nvidia_var}'\n_nvidia_ver='${_nvidia_ver}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
     fi
   fi
 }
 
 _pkgname_extra() {
-  [ "${_nvidia_pkg}" != "false" ] && [ -n "${_nvidia_pkg}" ] && printf '%s\n' "${pkgbase}-nvidia-open"
+  [ "${_module_nvidia_pkg}" != "false" ] && [ -n "${_module_nvidia_pkg}" ] && printf '%s\n' "${pkgbase}-nvidia-open"
 }
 
 _source_extra() {
-  [ "${_nvidia_pkg}" != "false" ] && [ -n "${_nvidia_pkg}" ] || return 0
+  [ "${_module_nvidia_pkg}" != "false" ] && [ -n "${_module_nvidia_pkg}" ] || return 0
 
   _resolve_nvidia
   if [ "${_nvidia_var}" = "vulkan" ]; then
@@ -155,7 +142,7 @@ _source_extra() {
 }
 
 _build_after_kernel() {
-  [ "${_nvidia_pkg}" != "false" ] && [ -n "${_nvidia_pkg}" ] || return 0
+  [ "${_module_nvidia_pkg}" != "false" ] && [ -n "${_module_nvidia_pkg}" ] || return 0
 
   _resolve_nvidia
   local _nv_open_src="${srcdir}/${_nv_pkg}"
@@ -178,7 +165,7 @@ _build_after_kernel() {
 }
 
 _nvidia_patch() {
-  [ "${_nvidia_pkg}" != "false" ] && [ -n "${_nvidia_pkg}" ] || return 0
+  [ "${_module_nvidia_pkg}" != "false" ] && [ -n "${_module_nvidia_pkg}" ] || return 0
 
   _resolve_nvidia
   local _nv_open_src="${srcdir}/${_nv_pkg}"
@@ -197,7 +184,7 @@ _nvidia_patch() {
 }
 
 _headers_should_cleanup_srcdir() {
-  { [ "${_nvidia_pkg}" = "false" ] || [ -z "${_nvidia_pkg}" ]; } && { ! declare -F _module_split_enabled >/dev/null || ! _module_split_enabled; }
+  { [ "${_module_nvidia_pkg}" = "false" ] || [ -z "${_module_nvidia_pkg}" ]; } && { ! declare -F _module_split_enabled >/dev/null || ! _module_split_enabled; }
 }
 
 _package_nvidia_open() {
@@ -218,30 +205,8 @@ _package_nvidia_open_files() {
   local _nv_open_src="${srcdir}/${_nv_pkg}"
 
   cd "${_kernel_work_folder_abs}"
-  local _kernver="$(<version)"
-  local modulesdir="${pkgdir}/usr/lib/modules/${_kernver}/extramodules"
-
-  install -dm755 "${modulesdir}" || _die "Failed to create ${modulesdir}."
-  install -m644 "${_nv_open_src}"/kernel-open/*.ko "${modulesdir}" || _die "Failed to install NVIDIA modules for ${_kernver}."
+  _module_install_kbuild "${_nv_open_src}/kernel-open" "${pkgdir}/usr"
   install -Dt "${pkgdir}/usr/share/licenses/${pkgname}" -m644 "${_nv_open_src}/COPYING" || _die "Failed to install the NVIDIA license."
-
-  local strip_bin="strip"
-  [ "${_compiler_name}" = "-llvm" ] && strip_bin="llvm-strip"
-  find "${modulesdir}" -type f -name '*.ko' -exec "${strip_bin}" --strip-debug '{}' + || _die "Failed to strip NVIDIA modules for ${_kernver}."
-
-  if [[ "${_nvidia_sign}" == "true" ]]; then
-    if declare -F _signing_resolve >/dev/null && _signing_resolve; then
-      msg2 "Signing NVIDIA open kernel modules..."
-      local _module_path
-      while IFS= read -r -d '' _module_path; do
-        "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" "${_module_path}" || _die "Failed to sign ${_module_path}."
-      done < <(find "${modulesdir}" -type f -name '*.ko' -print0)
-    else
-      warning "_nvidia_sign is enabled but signing is not available - skipping module signing."
-    fi
-  fi
-
-  find "${pkgdir}" -name '*.ko' -exec zstd --rm -19 -T0 {} + || _die "Failed to compress NVIDIA modules for ${_kernver}."
 
   if [ "${_NUKR}" = "true" ] && { ! declare -F _module_split_enabled >/dev/null || ! _module_split_enabled; }; then
     rm -rf "${srcdir}" || _die "Failed to remove ${srcdir}."
@@ -249,6 +214,6 @@ _package_nvidia_open_files() {
 }
 
 _package_functions() {
-  [ "${_nvidia_pkg}" != "false" ] && [ -n "${_nvidia_pkg}" ] || return 0
+  [ "${_module_nvidia_pkg}" != "false" ] && [ -n "${_module_nvidia_pkg}" ] || return 0
   printf 'package_%s-nvidia-open() {\n  _package_nvidia_open\n}\n\n' "${pkgbase}"
 }

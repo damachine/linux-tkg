@@ -1,13 +1,11 @@
 # Third-party out-of-tree module build feature.
 #
 # Public options:
-#   _module_pkg=""
-#   _module_extpkg="internal"
-#   _module_sign=""
+#   _module_extra_pkg=""
+#   _module_extra_pkg_mode="internal"
 
-[[ -v _module_pkg ]] || _module_pkg=""
-[[ -v _module_extpkg ]] || _module_extpkg="internal"
-[[ -v _module_sign ]] || _module_sign=""
+[[ -v _module_extra_pkg ]] || _module_extra_pkg=""
+[[ -v _module_extra_pkg_mode ]] || _module_extra_pkg_mode="internal"
 
 _module_drv_list_has() {
   local _list="$1"
@@ -68,21 +66,10 @@ _module_drv_get_source_dir() {
   printf '%s\n' "$1"
 }
 
-_module_drv_get_module_paths() {
-  case "$1" in
-    xpadneo)
-      printf '%s\n' 'hid-xpadneo/src/hid-xpadneo.ko'
-    ;;
-    virtualbox)
-      printf '%s\n' \
-        'vboxdrv/vboxdrv.ko' \
-        'vboxnetadp/vboxnetadp.ko' \
-        'vboxnetflt/vboxnetflt.ko'
-    ;;
-    *)
-      printf '%s.ko\n' "$1"
-    ;;
-  esac
+_module_drv_get_build_dir() {
+  local _module_dir="$(_module_drv_get_source_dir "$1")"
+  [ "$1" = "xpadneo" ] && _module_dir+="/hid-xpadneo/src"
+  printf '%s\n' "${_module_dir}"
 }
 
 _module_drv_get_license_file() {
@@ -132,13 +119,8 @@ _module_drv_get_virtualbox_source_version() {
   printf '%s\n' "${_version}"
 }
 
-_module_drv_should_sign() {
-  local _module_id="$1"
-  _module_drv_list_has "${_module_sign_resolved}" "${_module_id}"
-}
-
 _module_split_enabled() {
-  [ -n "${_module_pkg:-}" ] && [ "${_module_extpkg:-}" = "external" ]
+  [ -n "${_module_extra_pkg:-}" ] && [ "${_module_extra_pkg_mode:-}" = "external" ]
 }
 
 _pkgname_extra_mod() {
@@ -239,11 +221,10 @@ _module_build() {
   fi
 
   for _module_id in ${_module_resolved}; do
-    local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
+    local _module_src="${srcdir}/$(_module_drv_get_build_dir "${_module_id}")"
     local _module_make_opts=()
     if [ "${_module_id}" = "xpadneo" ]; then
       _module_make_opts=("VERSION=$(git -C "${_module_src}" describe --tags --always --dirty)")
-      _module_src+="/hid-xpadneo/src"
     fi
     local _module_display_name="$(_module_drv_get_display_name "${_module_id}")"
     msg2 "Building ${_module_display_name}..."
@@ -251,20 +232,19 @@ _module_build() {
   done
 }
 
-_module_sign() {
-  local _module_id="$1"
-  local _module_path="$2"
-  local _sign_as_root="${3:-false}"
-  local _sign_cmd=()
+_module_install_kbuild() {
+  local _module_src="$1"
+  local _target_prefix="${2:-}"
+  local _install_cmd=()
+  local _strip_opts=()
 
-  if ! declare -F _signing_resolve >/dev/null || ! _signing_resolve; then
-    warning "$(_module_drv_get_display_name "${_module_id}") signing was requested but signing is not available - skipping."
-    return 0
-  fi
+  [ "${3:-false}" = "true" ] && _install_cmd=(sudo)
+  [ "${_STRIP}" = "true" ] && _strip_opts=(INSTALL_MOD_STRIP=1)
 
-  msg2 "Signing $(_module_drv_get_display_name "${_module_id}") kernel module..."
-  [ "${_sign_as_root}" = "true" ] && _sign_cmd=(sudo)
-  "${_sign_cmd[@]}" "${_sign_script}" "${_sign_hash}" "${_sign_key}" "${_sign_cert}" "${_module_path}" || _die "Failed to sign ${_module_path}."
+  # Run from the target kernel build tree, including /usr/src for install.sh.
+  "${_install_cmd[@]}" env ZSTD_CLEVEL=19 make ${llvm_opt} M="${_module_src}" \
+    INSTALL_MOD_PATH="${_target_prefix}" INSTALL_MOD_DIR=extramodules \
+    "${_strip_opts[@]}" DEPMOD=/doesnt/exist modules_install || _die "Failed to install kernel modules from ${_module_src}."
 }
 
 _module_drv_install_config() {
@@ -290,39 +270,15 @@ _module_install() {
 
 _module_install_as_pkg() {
   local _requested_module_id="${1:-}"
-  local _kernver="${2:-$(<version)}"
-  local _target_pkgdir="${3:-$pkgdir}"
+  local _target_pkgdir="${2:-$pkgdir}"
   local _module_id
-  local modulesdir="${_target_pkgdir}/usr/lib/modules/${_kernver}"
-  local _module_extramodules="${modulesdir}/extramodules"
-  local strip_bin="strip"
-
-  [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
 
   for _module_id in ${_requested_module_id:-${_module_resolved}}; do
     local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
-    local _module_relative_path
-    local _module_filename
-    local _module_path
     local _license_file
 
     msg2 "Installing $(_module_drv_get_display_name "${_module_id}")..."
-    install -dm755 "${_module_extramodules}" || _die "Failed to create ${_module_extramodules}."
-
-    while IFS= read -r _module_relative_path; do
-      [ -n "${_module_relative_path}" ] || continue
-      _module_filename="${_module_relative_path##*/}"
-      _module_path="${_module_extramodules}/${_module_filename}"
-      install -m644 "${_module_src}/${_module_relative_path}" "${_module_path}" || _die "Failed to install ${_module_path}."
-
-      "${strip_bin}" --strip-debug "${_module_path}" || _die "Failed to strip ${_module_path}."
-
-      if _module_drv_should_sign "${_module_id}"; then
-        _module_sign "${_module_id}" "${_module_path}"
-      fi
-
-      zstd --force --rm -19 -T0 "${_module_path}" || _die "Failed to compress ${_module_path}."
-    done < <(_module_drv_get_module_paths "${_module_id}")
+    _module_install_kbuild "${srcdir}/$(_module_drv_get_build_dir "${_module_id}")" "${_target_pkgdir}/usr"
 
     while IFS= read -r _license_file; do
       [ -n "${_license_file}" ] || continue
@@ -343,34 +299,12 @@ _module_install_as_pkg() {
 
 _module_install_as_kmod() {
   local _module_id
-  local _extramodules="/lib/modules/${_kernelname}/extramodules"
-  local strip_bin="strip"
-
-  [ "$_compiler_name" = "-llvm" ] && strip_bin="llvm-strip"
 
   for _module_id in ${_module_resolved}; do
     local _module_src="${srcdir}/$(_module_drv_get_source_dir "${_module_id}")"
-    local _module_relative_path
-    local _module_filename
-    local _module_path
 
     msg2 "Installing $(_module_drv_get_display_name "${_module_id}")..."
-    sudo install -dm755 "${_extramodules}" || _die "Failed to create ${_extramodules}."
-
-    while IFS= read -r _module_relative_path; do
-      [ -n "${_module_relative_path}" ] || continue
-      _module_filename="${_module_relative_path##*/}"
-      _module_path="${_extramodules}/${_module_filename}"
-      sudo install -m644 "${_module_src}/${_module_relative_path}" "${_module_path}" || _die "Failed to install ${_module_path}."
-
-      sudo "${strip_bin}" --strip-debug "${_module_path}" || _die "Failed to strip ${_module_path}."
-
-      if _module_drv_should_sign "${_module_id}"; then
-        _module_sign "${_module_id}" "${_module_path}" true
-      fi
-
-      sudo zstd --force --rm -19 -T0 "${_module_path}" || _die "Failed to compress ${_module_path}."
-    done < <(_module_drv_get_module_paths "${_module_id}")
+    _module_install_kbuild "${srcdir}/$(_module_drv_get_build_dir "${_module_id}")" "" true
     _module_drv_install_config "${_module_id}" "${_module_src}" "" true
   done
 
@@ -380,18 +314,16 @@ _module_install_as_kmod() {
 _set_module_drv() {
   local _module_id
   local _resolved=""
-  local _sign=""
-  local _virtualbox_ignored="false"
 
-  if [ "$_module_pkg" = "false" ]; then
-    _module_pkg=""
-    _module_extpkg=""
+  if [ "$_module_extra_pkg" = "false" ]; then
+    _module_extra_pkg=""
+    _module_extra_pkg_mode=""
     _module_virtualbox_pkgver=""
-    echo -e "_module_pkg=''\n_module_extpkg=''\n_module_virtualbox_pkgver=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+    echo -e "_module_extra_pkg=''\n_module_extra_pkg_mode=''\n_module_virtualbox_pkgver=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
     return
   fi
 
-  if [ -z "$_module_pkg" ]; then
+  if [ -z "$_module_extra_pkg" ]; then
     local _module_ids=("it87" "nct6687" "v4l2loopback" "virtualbox" "xpadneo")
     msg2 "Which out-of-tree kernel modules do you want to build alongside the kernel?"
     msg2 "Enter space-separated numbers (e.g. '0 2'), or press Enter to skip."
@@ -405,23 +337,23 @@ _set_module_drv() {
     if [ -n "$_module_input" ]; then
       for _idx in $_module_input; do
         if [[ "$_idx" =~ ^[0-4]$ ]]; then
-          _module_pkg="$(_module_drv_append_unique "${_module_pkg}" "${_module_ids[$_idx]}")"
+          _module_extra_pkg="$(_module_drv_append_unique "${_module_extra_pkg}" "${_module_ids[$_idx]}")"
         else
           warning "Ignoring invalid selection '$_idx'"
         fi
       done
     fi
-    if [ -n "$_module_pkg" ]; then
-      plain "Selected modules: ${_module_pkg}"
+    if [ -n "$_module_extra_pkg" ]; then
+      plain "Selected modules: ${_module_extra_pkg}"
     else
       plain "No out-of-tree modules selected."
     fi
-    echo -e "_module_pkg='${_module_pkg}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+    echo -e "_module_extra_pkg='${_module_extra_pkg}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
   fi
 
-  for _module_id in ${_module_pkg}; do
+  for _module_id in ${_module_extra_pkg}; do
     if ! _module_drv_validate_id "${_module_id}"; then
-      _die "Unknown third-party module '${_module_id}' in _module_pkg. Supported values: v4l2loopback nct6687 it87 virtualbox xpadneo"
+      _die "Unknown third-party module '${_module_id}' in _module_extra_pkg. Supported values: v4l2loopback nct6687 it87 virtualbox xpadneo"
     fi
     _resolved="$(_module_drv_append_unique "${_resolved}" "${_module_id}")"
   done
@@ -435,59 +367,32 @@ _set_module_drv() {
         [ "${_module_id}" = "virtualbox" ] || _filtered="$(_module_drv_append_unique "${_filtered}" "${_module_id}")"
       done
       _resolved="${_filtered}"
-      _virtualbox_ignored="true"
     else
       command -v pacman >/dev/null 2>&1 || _die "pacman is required to resolve the VirtualBox host module source version"
       _module_virtualbox_pkgver="$(_module_drv_resolve_virtualbox_pkgver)"
     fi
   fi
 
-  if [ "${_module_sign}" = "true" ]; then
-    _sign="${_resolved}"
-  elif [ -n "${_module_sign}" ] && [ "${_module_sign}" != "false" ]; then
-    for _module_id in ${_module_sign}; do
-      if ! _module_drv_validate_id "${_module_id}"; then
-        _die "Unknown third-party module '${_module_id}' in _module_sign. Supported values: true, false, v4l2loopback, nct6687, it87, virtualbox, xpadneo"
-      fi
-      if [ "${_virtualbox_ignored}" = "true" ] && [ "${_module_id}" = "virtualbox" ]; then
-        continue
-      fi
-      _sign="$(_module_drv_append_unique "${_sign}" "${_module_id}")"
-    done
-  fi
-
-  local _resolved_sign=""
-  if [ -n "${_resolved}" ]; then
-    for _module_id in ${_sign}; do
-      if ! _module_drv_list_has "${_resolved}" "${_module_id}"; then
-        _die "_module_sign contains '${_module_id}', but that module is not enabled in _module_pkg"
-      fi
-      _resolved_sign="$(_module_drv_append_unique "${_resolved_sign}" "${_module_id}")"
-    done
-  fi
-
   _module_resolved="${_resolved}"
-  _module_sign_resolved="${_resolved_sign}"
 
   if [ -n "${_module_resolved}" ]; then
-    if [ -z "${_module_extpkg:-}" ]; then
-      _module_extpkg="internal"
+    if [ -z "${_module_extra_pkg_mode:-}" ]; then
+      _module_extra_pkg_mode="internal"
     fi
-    if ! [[ "${_module_extpkg}" =~ ^(internal|external)$ ]]; then
-      _die "Invalid _module_extpkg value '${_module_extpkg}'. Supported values: internal, external"
+    if ! [[ "${_module_extra_pkg_mode}" =~ ^(internal|external)$ ]]; then
+      _die "Invalid _module_extra_pkg_mode value '${_module_extra_pkg_mode}'. Supported values: internal, external"
     fi
   else
-    _module_extpkg=""
+    _module_extra_pkg_mode=""
   fi
 
   echo -e "_module_resolved='${_module_resolved}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
-  echo -e "_module_sign_resolved='${_module_sign_resolved}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
-  echo -e "_module_extpkg='${_module_extpkg}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+  echo -e "_module_extra_pkg_mode='${_module_extra_pkg_mode}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
   echo -e "_module_virtualbox_pkgver='${_module_virtualbox_pkgver}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
 
   if [ -n "${_module_resolved}" ] && [ "$_ispkgbuild" != "true" ] && \
      ! [[ "$_distro" =~ ^(Generic|Gentoo)$ ]]; then
-    warning "_module_pkg is currently only implemented for Arch (PKGBUILD) and Generic/Gentoo (install.sh). Other distros will ignore it."
+    warning "_module_extra_pkg is currently only implemented for Arch (PKGBUILD) and Generic/Gentoo (install.sh). Other distros will ignore it."
   fi
 }
 
@@ -500,7 +405,7 @@ _build_after_kmod() {
 }
 
 _pkgbase_after_modules_install_mod() {
-  if [ -n "$_module_pkg" ] && ! _module_split_enabled; then
+  if [ -n "$_module_extra_pkg" ] && ! _module_split_enabled; then
     local _module_id
     local _virtualbox_source_version=""
 
@@ -509,7 +414,7 @@ _pkgbase_after_modules_install_mod() {
     fi
 
     msg2 "Installing out-of-tree modules into the main kernel package..."
-    _module_install "" "$(<version)" "${pkgdir}"
+    _module_install "" "${pkgdir}"
 
     for _module_id in ${_module_resolved}; do
       case "${_module_id}" in
@@ -582,8 +487,7 @@ _package_module() {
   esac
 
   cd "$_kernel_work_folder_abs"
-  local _kernver="$(<version)"
-  _module_install "$_module_id" "${_kernver}" "${pkgdir}"
+  _module_install "$_module_id" "${pkgdir}"
 
   for _tmp_m in ${_module_resolved}; do
     [ -n "$_tmp_m" ] && _last_module_id="$_tmp_m"

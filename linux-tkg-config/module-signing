@@ -1,20 +1,32 @@
 # Module signing feature knobs and helpers.
 
+[[ -v _module_signing ]] || _module_signing="autodetect"
 [[ -v _install_signing_keys ]] || _install_signing_keys=""
 
 _signing_config() {
-  if [[ "$_install_signing_keys" == "true" || -n "${_module_sign_resolved:-}" || ( "${_nvidia_sign:-false}" == "true" && "${_nvidia_pkg:-false}" != "false" ) ]]; then
+  if [[ "$_module_signing" == "true" || "$_install_signing_keys" == "true" ]]; then
     msg2 "Enabling module signature support..."
     scripts/config --enable MODULE_SIG || _die "Failed to enable CONFIG_MODULE_SIG."
   fi
+
+  case "$_module_signing" in
+    true)
+      msg2 "Enabling automatic module signing..."
+      scripts/config --enable MODULE_SIG_ALL || _die "Failed to enable CONFIG_MODULE_SIG_ALL."
+    ;;
+    false)
+      msg2 "Disabling automatic module signing..."
+      scripts/config --disable MODULE_SIG_ALL || _die "Failed to disable CONFIG_MODULE_SIG_ALL."
+    ;;
+    autodetect) ;;
+    *) _die "Invalid _module_signing value '${_module_signing}'. Use autodetect, true or false." ;;
+  esac
 }
 
 _signing_resolve() {
-  _sign_script="${_kernel_work_folder_abs}/scripts/sign-file"
   _sign_key="$(grep -Po 'CONFIG_MODULE_SIG_KEY="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
   [[ "$_sign_key" =~ ^/ ]] || _sign_key="${_kernel_work_folder_abs}/${_sign_key}"
   _sign_cert="${_kernel_work_folder_abs}/certs/signing_key.x509"
-  _sign_hash="$(grep -Po 'CONFIG_MODULE_SIG_HASH="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
 
   if [[ ! -f "$_sign_key" ]]; then
     warning "Module signing key not found: ${_sign_key}"
@@ -33,7 +45,7 @@ _install_signing_keys() {
   if [[ "$_install_signing_keys" == "true" ]]; then
     _signing_resolve || _die "Cannot install module signing keys: CONFIG_MODULE_SIG=y and a local signing key/certificate are required."
 
-    msg2 "Installing module signing keys..."
+    msg2 "Installing module signing keys into ${pkgbase}-headers..."
     install -Dm400 -- "${_sign_key}" "${_builddir}/certs/signing_key.pem" || _die "Failed to install the module signing key."
     install -Dm644 -- "${_sign_cert}" "${_builddir}/certs/signing_key.x509" || _die "Failed to install the module signing certificate."
   fi
