@@ -1,0 +1,219 @@
+# NVIDIA open kernel module package feature.
+#
+# Public options:
+#   _module_nvidia_pkg=""
+
+[[ -v _module_nvidia_pkg ]] || _module_nvidia_pkg=""
+
+typeset -Ag _nvidia_versions=(
+  [latest]="620.70.06"
+  [vulkan]="595.44.16"
+  [legacy]="580.196.07"
+)
+_nvidia_current_kernels=("7.2" "7.3" "7.4")
+
+_resolve_nvidia() {
+  _nvidia_var=""
+  _nvidia_ver=""
+  _nv_pkg=""
+  local _variant
+
+  case "${_module_nvidia_pkg:-}" in
+    ""|"false")
+      return 0
+    ;;
+    latest|vulkan|legacy)
+      _nvidia_var="${_module_nvidia_pkg}"
+      _nvidia_ver="${_nvidia_versions[${_nvidia_var}]}"
+      _module_nvidia_pkg="${_nvidia_ver}"
+      if [ "${_nvidia_var}" = "vulkan" ]; then
+        _nv_pkg="open-gpu-kernel-modules-${_nvidia_ver}"
+      else
+        _nv_pkg="NVIDIA-kernel-module-source-${_nvidia_ver}"
+      fi
+      return 0
+    ;;
+  esac
+
+  for _variant in latest vulkan legacy; do
+    if [ "${_module_nvidia_pkg}" = "${_nvidia_versions[${_variant}]}" ]; then
+      _nvidia_var="${_variant}"
+      _nvidia_ver="${_module_nvidia_pkg}"
+      if [ "${_nvidia_var}" = "vulkan" ]; then
+        _nv_pkg="open-gpu-kernel-modules-${_nvidia_ver}"
+      else
+        _nv_pkg="NVIDIA-kernel-module-source-${_nvidia_ver}"
+      fi
+      return 0
+    fi
+  done
+
+  _die "Invalid _module_nvidia_pkg value '${_module_nvidia_pkg}'. Use 'false' or one of: ${_nvidia_versions[latest]}, ${_nvidia_versions[vulkan]}, ${_nvidia_versions[legacy]}"
+}
+
+_set_nvidia_open() {
+  if [ "${_module_nvidia_pkg}" = "false" ]; then
+    _nvidia_var=""
+    _nvidia_ver=""
+    return
+  fi
+
+  if [ "${_numadisable}" = "true" ]; then
+    warning "nvidia-open requires NUMA enabled for CUDA/NvEnc. _numadisable is \"true\" - disabling nvidia-open."
+    _module_nvidia_pkg="false"
+    _nvidia_var=""
+    _nvidia_ver=""
+    echo -e "_module_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+    return
+  fi
+
+  if [ -z "${_module_nvidia_pkg}" ]; then
+      local _nvidia_prompt_array=()
+      local _nvidia_var_map=()
+
+      _nvidia_prompt_array+=("v${_nvidia_versions[latest]}")
+      _nvidia_var_map+=("latest")
+      _nvidia_prompt_array+=(
+        "v${_nvidia_versions[vulkan]}"
+        "v${_nvidia_versions[legacy]}"
+        "skip building NVIDIA open kernel modules (default)"
+      )
+      _nvidia_var_map+=("vulkan" "legacy" "false")
+
+      msg2 "Which open NVIDIA kernel module version do you want to build as a separate package?"
+      msg2 "Requires Turing+ GPU (GTX 16xx and RTX 20xx or newer). Requires NUMA enabled."
+      msg2 "Select an entry, or press Enter to skip."
+      _default_index=$((${#_nvidia_prompt_array[@]} - 1))
+      _prompt_from_array "${_nvidia_prompt_array[@]}"
+      _nvidia_var="${_nvidia_var_map[$_selected_index]}"
+      if [ "${_nvidia_var}" = "false" ]; then
+        _module_nvidia_pkg="false"
+      else
+        _module_nvidia_pkg="${_nvidia_versions[${_nvidia_var}]}"
+      fi
+  fi
+
+  if [ "${_module_nvidia_pkg}" = "false" ]; then
+    _nvidia_var=""
+    _nvidia_ver=""
+    echo -e "_module_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+    return
+  fi
+
+  _resolve_nvidia
+
+  if [ "${_module_nvidia_pkg}" != "false" ]; then
+    local _kernel_supported="false"
+    for _k in "${_nvidia_current_kernels[@]}"; do
+      if [ "${_k}" = "${_basekernel}" ]; then
+        _kernel_supported="true"
+        break
+      fi
+    done
+    if [ "${_kernel_supported}" != "true" ]; then
+      error "nvidia-open is not supported for kernel ${_basekernel}. Supported kernels: ${_nvidia_current_kernels[*]}"
+      error "Disabling nvidia-open."
+      _module_nvidia_pkg="false"
+      _nvidia_var=""
+      _nvidia_ver=""
+      echo -e "_module_nvidia_pkg='false'\n_nvidia_var=''\n_nvidia_ver=''" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+      return
+    fi
+
+    if [ "${_module_nvidia_pkg}" != "false" ]; then
+      echo -e "_module_nvidia_pkg='${_module_nvidia_pkg}'\n_nvidia_var='${_nvidia_var}'\n_nvidia_ver='${_nvidia_ver}'" >> "${_FROGMINER_TARGET:-${_where}/BIG_UGLY_FROGMINER}"
+    fi
+  fi
+}
+
+_pkgname_extra() {
+  [ "${_module_nvidia_pkg}" != "false" ] && [ -n "${_module_nvidia_pkg}" ] && printf '%s\n' "${pkgbase}-nvidia-open"
+}
+
+_source_extra() {
+  [ "${_module_nvidia_pkg}" != "false" ] && [ -n "${_module_nvidia_pkg}" ] || return 0
+
+  _resolve_nvidia
+  if [ "${_nvidia_var}" = "vulkan" ]; then
+    printf '%s.tar.gz::https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/%s.tar.gz\n' "${_nv_pkg}" "${_nvidia_ver}"
+  else
+    printf 'https://download.nvidia.com/XFree86/NVIDIA-kernel-module-source/%s.tar.xz\n' "${_nv_pkg}"
+  fi
+}
+
+_build_after_kernel() {
+  [ "${_module_nvidia_pkg}" != "false" ] && [ -n "${_module_nvidia_pkg}" ] || return 0
+
+  _resolve_nvidia
+  local _nv_open_src="${srcdir}/${_nv_pkg}"
+  local _kernuname
+  _kernuname="$(< "${_kernel_work_folder_abs}/include/config/kernel.release")"
+  local MODULE_FLAGS=(
+    KERNEL_UNAME="${_kernuname}"
+    IGNORE_CC_MISMATCH=yes
+    IGNORE_XEN_PRESENCE=1
+    IGNORE_PREEMPT_RT_PRESENCE=1
+    SYSSRC="${_kernel_work_folder_abs}"
+    SYSOUT="${_kernel_work_folder_abs}"
+  )
+  if [ ! -d "${_nv_open_src}" ]; then
+    _die "NVIDIA-open source directory not found: ${_nv_open_src}"
+  fi
+  msg2 "Building NVIDIA open kernel modules (${_nvidia_ver})..."
+  env CFLAGS= CXXFLAGS= LDFLAGS= make "${BUILD_FLAGS[@]}" "${MODULE_FLAGS[@]}" \
+    -C "${_nv_open_src}" -j"$(nproc)" modules || _die "Failed to build NVIDIA open kernel modules for ${_kernuname}."
+}
+
+_nvidia_patch() {
+  [ "${_module_nvidia_pkg}" != "false" ] && [ -n "${_module_nvidia_pkg}" ] || return 0
+
+  _resolve_nvidia
+  local _nv_open_src="${srcdir}/${_nv_pkg}"
+  msg2 "NVIDIA-open-module source version ${_nvidia_ver} will be built and installed alongside this kernel."
+
+  local _nv_patch="${srcdir}/0020-nvidia-${_nvidia_var}.patch"
+  if [ ! -f "${_nv_patch}" ] && [ "${_nvidia_var}" = "vulkan" ]; then
+    _nv_patch="${srcdir}/0020-nvidia-latest.patch"
+  fi
+  if [ -f "${_nv_patch}" ]; then
+    msg2 "Applying NVIDIA-open-module patches (${_nvidia_ver})..."
+    patch -Np1 -i "${_nv_patch}" -d "${_nv_open_src}"
+  else
+    msg2 "No nvidia patch found (looked for $(basename "${_nv_patch}"))."
+  fi
+}
+
+_headers_should_cleanup_srcdir() {
+  { [ "${_module_nvidia_pkg}" = "false" ] || [ -z "${_module_nvidia_pkg}" ]; } && { ! declare -F _module_split_enabled >/dev/null || ! _module_split_enabled; }
+}
+
+_package_nvidia_open() {
+  source "${_where}/BIG_UGLY_FROGMINER"
+
+  _resolve_nvidia
+
+  pkgdesc="NVIDIA open modules driver $_nvidia_ver for the $pkgdesc kernel"
+  depends=("${pkgbase}=${pkgver}" "libglvnd" "nvidia-utils-tkg>=${_nvidia_ver}")
+  provides=("NVIDIA-MODULE")
+  conflicts=("${pkgbase}-nvidia")
+  license=('MIT AND GPL-2.0-only')
+
+  _package_nvidia_open_files
+}
+
+_package_nvidia_open_files() {
+  local _nv_open_src="${srcdir}/${_nv_pkg}"
+
+  cd "${_kernel_work_folder_abs}"
+  _module_install_kbuild "${_nv_open_src}/kernel-open" "${pkgdir}/usr"
+  install -Dt "${pkgdir}/usr/share/licenses/${pkgname}" -m644 "${_nv_open_src}/COPYING" || _die "Failed to install the NVIDIA license."
+
+  if [ "${_NUKR}" = "true" ] && { ! declare -F _module_split_enabled >/dev/null || ! _module_split_enabled; }; then
+    rm -rf "${srcdir}" || _die "Failed to remove ${srcdir}."
+  fi
+}
+
+_package_functions() {
+  [ "${_module_nvidia_pkg}" != "false" ] && [ -n "${_module_nvidia_pkg}" ] || return 0
+  printf 'package_%s-nvidia-open() {\n  _package_nvidia_open\n}\n\n' "${pkgbase}"
+}
