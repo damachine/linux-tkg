@@ -26,5 +26,13 @@ gnupg/
 *sha256sum*
 current_env
 BIG_UGLY_FROGMINER
+BIG_UGLY_FROGMINER.pending
 linux-kernel.git/
 linux-src-git/
+gpu-unlock/
+it87/
+nct6687/
+v4l2loopback/
+virtualbox/
+xpadneo/
+virtualbox-host-dkms-*.pkg.tar.zst
