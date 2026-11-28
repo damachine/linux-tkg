@@ -1,0 +1,67 @@
+From 3df238d7a9f5ac7d78115958fd7a36139f61ca34 Mon Sep 17 00:00:00 2001
+From: Douglas Anderson <dianders@chromium.org>
+Subject: [PATCH] kbuild: AutoFDO: Disable Profi (-fno-sample-profile-use-profi)
+
+Starting in Clang 21 (LLVM commit 2fc4a4a9d3a8 ("[Driver][SamplePGO]
+Enable -fsample-profile-use-profi (#146795)") [1]), the Clang driver
+automatically passes -mllvm -sample-profile-use-profi whenever
+-fprofile-sample-use is specified, enabling LLVM's flow-based profile
+inference algorithm (Profi) by default.
+
+However, as Rong Xu noted [2], the kernel's AutoFDO implementation uses
+flow-sensitive discriminators (FS-AFDO), and Profi has known issues with
+FS-AFDO that degrade runtime performance compared to LLVM's original
+profile propagation algorithm. In addition, Profi's min-cost max-flow
+solver (applyFlowInference) can hit pathological compile times (30+
+minutes or hangs) on certain kernel control-flow graphs when profiles
+drift slightly or when combined with GCOV [3].
+
+Pass -fno-sample-profile-use-profi to disable Profi and restore the
+original profile propagation behavior that kernel AutoFDO was tested
+with. Guard the flag with clang-min-version 210000 since it was
+introduced in Clang 21 alongside the default change, whereas
+CONFIG_AUTOFDO_CLANG supports Clang 17+. Note that cc-option cannot be
+used to probe for the flag because cc-option invokes Clang with -Werror
+but without -fprofile-sample-use, causing Clang to fail the probe with
+-Werror,-Wunused-command-line-argument.
+
+Although SampleProfileUseProfi currently defaults to false in the LLVM
+backend and is only enabled by the Clang driver, explicitly pass
+-Cllvm-args=-sample-profile-use-profi=false in RUSTFLAGS_AUTOFDO_CLANG
+and --mllvm=-sample-profile-use-profi=false in KBUILD_LDFLAGS as well so
+that C, Rust, and ThinLTO flags remain consistent even if rustc or LLVM
+defaults change in the future. Unlike the Clang driver flag
+-fno-sample-profile-use-profi (added in Clang 21), the underlying LLVM
+-sample-profile-use-profi option was introduced in LLVM 14, which
+predates the LLVM 17+ requirement of CONFIG_AUTOFDO_CLANG, so no version
+checks are needed for the Rust or linker flags.
+
+Cc: stable@vger.kernel.org
+Fixes: 315ad8780a12 ("kbuild: Add AutoFDO support for Clang build")
+Suggested-by: Rong Xu <xur@google.com>
+Reviewed-by: Rong Xu <xur@google.com>
+Reviewed-by: Snehasish Kumar <snehasishk@google.com>
+Link: https://github.com/llvm/llvm-project/commit/2fc4a4a9d3a87a9e11c48ef25522aa17c2a71003 [1]
+Link: https://lore.kernel.org/r/CAF1bQ=S52KWHopqxksctbBirFEr5Mz1dKKMAoWh-dqLHii3Nig@mail.gmail.com [2]
+Link: https://github.com/ClangBuiltLinux/linux/issues/2188 [3]
+Signed-off-by: Douglas Anderson <dianders@chromium.org>
+Reviewed-by: Nick Desaulniers <ndesaulniers@google.com>
+Reported-by: Han Wang <nesthanwang@google.com>
+Reported-by: Yabin Cui <yabinc@google.com>
+Link: https://patch.msgid.link/20261106113800.v2.1.I0b27923381ef34cc99cdf8b65fea2e1bafce6370@changeid
+Signed-off-by: Nathan Chancellor <nathan@kernel.org>
+
+(cherry picked from commit 3df238d7a9f5ac7d78115958fd7a36139f61ca34)
+[Linux 6.18 backport: apply the C and ThinLTO flags.]
+---
+diff --git a/scripts/Makefile.autofdo b/scripts/Makefile.autofdo
+--- a/scripts/Makefile.autofdo
++++ b/scripts/Makefile.autofdo
+@@ -12,2 +12,3 @@
+   CFLAGS_AUTOFDO_CLANG += -fprofile-sample-use=$(CLANG_AUTOFDO_PROFILE) -ffunction-sections
++  CFLAGS_AUTOFDO_CLANG += $(if $(call clang-min-version,210000),-fno-sample-profile-use-profi)
+   CFLAGS_AUTOFDO_CLANG += -fsplit-machine-functions
+@@ -18,2 +19,3 @@
+     KBUILD_LDFLAGS += --lto-sample-profile=$(CLANG_AUTOFDO_PROFILE)
++    KBUILD_LDFLAGS += --mllvm=-sample-profile-use-profi=false
+   endif

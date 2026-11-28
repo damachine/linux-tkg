@@ -1,0 +1,108 @@
+# Module signing feature knobs and helpers.
+
+[[ -v _module_signing ]] || _module_signing="autodetect"
+[[ -v _module_signing_key ]] || _module_signing_key=""
+[[ -v _module_signing_cert ]] || _module_signing_cert=""
+[[ -v _install_signing_keys ]] || _install_signing_keys=""
+[[ -v _system_trusted_keys ]] || _system_trusted_keys=""
+
+_signing_config() {
+  if [[ "$_module_signing" == "true" || "$_install_signing_keys" == "true" ]]; then
+    msg2 "Enabling module signature support..."
+    scripts/config --enable MODULE_SIG || _die "Failed to enable CONFIG_MODULE_SIG."
+  fi
+
+  case "$_module_signing" in
+    true)
+      msg2 "Enabling automatic module signing..."
+      scripts/config --enable MODULE_SIG_ALL || _die "Failed to enable CONFIG_MODULE_SIG_ALL."
+    ;;
+    false)
+      msg2 "Disabling automatic module signing..."
+      scripts/config --disable MODULE_SIG_ALL || _die "Failed to disable CONFIG_MODULE_SIG_ALL."
+    ;;
+    autodetect) ;;
+    *) _die "Invalid _module_signing value '${_module_signing}'. Use autodetect, true or false." ;;
+  esac
+
+  if [[ -n "$_module_signing_cert" && -z "$_module_signing_key" ]]; then
+    _die "_module_signing_cert requires _module_signing_key."
+  fi
+
+  if [[ -n "$_module_signing_key" ]]; then
+    local _signing_key="$_module_signing_key"
+    [[ "$_signing_key" = /* ]] || _signing_key="${_where}/${_signing_key}"
+    [[ -f "$_signing_key" ]] || _die "Module signing key file not found: ${_signing_key}"
+
+    local _signing_cert="$_module_signing_cert"
+    if [[ -n "$_signing_cert" ]]; then
+      [[ "$_signing_cert" = /* ]] || _signing_cert="${_where}/${_signing_cert}"
+      [[ -f "$_signing_cert" && -r "$_signing_cert" ]] || _die "Module signing certificate file not found or not readable: ${_signing_cert}"
+    fi
+
+    local _key_read_cmd=(cat)
+    if [[ ! -r "$_signing_key" ]]; then
+      msg2 "Reading protected module signing key with sudo..."
+      _key_read_cmd=(env -u LD_PRELOAD -u LD_LIBRARY_PATH sudo cat)
+    fi
+
+    if [[ -n "$_signing_cert" || ! -r "$_signing_key" ]]; then
+      local _combined_key
+      _combined_key="$(mktemp certs/tkg-signing-key.XXXXXX)" || _die "Failed to create the combined module signing PEM file."
+      ( if [[ -n "$_signing_cert" ]]; then
+          cat -- "$_signing_cert" && printf '\n'
+        fi && "${_key_read_cmd[@]}" -- "$_signing_key"
+      ) > "$_combined_key" || _die "Failed to read the module signing key and certificate."
+      mv -- "$_combined_key" certs/tkg-signing-key.pem || _die "Failed to install the combined module signing PEM file."
+      _signing_key="certs/tkg-signing-key.pem"
+    fi
+
+    local _key_public _cert_public
+    _key_public="$(KBUILD_SIGN_PIN="${KBUILD_SIGN_PIN:-}" openssl pkey -in "$_signing_key" -passin env:KBUILD_SIGN_PIN -pubout)" || _die "Cannot read the private module signing key: ${_signing_key}"
+    _cert_public="$(openssl x509 -in "$_signing_key" -pubkey -noout)" || _die "Cannot read the module signing certificate: ${_signing_key}"
+    [[ "$_key_public" == "$_cert_public" ]] || _die "Module signing key and certificate do not match."
+
+    msg2 "Using module signing key ${_signing_key}..."
+    scripts/config --enable MODULE_SIG || _die "Failed to enable CONFIG_MODULE_SIG."
+    scripts/config --set-str MODULE_SIG_KEY "$_signing_key" || _die "Failed to set CONFIG_MODULE_SIG_KEY."
+  fi
+
+  if [[ -n "$_system_trusted_keys" ]]; then
+    local _trusted_keys="$_system_trusted_keys"
+    [[ "$_trusted_keys" = /* ]] || _trusted_keys="${_where}/${_trusted_keys}"
+    [[ -f "$_trusted_keys" && -r "$_trusted_keys" ]] || _die "Trusted certificate file not found or not readable: ${_trusted_keys}"
+
+    msg2 "Adding trusted certificates from ${_trusted_keys}..."
+    scripts/config --enable MODULE_SIG || _die "Failed to enable CONFIG_MODULE_SIG."
+    scripts/config --enable SYSTEM_TRUSTED_KEYRING || _die "Failed to enable CONFIG_SYSTEM_TRUSTED_KEYRING."
+    scripts/config --set-str SYSTEM_TRUSTED_KEYS "$_trusted_keys" || _die "Failed to set CONFIG_SYSTEM_TRUSTED_KEYS."
+  fi
+}
+
+_signing_resolve() {
+  _sign_key="$(grep -Po 'CONFIG_MODULE_SIG_KEY="\K[^"]*' "${_kernel_work_folder_abs}/.config")"
+  [[ "$_sign_key" =~ ^/ ]] || _sign_key="${_kernel_work_folder_abs}/${_sign_key}"
+  _sign_cert="${_kernel_work_folder_abs}/certs/signing_key.x509"
+
+  if [[ ! -f "$_sign_key" ]]; then
+    warning "Module signing key not found: ${_sign_key}"
+    return 1
+  elif [[ ! -f "$_sign_cert" ]]; then
+    warning "Module signing certificate not found: ${_sign_cert}"
+    return 1
+  fi
+
+  return 0
+}
+
+_install_signing_keys() {
+  local _builddir="$1"
+
+  if [[ "$_install_signing_keys" == "true" ]]; then
+    _signing_resolve || _die "Cannot install module signing keys: CONFIG_MODULE_SIG=y and a local signing key/certificate are required."
+
+    msg2 "Installing module signing keys into ${pkgbase}-headers..."
+    install -Dm400 -- "${_sign_key}" "${_builddir}/certs/signing_key.pem" || _die "Failed to install the module signing key."
+    install -Dm644 -- "${_sign_cert}" "${_builddir}/certs/signing_key.x509" || _die "Failed to install the module signing certificate."
+  fi
+}

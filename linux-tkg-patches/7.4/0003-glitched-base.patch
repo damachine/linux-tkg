@@ -402,10 +402,10 @@ index 181e79f1d..4177b3051 100644
  
  void setup_per_zone_wmarks(void);
 diff --git a/mm/page_alloc.c b/mm/page_alloc.c
-index ee902a468..742c0117d 100644
+index 6624293e4..6c38a37f9 100644
 --- a/mm/page_alloc.c
 +++ b/mm/page_alloc.c
-@@ -93,6 +93,8 @@ typedef int __bitwise fpi_t;
+@@ -96,6 +96,8 @@ typedef int __bitwise fpi_t;
  /* free_pages_prepare() has already been called for page(s) being freed. */
  #define FPI_PREPARED		((__force fpi_t)BIT(3))
  
@@ -422,7 +422,7 @@ index ee902a468..742c0117d 100644
  	unsigned long alloc_start_time = jiffies;
  
  	/*
-@@ -4811,8 +4814,13 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
+@@ -4883,8 +4886,13 @@ restart:
  
  retry:
  	/* Ensure kswapd doesn't accidentally go to sleep as long as we loop */
@@ -437,7 +437,7 @@ index ee902a468..742c0117d 100644
  
  	/*
  	 * The adjusted alloc_flags might result in immediate success, so try
-@@ -5115,8 +5123,6 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
+@@ -5115,8 +5123,6 @@ nopage:
  		goto retry;
  	}
  fail:
@@ -446,7 +446,7 @@ index ee902a468..742c0117d 100644
  got_pg:
  	/* A rebuild during the walk may have handed out an ineligible zone. */
  	if (page && check_retry_zonelist(zonelist_iter_cookie)) {
-@@ -5124,6 +5130,11 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
+@@ -5124,6 +5130,11 @@ got_pg:
  		page = NULL;
  		goto restart;
  	}
@@ -1055,55 +1055,64 @@ index bba28607a..60c76d0d9 100644
 2.55.0
 
 
-From 500682ababc35f1bcf19765b053128063df56142 Mon Sep 17 00:00:00 2001
+From 7a306edf54f27efde968d1f70be626234d8a2974 Mon Sep 17 00:00:00 2001
 From: Xie Yuanbin <qq570070308@gmail.com>
-Date: Sun, 23 Nov 2025 20:18:27 +0800
-Subject: [PATCH 21/21] ZEN: sched/core: Make finish_task_switch() and its
- subfunctions always inline
+Date: Sun, 1 Mar 2026 16:35:20 +0800
+Subject: [PATCH] sched/core: Make finish_task_switch() and its subfunctions
+ always inline
 
-finish_task_switch() is a hot code path in context switching.
-When spectre_v2_user is enabled, kernel is likely to perform branch
-prediction hardening inside switch_mm_irqs_off(). finish_task_switch()
-is right after switch_mm_irqs_off(), so the performance here is
-greatly affected by function calls and branch jumps.
+finish_task_switch() is not inlined even in the O2 level optimization,
+performance testing indicates that this could lead to a significant
+performance degradation when certain Spectre vulnerability mitigations
+are enabled.
 
-Make finish_task_switch() always inline to optimize performance.
+In switch_mm_irq_off(), some mitigations may clear branch prediction
+history, or the instruction cache, like arm64_apply_bp_hardening() on
+arm64, BPIALL/ICIALLU on arm, and indirect_branch_prediction_barrier()
+on x86. finish_task_switch() is right after switch_mm_irqs_off(), the
+performance is greatly affected by function calls and branch jumps.
 
-After finish_task_switch() is changed as always inline, the number of
-calling points of subfunctions increases. According to the compiler
-optimization strategy, subfunctions that were originally inline may no
-longer be inline.
+__schedule() has a __sched attribute, which makes it be placed in
+'.sched.text' section, while finish_task_switch() does not. This makes
+they "far away from each other" in vmlinux, which aggravating the
+performance degradation.
 
-Also make the subfunctions of finish_task_stwitch() always inline to
-prevent performance degradation.
+Make finish_task_switch() and its subfunctions always inline to optimize
+the performance.
 
-There is a improvement in the performace of finish_task_switch(). When
-spectre v2 is enabled, the improvement is significant.
+Performance test - time spent on calling finish_task_switch():
+1. x86-64: Intel i5-8300h@4Ghz, DDR4@2666mhz; unit: x86's tsc
+ | test scenario                     |    old |   new |           delta |
+ | gcc 15.2                          |  27.50 | 25.45 |  -2.05 ( -7.5%) |
+ | gcc 15.2     + spectre_v2_user=on |  46.75 | 25.96 | -20.79 (-44.5%) |
+ | clang 21.1.7                      |  27.25 | 25.45 |  -1.80 ( -6.6%) |
+ | clang 21.1.7 + spectre_v2_user=on |  39.50 | 26.00 | -13.50 (-34.2%) |
 
-The following are testing results from intel i5-8300h@4Ghz (x86):
-Time spent on calling finish_task_switch(), the unit is tsc from x86:
- | test scenario             | old   | new   | delta          |
- | gcc 15.2                  | 13.94 | 12.40 | 1.54  (-11.1%) |
- | gcc 15.2 + spectre_v2     | 24.78 | 13.70 | 11.08 (-44.7%) |
- | clang 21.1.4              | 13.90 | 12.71 | 1.19  (- 8.6%) |
- | clang 21.1.4 + spectre_v2 | 29.01 | 18.91 | 10.1  (-34.8%) |
+2. x86-64: AMD 9600x@5.45Ghz, DDR5@4800mhz; unit: x86's tsc
+ | test scenario                     |    old |   new |           delta |
+ | gcc 15.2                          |  27.51 | 27.51 |      0 (    0%) |
+ | gcc 15.2     + spectre_v2_user=on | 105.21 | 67.89 | -37.32 (-35.5%) |
+ | clang 21.1.7                      |  27.51 | 27.51 |      0 (    0%) |
+ | clang 21.1.7 + spectre_v2_user=on | 104.15 | 67.52 | -36.63 (-35.2%) |
 
-There is a minor improvement in the size of .text section in vmlinux,
-the unit is bytes:
- | test scenario             | old      | new      | delta |
- | gcc 15.2                  | 16208096 | 16208736 | 640   |
- | clang 21.1.4              | 17943328 | 17944224 | 896   |
+3. arm64: Raspberry Pi 3b Rev 1.2, Cortex-A53@1.2Ghz; unit: cntvct_el0
+ | test scenario                     |    old |   new |           delta |
+ | gcc 15.2                          |  1.453 | 1.115 | -0.338 (-23.3%) |
+ | clang 21.1.7                      |  1.532 | 1.123 | -0.409 (-26.7%) |
 
-No size changes were found on bzImage.
+4. arm32: Raspberry Pi 3b Rev 1.2, Cortex-A53@1.2Ghz; unit: cntvct_el0
+ | test scenario                     |    old |   new |           delta |
+ | gcc 15.2                          |  1.421 | 1.187 | -0.234 (-16.5%) |
+ | clang 21.1.7                      |  1.437 | 1.200 | -0.237 (-16.5%) |
 
-Signed-off-by: Xie Yuanbin <qq570070308@gmail.com>
-Cc: Thomas Gleixner <tglx@linutronix.de>
+Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: Thomas Gleixner <tglx@kernel.org>
 Cc: Rik van Riel <riel@surriel.com>
 Cc: Segher Boessenkool <segher@kernel.crashing.org>
-Cc: David Hildenbrand (Red Hat) <david@kernel.org>
-Cc: Peter Zijlstra <peterz@infradead.org>
+Cc: David Hildenbrand (Arm) <david@kernel.org>
 Cc: H. Peter Anvin (Intel) <hpa@zytor.com>
 Cc: Arnd Bergmann <arnd@arndb.de>
+Signed-off-by: Xie Yuanbin <qq570070308@gmail.com>
 ---
  arch/arm/include/asm/mmu_context.h      |  2 +-
  arch/riscv/include/asm/sync_core.h      |  2 +-
@@ -1111,15 +1120,15 @@ Cc: Arnd Bergmann <arnd@arndb.de>
  arch/sparc/include/asm/mmu_context_64.h |  2 +-
  arch/x86/include/asm/sync_core.h        |  2 +-
  include/linux/perf_event.h              |  2 +-
- include/linux/sched/mm.h                | 10 +++++-----
+ include/linux/sched/mm.h                | 20 ++++++++++----------
  include/linux/tick.h                    |  4 ++--
- include/linux/vtime.h                   | 12 ++++++------
- kernel/sched/core.c                     | 14 +++++++-------
- kernel/sched/sched.h                    | 20 ++++++++++----------
- 11 files changed, 36 insertions(+), 36 deletions(-)
+ include/linux/vtime.h                   |  8 ++++----
+ kernel/sched/core.c                     | 12 ++++++------
+ kernel/sched/sched.h                    | 24 ++++++++++++------------
+ 11 files changed, 40 insertions(+), 40 deletions(-)
 
 diff --git a/arch/arm/include/asm/mmu_context.h b/arch/arm/include/asm/mmu_context.h
-index db2cb06aa..bebde469f 100644
+index db2cb06aa8cf5e..bebde469f81ae6 100644
 --- a/arch/arm/include/asm/mmu_context.h
 +++ b/arch/arm/include/asm/mmu_context.h
 @@ -80,7 +80,7 @@ static inline void check_and_switch_context(struct mm_struct *mm,
@@ -1132,7 +1141,7 @@ index db2cb06aa..bebde469f 100644
  	struct mm_struct *mm = current->mm;
  
 diff --git a/arch/riscv/include/asm/sync_core.h b/arch/riscv/include/asm/sync_core.h
-index 9153016da..2fe6b7fe6 100644
+index 9153016da8f14b..2fe6b7fe6b12d0 100644
 --- a/arch/riscv/include/asm/sync_core.h
 +++ b/arch/riscv/include/asm/sync_core.h
 @@ -6,7 +6,7 @@
@@ -1145,7 +1154,7 @@ index 9153016da..2fe6b7fe6 100644
  	asm volatile ("fence.i" ::: "memory");
  }
 diff --git a/arch/s390/include/asm/mmu_context.h b/arch/s390/include/asm/mmu_context.h
-index bd1ef5e2d..95d03be2c 100644
+index bd1ef5e2d2ebf8..95d03be2ce4561 100644
 --- a/arch/s390/include/asm/mmu_context.h
 +++ b/arch/s390/include/asm/mmu_context.h
 @@ -93,7 +93,7 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
@@ -1158,7 +1167,7 @@ index bd1ef5e2d..95d03be2c 100644
  	struct task_struct *tsk = current;
  	struct mm_struct *mm = tsk->mm;
 diff --git a/arch/sparc/include/asm/mmu_context_64.h b/arch/sparc/include/asm/mmu_context_64.h
-index 78bbacc14..d1967214e 100644
+index 78bbacc14d2d9b..d1967214ef25f9 100644
 --- a/arch/sparc/include/asm/mmu_context_64.h
 +++ b/arch/sparc/include/asm/mmu_context_64.h
 @@ -160,7 +160,7 @@ static inline void arch_start_context_switch(struct task_struct *prev)
@@ -1171,7 +1180,7 @@ index 78bbacc14..d1967214e 100644
  	/* Restore the state of MCDPER register for the new process
  	 * just switched to.
 diff --git a/arch/x86/include/asm/sync_core.h b/arch/x86/include/asm/sync_core.h
-index 96bda4353..4b55fa353 100644
+index df22113db9cd79..3b0ed46dfc233d 100644
 --- a/arch/x86/include/asm/sync_core.h
 +++ b/arch/x86/include/asm/sync_core.h
 @@ -93,7 +93,7 @@ static __always_inline void sync_core(void)
@@ -1182,12 +1191,12 @@ index 96bda4353..4b55fa353 100644
 +static __always_inline void sync_core_before_usermode(void)
  {
  	/* With PTI, we unconditionally serialize before running user code. */
- 	if (static_cpu_has(X86_FEATURE_PTI))
+ 	if (cpu_feature_enabled(X86_FEATURE_PTI))
 diff --git a/include/linux/perf_event.h b/include/linux/perf_event.h
-index 48d851fbd..7c1dac8da 100644
+index eb3f7bab498ca9..64c29a90034bba 100644
 --- a/include/linux/perf_event.h
 +++ b/include/linux/perf_event.h
-@@ -1632,7 +1632,7 @@ static inline void perf_event_task_migrate(struct task_struct *task)
+@@ -1639,7 +1639,7 @@ static inline void perf_event_task_migrate(struct task_struct *task)
  		task->sched_migrated = 1;
  }
  
@@ -1197,9 +1206,18 @@ index 48d851fbd..7c1dac8da 100644
  {
  	if (static_branch_unlikely(&perf_sched_events))
 diff --git a/include/linux/sched/mm.h b/include/linux/sched/mm.h
-index 95d0040df..4a279ee2d 100644
+index d7c6a942aa7e02..99d555f26b614d 100644
 --- a/include/linux/sched/mm.h
 +++ b/include/linux/sched/mm.h
+@@ -32,7 +32,7 @@ extern struct mm_struct *mm_alloc(void);
+  * See also <Documentation/mm/active_mm.rst> for an in-depth explanation
+  * of &mm_struct.mm_count vs &mm_struct.mm_users.
+  */
+-static inline void mmgrab(struct mm_struct *mm)
++static __always_inline void mmgrab(struct mm_struct *mm)
+ {
+ 	atomic_inc(&mm->mm_count);
+ }
 @@ -44,7 +44,7 @@ static inline void smp_mb__after_mmgrab(void)
  
  extern void __mmdrop(struct mm_struct *mm);
@@ -1209,7 +1227,7 @@ index 95d0040df..4a279ee2d 100644
  {
  	/*
  	 * The implicit full barrier implied by atomic_dec_and_test() is
-@@ -71,14 +71,14 @@ static inline void __mmdrop_delayed(struct rcu_head *rhp)
+@@ -71,27 +71,27 @@ static inline void __mmdrop_delayed(struct rcu_head *rhp)
   * Invoked from finish_task_switch(). Delegates the heavy lifting on RT
   * kernels via RCU.
   */
@@ -1226,6 +1244,21 @@ index 95d0040df..4a279ee2d 100644
  {
  	mmdrop(mm);
  }
+ #endif
+ 
+ /* Helpers for lazy TLB mm refcounting */
+-static inline void mmgrab_lazy_tlb(struct mm_struct *mm)
++static __always_inline void mmgrab_lazy_tlb(struct mm_struct *mm)
+ {
+ 	if (IS_ENABLED(CONFIG_MMU_LAZY_TLB_REFCOUNT))
+ 		mmgrab(mm);
+ }
+ 
+-static inline void mmdrop_lazy_tlb(struct mm_struct *mm)
++static __always_inline void mmdrop_lazy_tlb(struct mm_struct *mm)
+ {
+ 	if (IS_ENABLED(CONFIG_MMU_LAZY_TLB_REFCOUNT)) {
+ 		mmdrop(mm);
 @@ -104,7 +104,7 @@ static inline void mmdrop_lazy_tlb(struct mm_struct *mm)
  	}
  }
@@ -1235,7 +1268,22 @@ index 95d0040df..4a279ee2d 100644
  {
  	if (IS_ENABLED(CONFIG_MMU_LAZY_TLB_REFCOUNT))
  		mmdrop_sched(mm);
-@@ -532,7 +532,7 @@ enum {
+@@ -128,12 +128,12 @@ static inline void mmdrop_lazy_tlb_sched(struct mm_struct *mm)
+  * See also <Documentation/mm/active_mm.rst> for an in-depth explanation
+  * of &mm_struct.mm_count vs &mm_struct.mm_users.
+  */
+-static inline void mmget(struct mm_struct *mm)
++static __always_inline void mmget(struct mm_struct *mm)
+ {
+ 	atomic_inc(&mm->mm_users);
+ }
+ 
+-static inline bool mmget_not_zero(struct mm_struct *mm)
++static __always_inline bool mmget_not_zero(struct mm_struct *mm)
+ {
+ 	return atomic_inc_not_zero(&mm->mm_users);
+ }
+@@ -531,7 +531,7 @@ enum {
  #include <asm/membarrier.h>
  #endif
  
@@ -1245,10 +1293,10 @@ index 95d0040df..4a279ee2d 100644
  	/*
  	 * The atomic_read() below prevents CSE. The following should
 diff --git a/include/linux/tick.h b/include/linux/tick.h
-index 1cf4651f0..2f91eccd2 100644
+index b121c5d53e308c..ea7002ad7d02e3 100644
 --- a/include/linux/tick.h
 +++ b/include/linux/tick.h
-@@ -173,7 +173,7 @@ extern cpumask_var_t tick_nohz_full_mask;
+@@ -172,7 +172,7 @@ extern cpumask_var_t tick_nohz_full_mask;
  #ifdef CONFIG_NO_HZ_FULL
  extern bool tick_nohz_full_running;
  
@@ -1257,7 +1305,7 @@ index 1cf4651f0..2f91eccd2 100644
  {
  	if (!context_tracking_enabled())
  		return false;
-@@ -297,7 +297,7 @@ static inline void __tick_nohz_task_switch(void) { }
+@@ -296,7 +296,7 @@ static inline void __tick_nohz_task_switch(void) { }
  static inline void tick_nohz_full_setup(cpumask_var_t cpumask) { }
  #endif
  
@@ -1267,24 +1315,9 @@ index 1cf4651f0..2f91eccd2 100644
  	if (tick_nohz_full_enabled())
  		__tick_nohz_task_switch();
 diff --git a/include/linux/vtime.h b/include/linux/vtime.h
-index 82825e775..28234dda2 100644
+index 82825e7754993f..ce83fc74387d11 100644
 --- a/include/linux/vtime.h
 +++ b/include/linux/vtime.h
-@@ -26,12 +26,12 @@ static inline void vtime_guest_exit(struct task_struct *tsk) { }
- static inline void vtime_init_idle(struct task_struct *tsk, int cpu) { }
- #endif
- 
--static inline bool vtime_generic_enabled_cpu(int cpu)
-+static __always_inline bool vtime_generic_enabled_cpu(int cpu)
- {
- 	return context_tracking_enabled_cpu(cpu);
- }
- 
--static inline bool vtime_generic_enabled_this_cpu(void)
-+static __always_inline bool vtime_generic_enabled_this_cpu(void)
- {
- 	return context_tracking_enabled_this_cpu();
- }
 @@ -89,24 +89,24 @@ static __always_inline void vtime_account_guest_exit(void)
   * For now vtime state is tied to context tracking. We might want to decouple
   * those later if necessary.
@@ -1315,10 +1348,10 @@ index 82825e775..28234dda2 100644
  	if (vtime_accounting_enabled_this_cpu())
  		vtime_task_switch_generic(prev);
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index 96226707c..6014cc8fb 100644
+index 04b62c16fa8ca0..85589dd35e7bbc 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
-@@ -5074,7 +5074,7 @@ static inline void prepare_task(struct task_struct *next)
+@@ -5147,7 +5147,7 @@ static inline void prepare_task(struct task_struct *next)
  	WRITE_ONCE(next->on_cpu, 1);
  }
  
@@ -1327,7 +1360,7 @@ index 96226707c..6014cc8fb 100644
  {
  	/*
  	 * This must be the very last reference to @prev from this CPU. After
-@@ -5118,7 +5118,7 @@ static void zap_balance_callbacks(struct rq *rq)
+@@ -5191,7 +5191,7 @@ static void zap_balance_callbacks(struct rq *rq)
  	rq->balance_callback = found ? &balance_push_callback : NULL;
  }
  
@@ -1336,7 +1369,7 @@ index 96226707c..6014cc8fb 100644
  {
  	void (*func)(struct rq *rq);
  	struct balance_callback *next;
-@@ -5153,7 +5153,7 @@ struct balance_callback balance_push_callback = {
+@@ -5226,7 +5226,7 @@ struct balance_callback balance_push_callback = {
  	.func = balance_push,
  };
  
@@ -1345,16 +1378,7 @@ index 96226707c..6014cc8fb 100644
  __splice_balance_callbacks(struct rq *rq, bool split)
  {
  	struct balance_callback *head = rq->balance_callback;
-@@ -5183,7 +5183,7 @@ struct balance_callback *splice_balance_callbacks(struct rq *rq)
- 	return __splice_balance_callbacks(rq, true);
- }
- 
--void __balance_callbacks(struct rq *rq, struct rq_flags *rf)
-+__always_inline void __balance_callbacks(struct rq *rq, struct rq_flags *rf)
- {
- 	if (rf)
- 		rq_unpin_lock(rq, rf);
-@@ -5227,7 +5227,7 @@ prepare_lock_switch(struct rq *rq, struct task_struct *next, struct rq_flags *rf
+@@ -5300,7 +5300,7 @@ prepare_lock_switch(struct rq *rq, struct task_struct *next, struct rq_flags *rf
  	__acquire(__rq_lockp(this_rq()));
  }
  
@@ -1363,7 +1387,7 @@ index 96226707c..6014cc8fb 100644
  	__releases(__rq_lockp(rq))
  {
  	/*
-@@ -5261,7 +5261,7 @@ static inline void kmap_local_sched_out(void)
+@@ -5334,7 +5334,7 @@ static inline void kmap_local_sched_out(void)
  #endif
  }
  
@@ -1372,7 +1396,7 @@ index 96226707c..6014cc8fb 100644
  {
  #ifdef CONFIG_KMAP_LOCAL
  	if (unlikely(current->kmap_ctrl.idx))
-@@ -5315,7 +5315,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
+@@ -5388,7 +5388,7 @@ prepare_task_switch(struct rq *rq, struct task_struct *prev,
   * past. 'prev == current' is still correct but we need to recalculate this_rq
   * because prev may have moved to another CPU.
   */
@@ -1382,10 +1406,10 @@ index 96226707c..6014cc8fb 100644
  {
  	struct rq *rq = this_rq();
 diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
-index 56acf502b..b8e75cdc2 100644
+index 6c7c5633524a3b..6a9a29615c46d6 100644
 --- a/kernel/sched/sched.h
 +++ b/kernel/sched/sched.h
-@@ -1457,12 +1457,12 @@ static inline struct cpumask *sched_group_span(struct sched_group *sg);
+@@ -1503,12 +1503,12 @@ static inline struct cpumask *sched_group_span(struct sched_group *sg);
  
  DECLARE_STATIC_KEY_FALSE(__sched_core_enabled);
  
@@ -1400,7 +1424,7 @@ index 56acf502b..b8e75cdc2 100644
  {
  	return !static_branch_unlikely(&__sched_core_enabled);
  }
-@@ -1471,7 +1471,7 @@ static inline bool sched_core_disabled(void)
+@@ -1517,7 +1517,7 @@ static inline bool sched_core_disabled(void)
   * Be careful with this function; not for general use. The return value isn't
   * stable unless you actually hold a relevant rq->__lock.
   */
@@ -1409,7 +1433,7 @@ index 56acf502b..b8e75cdc2 100644
  {
  	if (sched_core_enabled(rq))
  		return &rq->core->__lock;
-@@ -1479,7 +1479,7 @@ static inline raw_spinlock_t *rq_lockp(struct rq *rq)
+@@ -1525,7 +1525,7 @@ static inline raw_spinlock_t *rq_lockp(struct rq *rq)
  	return &rq->__lock;
  }
  
@@ -1418,7 +1442,7 @@ index 56acf502b..b8e75cdc2 100644
  	__returns_ctx_lock(rq_lockp(rq)) /* alias them */
  {
  	if (rq->core_enabled)
-@@ -1582,12 +1582,12 @@ static inline bool sched_core_disabled(void)
+@@ -1628,12 +1628,12 @@ static inline bool sched_core_disabled(void)
  	return true;
  }
  
@@ -1433,7 +1457,7 @@ index 56acf502b..b8e75cdc2 100644
  	__returns_ctx_lock(rq_lockp(rq)) /* alias them */
  {
  	return &rq->__lock;
-@@ -1647,26 +1647,26 @@ extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass)
+@@ -1693,33 +1693,33 @@ extern void raw_spin_rq_lock_nested(struct rq *rq, int subclass)
  extern bool raw_spin_rq_trylock(struct rq *rq)
  	__cond_acquires(true, __rq_lockp(rq));
  
@@ -1464,6 +1488,20 @@ index 56acf502b..b8e75cdc2 100644
  	__releases(__rq_lockp(rq))
  {
  	raw_spin_rq_unlock(rq);
--- 
-2.55.0
-
+ 	local_irq_enable();
+ }
+ 
+-static inline unsigned long _raw_spin_rq_lock_irqsave(struct rq *rq)
++static __always_inline unsigned long _raw_spin_rq_lock_irqsave(struct rq *rq)
+ 	__acquires(__rq_lockp(rq))
+ {
+ 	unsigned long flags;
+@@ -1730,7 +1730,7 @@ static inline unsigned long _raw_spin_rq_lock_irqsave(struct rq *rq)
+ 	return flags;
+ }
+ 
+-static inline void raw_spin_rq_unlock_irqrestore(struct rq *rq, unsigned long flags)
++static __always_inline void raw_spin_rq_unlock_irqrestore(struct rq *rq, unsigned long flags)
+ 	__releases(__rq_lockp(rq))
+ {
+ 	raw_spin_rq_unlock(rq);

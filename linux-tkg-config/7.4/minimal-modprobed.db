@@ -337,8 +337,6 @@ mt76x2_common
 mt76x2u
 mt7921_common
 mt7921e
-mt7925_common
-mt792x_lib
 mtd
 mxm_wmi
 nandcore
@@ -435,7 +433,6 @@ processor_thermal_rapl
 processor_thermal_rfim
 processor_thermal_wt_hint
 processor_thermal_wt_req
-prom21_xhci
 psmouse
 psnap
 ptp
@@ -475,10 +472,6 @@ rtw88_8821c
 rtw88_8821ce
 rtw88_core
 rtw88_pci
-rtw89_8852c
-rtw89_8852cu
-rtw89_core
-rtw89_usb
 sch_cake
 sch_fq_codel
 sch_ingress
